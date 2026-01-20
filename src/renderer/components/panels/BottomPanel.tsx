@@ -137,7 +137,16 @@ function AssetsPanel() {
     if (!window.electronAPI || !projectPath) return;
     setLoading(true);
     try {
-      const result = await window.electronAPI.assets.list({ projectPath });
+      const api: any = window.electronAPI as any;
+      if (typeof api?.assets?.list !== 'function') {
+        addNotification({
+          type: 'error',
+          message: 'assets.list が利用できません（Electronのpreloadが古い/再起動が必要な可能性があります）',
+        });
+        return;
+      }
+
+      const result = await api.assets.list({ projectPath });
       if (result?.success) {
         setItems(result.items || []);
       } else {
@@ -157,6 +166,15 @@ function AssetsPanel() {
   const handleImport = async () => {
     if (!window.electronAPI || !projectPath) return;
 
+    const api: any = window.electronAPI as any;
+    if (typeof api?.assets?.import !== 'function') {
+      addNotification({
+        type: 'error',
+        message: 'assets.import が利用できません（Electronのpreloadが古い/再起動が必要な可能性があります）',
+      });
+      return;
+    }
+
     const sourcePath = await window.electronAPI.fs.selectFile([
       { name: 'GLB', extensions: ['glb', 'GLB'] },
       { name: 'GLTF', extensions: ['gltf', 'GLTF'] },
@@ -165,7 +183,7 @@ function AssetsPanel() {
     ]);
     if (!sourcePath) return;
 
-    const res = await window.electronAPI.assets.import({ projectPath, sourcePath });
+    const res = await api.assets.import({ projectPath, sourcePath });
     if (!res.success) {
       addNotification({ type: 'error', message: res.error || 'インポートに失敗しました' });
       return;

@@ -50,10 +50,16 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       }
 
       // XREAL SDK状態（設定画面で見えるようにする）
-      const api: any = window.electronAPI as any;
-      if (api.sdk?.xrealStatus) {
-        const s = await api.sdk.xrealStatus();
-        setXrealSdkStatus(s);
+      try {
+        const api: any = window.electronAPI as any;
+        if (api.sdk?.xrealStatus) {
+          const s = await api.sdk.xrealStatus();
+          setXrealSdkStatus(s);
+        } else {
+          setXrealSdkStatus({ exists: false, error: 'SDK検出APIが利用できません（Electronの再起動が必要な可能性があります）' });
+        }
+      } catch (e) {
+        setXrealSdkStatus({ exists: false, error: String((e as any)?.message || e) });
       }
     };
 
@@ -71,6 +77,16 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     const linuxCandidate = `${selectedPath}/Editor/Unity`;
     const winCandidate = `${selectedPath}\\Editor\\Unity.exe`;
     const macCandidate = `${selectedPath}/Unity.app/Contents/MacOS/Unity`;
+
+    const hasExists = typeof api?.fs?.exists === 'function';
+    if (!hasExists) {
+      // preloadが古い等でexistsが無い場合でも落ちないようにする
+      addNotification({
+        type: 'warning',
+        message: 'Unity実行ファイルの存在確認ができません（Electron側APIが古い可能性）。推測パスを入力しました。',
+      });
+      return linuxCandidate;
+    }
 
     const exists = async (p: string) => {
       const r = await api.fs.exists(p);
@@ -127,7 +143,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     if (!window.electronAPI) return;
     setDetectingUnity(true);
     try {
-      const result = await window.electronAPI.unity.detectPaths();
+      const api: any = window.electronAPI as any;
+      if (typeof api?.unity?.detectPaths !== 'function') {
+        addNotification({ type: 'error', message: 'Unity自動検出APIが利用できません（Electronの再起動が必要な可能性があります）' });
+        return;
+      }
+
+      const result = await api.unity.detectPaths();
       if (!result?.success) {
         addNotification({ type: 'error', message: result?.error || 'Unityパスの自動検出に失敗しました' });
         return;

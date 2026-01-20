@@ -80,6 +80,15 @@ if (process.platform === 'linux') {
     }
     // ファイルダイアログのGTKエラー回避のため、portalを優先
     process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL = process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL || '1';
+    process.env.GTK_USE_PORTAL = process.env.GTK_USE_PORTAL || '1';
+    // Wayland環境でGtkFileChooserNativeが不安定なケースがあるので、未指定ならX11ヒントを優先
+    process.env.ELECTRON_OZONE_PLATFORM_HINT = process.env.ELECTRON_OZONE_PLATFORM_HINT || 'x11';
+    try {
+        electron_1.app.commandLine.appendSwitch('ozone-platform-hint', process.env.ELECTRON_OZONE_PLATFORM_HINT);
+    }
+    catch {
+        // ignore
+    }
 }
 function normalizeRel(p) {
     return p.replace(/\\/g, '/');
@@ -282,6 +291,25 @@ function showAboutDialog() {
         detail: 'ARグラス・クロスプラットフォーム開発エンジン\n\nXREAL, Rokid, VITURE等の異なるARグラス向けアプリを単一ソースから生成可能。',
     });
 }
+async function showOpenDialogSafe(options) {
+    // Linux の GtkFileChooserNative が親付きで不安定な環境があるため、
+    // まずは親無しを試し、失敗したら親付きにフォールバックする。
+    if (process.platform === 'linux') {
+        try {
+            return await electron_1.dialog.showOpenDialog(options);
+        }
+        catch {
+            // fallthrough
+        }
+    }
+    try {
+        return await electron_1.dialog.showOpenDialog(mainWindow, options);
+    }
+    catch {
+        // 親付きが失敗する場合もあるため最後に親無しを試す
+        return await electron_1.dialog.showOpenDialog(options);
+    }
+}
 // ========================================
 // IPC Handlers
 // ========================================
@@ -390,17 +418,27 @@ electron_1.ipcMain.handle('fs:write-file', async (_, filePath, content) => {
     }
 });
 electron_1.ipcMain.handle('fs:select-directory', async () => {
-    const result = await electron_1.dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory', 'createDirectory'],
-    });
-    return result.canceled ? null : result.filePaths[0];
+    try {
+        const result = await showOpenDialogSafe({
+            properties: ['openDirectory', 'createDirectory'],
+        });
+        return result.canceled ? null : result.filePaths[0];
+    }
+    catch {
+        return null;
+    }
 });
 electron_1.ipcMain.handle('fs:select-file', async (_, filters) => {
-    const result = await electron_1.dialog.showOpenDialog(mainWindow, {
-        properties: ['openFile'],
-        filters: filters || [],
-    });
-    return result.canceled ? null : result.filePaths[0];
+    try {
+        const result = await showOpenDialogSafe({
+            properties: ['openFile'],
+            filters: filters || [],
+        });
+        return result.canceled ? null : result.filePaths[0];
+    }
+    catch {
+        return null;
+    }
 });
 electron_1.ipcMain.handle('fs:exists', async (_, filePath) => {
     try {

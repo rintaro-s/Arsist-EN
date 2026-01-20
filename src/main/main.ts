@@ -45,6 +45,14 @@ if (process.platform === 'linux') {
   }
   // ファイルダイアログのGTKエラー回避のため、portalを優先
   process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL = process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL || '1';
+  process.env.GTK_USE_PORTAL = process.env.GTK_USE_PORTAL || '1';
+  // Wayland環境でGtkFileChooserNativeが不安定なケースがあるので、未指定ならX11ヒントを優先
+  process.env.ELECTRON_OZONE_PLATFORM_HINT = process.env.ELECTRON_OZONE_PLATFORM_HINT || 'x11';
+  try {
+    app.commandLine.appendSwitch('ozone-platform-hint', process.env.ELECTRON_OZONE_PLATFORM_HINT);
+  } catch {
+    // ignore
+  }
 }
 
 function normalizeRel(p: string): string {
@@ -252,6 +260,25 @@ function showAboutDialog(): void {
   });
 }
 
+async function showOpenDialogSafe(options: Electron.OpenDialogOptions) {
+  // Linux の GtkFileChooserNative が親付きで不安定な環境があるため、
+  // まずは親無しを試し、失敗したら親付きにフォールバックする。
+  if (process.platform === 'linux') {
+    try {
+      return await dialog.showOpenDialog(options);
+    } catch {
+      // fallthrough
+    }
+  }
+
+  try {
+    return await dialog.showOpenDialog(mainWindow!, options);
+  } catch {
+    // 親付きが失敗する場合もあるため最後に親無しを試す
+    return await dialog.showOpenDialog(options);
+  }
+}
+
 // ========================================
 // IPC Handlers
 // ========================================
@@ -376,18 +403,26 @@ ipcMain.handle('fs:write-file', async (_, filePath: string, content: string) => 
 });
 
 ipcMain.handle('fs:select-directory', async () => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
-    properties: ['openDirectory', 'createDirectory'],
-  });
-  return result.canceled ? null : result.filePaths[0];
+  try {
+    const result = await showOpenDialogSafe({
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  } catch {
+    return null;
+  }
 });
 
 ipcMain.handle('fs:select-file', async (_, filters?: Electron.FileFilter[]) => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
-    properties: ['openFile'],
-    filters: filters || [],
-  });
-  return result.canceled ? null : result.filePaths[0];
+  try {
+    const result = await showOpenDialogSafe({
+      properties: ['openFile'],
+      filters: filters || [],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  } catch {
+    return null;
+  }
 });
 
 ipcMain.handle('fs:exists', async (_, filePath: string) => {
