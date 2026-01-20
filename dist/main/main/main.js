@@ -49,6 +49,18 @@ const electron_store_1 = __importDefault(require("electron-store"));
 const UnityBuilder_1 = require("./unity/UnityBuilder");
 const ProjectManager_1 = require("./project/ProjectManager");
 const AdapterManager_1 = require("./adapters/AdapterManager");
+// fetch() でローカルアセットを読めるようにする（dev/prod共通）
+electron_1.protocol.registerSchemesAsPrivileged([
+    {
+        scheme: 'arsist-file',
+        privileges: {
+            standard: true,
+            secure: true,
+            supportFetchAPI: true,
+            corsEnabled: true,
+        },
+    },
+]);
 // 設定ストア
 const store = new electron_store_1.default({
     defaults: {
@@ -69,6 +81,7 @@ let mainWindow = null;
 let projectManager = null;
 let unityBuilder = null;
 let adapterManager = null;
+let currentProjectPathForAssets = null;
 const isDev = process.env.NODE_ENV === 'development';
 // Linux向け：Vulkan周りの警告/不安定さを避ける（WebGLは通常OpenGL経由）
 if (process.platform === 'linux') {
@@ -92,6 +105,14 @@ if (process.platform === 'linux') {
 }
 function normalizeRel(p) {
     return p.replace(/\\/g, '/');
+}
+function updateRecentProjects(projectPath) {
+    const key = 'recentProjects';
+    const existing = store.get(key);
+    const list = Array.isArray(existing) ? existing.filter((p) => typeof p === 'string') : [];
+    const normalized = path.resolve(projectPath);
+    const next = [normalized, ...list.filter((p) => path.resolve(p) !== normalized)].slice(0, 5);
+    store.set(key, next);
 }
 function detectAssetKindByExt(filePath) {
     const ext = path.extname(filePath).toLowerCase();
@@ -274,13 +295,18 @@ async function handleNewProject() {
     mainWindow?.webContents.send('menu:new-project');
 }
 async function handleOpenProject() {
-    const result = await electron_1.dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory'],
-        title: 'プロジェクトフォルダを選択',
-    });
-    if (!result.canceled && result.filePaths.length > 0) {
-        const projectPath = result.filePaths[0];
-        mainWindow?.webContents.send('project:open', projectPath);
+    try {
+        const result = await showOpenDialogSafe({
+            properties: ['openDirectory'],
+            title: 'プロジェクトフォルダを選択',
+        });
+        if (!result.canceled && result.filePaths.length > 0) {
+            const projectPath = result.filePaths[0];
+            mainWindow?.webContents.send('project:open', projectPath);
+        }
+    }
+    catch {
+        // ignore
     }
 }
 function showAboutDialog() {
@@ -318,13 +344,24 @@ electron_1.ipcMain.handle('project:create', async (_, options) => {
     if (!projectManager) {
         projectManager = new ProjectManager_1.ProjectManager();
     }
-    return await projectManager.createProject(options);
+    const res = await projectManager.createProject(options);
+    if (res?.success) {
+        const projectDir = path.join(options.path, options.name);
+        currentProjectPathForAssets = projectDir;
+        updateRecentProjects(projectDir);
+    }
+    return res;
 });
 electron_1.ipcMain.handle('project:load', async (_, projectPath) => {
     if (!projectManager) {
         projectManager = new ProjectManager_1.ProjectManager();
     }
-    return await projectManager.loadProject(projectPath);
+    const res = await projectManager.loadProject(projectPath);
+    if (res?.success) {
+        currentProjectPathForAssets = projectPath;
+        updateRecentProjects(projectPath);
+    }
+    return res;
 });
 electron_1.ipcMain.handle('project:save', async (_, data) => {
     if (!projectManager)
@@ -583,6 +620,37 @@ electron_1.ipcMain.handle('window:close', () => {
 // アプリライフサイクル
 // ========================================
 electron_1.app.whenReady().then(() => {
+    try {
+        electron_1.protocol.registerFileProtocol('arsist-file', (request, callback) => {
+            try {
+                const u = new URL(request.url);
+                // host が付く形式 (arsist-file://home/...) にも対応
+                const rawPath = u.host ? `/${u.host}${u.pathname}` : u.pathname;
+                let pathname = decodeURIComponent(rawPath);
+                // Windows: /C:/... -> C:/...
+                if (process.platform === 'win32' && pathname.startsWith('/') && /^[A-Za-z]:/.test(pathname.slice(1))) {
+                    pathname = pathname.slice(1);
+                }
+                const abs = path.resolve(pathname);
+                const base = currentProjectPathForAssets ? path.resolve(currentProjectPathForAssets) : null;
+                if (base) {
+                    const rel = path.relative(base, abs);
+                    if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+                        callback({ path: abs });
+                        return;
+                    }
+                }
+                // プロジェクト未ロード時 / 範囲外は拒否
+                callback({ error: -10 });
+            }
+            catch {
+                callback({ error: -2 });
+            }
+        });
+    }
+    catch {
+        // ignore
+    }
     createWindow();
     electron_1.app.on('activate', () => {
         if (electron_1.BrowserWindow.getAllWindows().length === 0) {

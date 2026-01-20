@@ -2,7 +2,7 @@
  * Arsist Engine - Electron Main Process
  * メインプロセス：ウィンドウ管理、IPC通信、システム連携
  */
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, protocol } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { createHash } from 'crypto';
@@ -11,6 +11,19 @@ import Store from 'electron-store';
 import { UnityBuilder } from './unity/UnityBuilder';
 import { ProjectManager } from './project/ProjectManager';
 import { AdapterManager } from './adapters/AdapterManager';
+
+// fetch() でローカルアセットを読めるようにする（dev/prod共通）
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'arsist-file',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 // 設定ストア
 const store = new Store({
@@ -33,6 +46,7 @@ let mainWindow: BrowserWindow | null = null;
 let projectManager: ProjectManager | null = null;
 let unityBuilder: UnityBuilder | null = null;
 let adapterManager: AdapterManager | null = null;
+let currentProjectPathForAssets: string | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -57,6 +71,15 @@ if (process.platform === 'linux') {
 
 function normalizeRel(p: string): string {
   return p.replace(/\\/g, '/');
+}
+
+function updateRecentProjects(projectPath: string) {
+  const key = 'recentProjects';
+  const existing = store.get(key);
+  const list = Array.isArray(existing) ? existing.filter((p) => typeof p === 'string') as string[] : [];
+  const normalized = path.resolve(projectPath);
+  const next = [normalized, ...list.filter((p) => path.resolve(p) !== normalized)].slice(0, 5);
+  store.set(key, next);
 }
 
 function detectAssetKindByExt(filePath: string): 'model' | 'texture' | 'video' | 'other' {
@@ -240,14 +263,18 @@ async function handleNewProject(): Promise<void> {
 }
 
 async function handleOpenProject(): Promise<void> {
-  const result = await dialog.showOpenDialog(mainWindow!, {
-    properties: ['openDirectory'],
-    title: 'プロジェクトフォルダを選択',
-  });
+  try {
+    const result = await showOpenDialogSafe({
+      properties: ['openDirectory'],
+      title: 'プロジェクトフォルダを選択',
+    });
 
-  if (!result.canceled && result.filePaths.length > 0) {
-    const projectPath = result.filePaths[0];
-    mainWindow?.webContents.send('project:open', projectPath);
+    if (!result.canceled && result.filePaths.length > 0) {
+      const projectPath = result.filePaths[0];
+      mainWindow?.webContents.send('project:open', projectPath);
+    }
+  } catch {
+    // ignore
   }
 }
 
@@ -288,14 +315,25 @@ ipcMain.handle('project:create', async (_, options) => {
   if (!projectManager) {
     projectManager = new ProjectManager();
   }
-  return await projectManager.createProject(options);
+  const res = await projectManager.createProject(options);
+  if (res?.success) {
+    const projectDir = path.join(options.path, options.name);
+    currentProjectPathForAssets = projectDir;
+    updateRecentProjects(projectDir);
+  }
+  return res;
 });
 
 ipcMain.handle('project:load', async (_, projectPath: string) => {
   if (!projectManager) {
     projectManager = new ProjectManager();
   }
-  return await projectManager.loadProject(projectPath);
+  const res = await projectManager.loadProject(projectPath);
+  if (res?.success) {
+    currentProjectPathForAssets = projectPath;
+    updateRecentProjects(projectPath);
+  }
+  return res;
 });
 
 ipcMain.handle('project:save', async (_, data) => {
@@ -585,6 +623,39 @@ ipcMain.handle('window:close', () => {
 // ========================================
 
 app.whenReady().then(() => {
+  try {
+    protocol.registerFileProtocol('arsist-file', (request, callback) => {
+      try {
+        const u = new URL(request.url);
+        // host が付く形式 (arsist-file://home/...) にも対応
+        const rawPath = u.host ? `/${u.host}${u.pathname}` : u.pathname;
+        let pathname = decodeURIComponent(rawPath);
+
+        // Windows: /C:/... -> C:/...
+        if (process.platform === 'win32' && pathname.startsWith('/') && /^[A-Za-z]:/.test(pathname.slice(1))) {
+          pathname = pathname.slice(1);
+        }
+
+        const abs = path.resolve(pathname);
+        const base = currentProjectPathForAssets ? path.resolve(currentProjectPathForAssets) : null;
+        if (base) {
+          const rel = path.relative(base, abs);
+          if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+            callback({ path: abs });
+            return;
+          }
+        }
+
+        // プロジェクト未ロード時 / 範囲外は拒否
+        callback({ error: -10 });
+      } catch {
+        callback({ error: -2 });
+      }
+    });
+  } catch {
+    // ignore
+  }
+
   createWindow();
 
   app.on('activate', () => {

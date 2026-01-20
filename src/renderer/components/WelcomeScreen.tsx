@@ -1,17 +1,45 @@
-import React from 'react';
-import { Plus, FolderOpen, FileText, Glasses, Code, Layout, Box } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, FolderOpen, Glasses, Code, Layout, Box } from 'lucide-react';
+import { useProjectStore } from '../stores/projectStore';
 
 interface WelcomeScreenProps {
   onNewProject: () => void;
 }
 
 export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
+  const loadProject = useProjectStore((s) => s.loadProject);
+  const [recent, setRecent] = useState<string[]>([]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const api: any = (window as any).electronAPI;
+        if (typeof api?.store?.get !== 'function') return;
+        const list = await api.store.get('recentProjects');
+        if (!mounted) return;
+        if (Array.isArray(list)) {
+          setRecent(list.filter((p) => typeof p === 'string').slice(0, 5));
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const handleOpenProject = async () => {
     if (!window.electronAPI) return;
     const path = await window.electronAPI.fs.selectDirectory();
     if (path) {
-      await window.electronAPI.project.load(path);
+      await loadProject(path);
     }
+  };
+
+  const handleOpenRecent = async (projectPath: string) => {
+    await loadProject(projectPath);
   };
 
   return (
@@ -56,6 +84,25 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
             </p>
           </button>
         </div>
+
+        {recent.length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-xs font-medium text-arsist-muted mb-2">最近開いたプロジェクト</h4>
+            <div className="space-y-2">
+              {recent.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => handleOpenRecent(p)}
+                  className="w-full p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border hover:border-arsist-accent transition-all text-left"
+                  title={p}
+                >
+                  <div className="text-xs text-arsist-text truncate">{p.split('/').pop() || p}</div>
+                  <div className="text-[10px] text-arsist-muted truncate">{p}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Features */}
         <div className="grid grid-cols-3 gap-3 mb-6">

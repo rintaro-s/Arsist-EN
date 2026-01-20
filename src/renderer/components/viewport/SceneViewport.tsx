@@ -466,27 +466,43 @@ function ModelObject({
 
   const projectPath = useProjectStore((s) => s.projectPath);
 
+  const toArsistFileUrl = (absPath: string) => {
+    const normalizedAbs = absPath.replace(/\\/g, '/').replace(/^\/+/, '');
+    return `arsist-file:///${encodeURI(normalizedAbs)}`;
+  };
+
   const resolveModelUrl = (modelPath: string | undefined | null): string => {
     if (!modelPath) return '';
-    if (modelPath.startsWith('http://') || modelPath.startsWith('https://') || modelPath.startsWith('file:')) {
+    if (modelPath.startsWith('arsist-file:')) return modelPath;
+    if (modelPath.startsWith('http://') || modelPath.startsWith('https://')) {
       return modelPath;
+    }
+
+    if (modelPath.startsWith('file:')) {
+      try {
+        const u = new URL(modelPath);
+        const rawPath = u.host ? `/${u.host}${u.pathname}` : u.pathname;
+        return toArsistFileUrl(rawPath);
+      } catch {
+        // fallthrough
+      }
     }
 
     const normalized = modelPath.replace(/\\/g, '/');
     // Absolute posix path
     if (normalized.startsWith('/')) {
-      return `file://${normalized}`;
+      return toArsistFileUrl(normalized);
     }
 
     // Project-relative asset path (e.g. Assets/Models/foo.glb)
     if (projectPath) {
       const base = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
       const rel = normalized.replace(/^\/+/, '');
-      return `file://${base}/${rel}`;
+      return toArsistFileUrl(`${base}/${rel}`);
     }
 
     // Fallback (legacy): interpret as absolute-ish
-    return `file://${normalized}`;
+    return toArsistFileUrl(normalized);
   };
 
   const url = resolveModelUrl(object.modelPath);
