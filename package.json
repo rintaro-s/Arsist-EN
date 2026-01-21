@@ -15,7 +15,8 @@
     "electron:dev": "concurrently \"npm run dev:main\" \"wait-on dist/main/main/main.js && electron .\" \"npm run dev:renderer\"",
     "package": "npm run build && electron-builder",
     "lint": "eslint src --ext .ts,.tsx",
-    "test": "vitest"
+    "test": "vitest",
+    "xreal:diag": "node scripts/xreal-diag.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",

@@ -233,8 +233,16 @@ function UIHierarchy() {
     selectUIElement,
     addUIElement 
   } = useProjectStore();
-  
+  const uiAuthoringMode = project?.uiAuthoring?.mode || 'hybrid';
   const currentLayout = project?.uiLayouts.find(l => l.id === currentUILayoutId);
+
+  if (uiAuthoringMode === 'code') {
+    return (
+      <div className="h-full flex items-center justify-center text-arsist-muted text-sm">
+        UI/HUDのGUI編集は無効です。コードタブを使用してください。
+      </div>
+    );
+  }
 
   const renderUIElement = (element: any, depth: number = 0) => {
     return (

@@ -31,24 +31,33 @@ function ensureUICode(state: { project: ArsistProject | null }) {
   }
   if (!state.project.uiAuthoring) {
     state.project.uiAuthoring = {
-      mode: 'hybrid',
-      syncMode: 'two-way',
+      mode: 'code',
+      syncMode: 'code-to-visual',
     };
+  }
+  if (state.project.uiAuthoring.mode === 'code' && state.project.uiAuthoring.syncMode !== 'code-to-visual') {
+    state.project.uiAuthoring.syncMode = 'code-to-visual';
   }
 }
 
 function shouldSyncVisualToCode(state: { project: ArsistProject | null }): boolean {
+  const authoring = state.project?.uiAuthoring?.mode || 'hybrid';
+  if (authoring === 'code' || authoring === 'visual') return false;
   const mode = state.project?.uiAuthoring?.syncMode || 'two-way';
   return mode === 'two-way' || mode === 'visual-to-code';
 }
 
 function shouldSyncCodeToVisual(state: { project: ArsistProject | null }): boolean {
+  const authoring = state.project?.uiAuthoring?.mode || 'hybrid';
+  if (authoring === 'visual') return false;
+  if (authoring === 'code') return true;
   const mode = state.project?.uiAuthoring?.syncMode || 'two-way';
   return mode === 'two-way' || mode === 'code-to-visual';
 }
 
 function syncCodeFromUIIfNeeded(state: any, force = false) {
   if (!state.project || !state.currentUILayoutId) return;
+  if (state.project?.uiAuthoring?.mode === 'code') return;
   if (!force && !shouldSyncVisualToCode(state)) return;
 
   const layout = state.project.uiLayouts.find((l: UILayoutData) => l.id === state.currentUILayoutId);
@@ -154,12 +163,18 @@ export const useProjectStore = create<ProjectState>()(
       if (result.success) {
         set((state) => {
           state.project = result.project;
+          if (state.project) {
+            state.project.uiAuthoring = {
+              mode: 'code',
+              syncMode: 'code-to-visual',
+            };
+          }
           state.projectPath = options.path + '/' + options.name;
           state.isDirty = false;
           state.currentSceneId = result.project.scenes[0]?.id || null;
           state.currentUILayoutId = result.project.uiLayouts[0]?.id || null;
           state.currentLogicGraphId = result.project.logicGraphs[0]?.id || null;
-          syncCodeFromUIIfNeeded(state, true);
+          // コード専用ではUI→コード同期を行わない
         });
       }
     },
@@ -171,12 +186,18 @@ export const useProjectStore = create<ProjectState>()(
       if (result.success) {
         set((state) => {
           state.project = result.project;
+          if (state.project) {
+            state.project.uiAuthoring = {
+              mode: 'code',
+              syncMode: 'code-to-visual',
+            };
+          }
           state.projectPath = path;
           state.isDirty = false;
           state.currentSceneId = result.project.scenes[0]?.id || null;
           state.currentUILayoutId = result.project.uiLayouts[0]?.id || null;
           state.currentLogicGraphId = result.project.logicGraphs[0]?.id || null;
-          syncCodeFromUIIfNeeded(state, true);
+          // コード専用ではUI→コード同期を行わない
         });
       }
     },

@@ -231,6 +231,15 @@ function Vector3Input({ label, value, onChange }: Vector3InputProps) {
 function UIInspector() {
   const { project, projectPath, currentUILayoutId, selectedUIElementId, updateUIElement, removeUIElement, selectUIElement } = useProjectStore();
   const currentLayout = project?.uiLayouts.find(l => l.id === currentUILayoutId);
+  const uiAuthoringMode = project?.uiAuthoring?.mode || 'hybrid';
+
+  if (uiAuthoringMode === 'code') {
+    return (
+      <div className="h-full flex items-center justify-center text-arsist-muted text-sm">
+        UI/HUDのGUI編集は無効です。コードタブを使用してください。
+      </div>
+    );
+  }
 
   const findElement = (el: UIElement, id: string): UIElement | null => {
     if (el.id === id) return el;

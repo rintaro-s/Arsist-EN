@@ -144,9 +144,17 @@ namespace Arsist.Runtime
             ring.transform.SetParent(cursor.transform);
             ring.transform.localScale = new Vector3(0.05f, 0.001f, 0.05f);
             
-            var ringMat = new Material(Shader.Find("Unlit/Color"));
-            ringMat.color = _rayColor;
-            ring.GetComponent<Renderer>().material = ringMat;
+            var ringShader = FindSafeShader(new[] { "Unlit/Color", "Universal Render Pipeline/Unlit", "Sprites/Default" });
+            if (ringShader != null)
+            {
+                var ringMat = new Material(ringShader);
+                ringMat.color = _rayColor;
+                ring.GetComponent<Renderer>().material = ringMat;
+            }
+            else
+            {
+                Debug.LogWarning("[XROriginSetup] No compatible shader found for gaze cursor.");
+            }
             
             // コライダー不要
             Destroy(ring.GetComponent<Collider>());
@@ -178,11 +186,30 @@ namespace Arsist.Runtime
                 _rayLine.endWidth = 0.005f;
                 _rayLine.positionCount = 2;
                 
-                var rayMat = new Material(Shader.Find("Unlit/Color"));
-                rayMat.color = _rayColor;
-                _rayLine.material = rayMat;
+                var rayShader = FindSafeShader(new[] { "Unlit/Color", "Universal Render Pipeline/Unlit", "Sprites/Default" });
+                if (rayShader != null)
+                {
+                    var rayMat = new Material(rayShader);
+                    rayMat.color = _rayColor;
+                    _rayLine.material = rayMat;
+                }
+                else
+                {
+                    Debug.LogWarning("[XROriginSetup] No compatible shader found for ray.");
+                }
                 _rayLine.enabled = false;
             }
+        }
+
+        private static Shader FindSafeShader(string[] candidates)
+        {
+            foreach (var name in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var s = Shader.Find(name);
+                if (s != null) return s;
+            }
+            return null;
         }
 
         private void SetupFallbackMode()

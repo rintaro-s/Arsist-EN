@@ -37,11 +37,81 @@ namespace Arsist.Adapters.XrealOne
             
             ApplyPlayerSettings();
             ConfigureXRLoader();
+            RunXRProjectValidationFixAllBestEffort();
             ConfigureXRInteraction();
             ApplyQualitySettings();
             ApplyTransparentCameraSettingsToBuildScenes();
             
             Debug.Log($"[Arsist-{ADAPTER_ID}] All patches applied successfully");
+        }
+
+        /// <summary>
+        /// XrealOneガイドの「Project Validation > Fix All」を、バッチモードでも実行できる範囲で自動化する。
+        /// Unity/XRパッケージのバージョン差が大きいため、reflectionで存在するAPIを探して呼ぶ。
+        /// </summary>
+        private static void RunXRProjectValidationFixAllBestEffort()
+        {
+            try
+            {
+                // Known candidates (package/version differences)
+                var candidateTypeNames = new[]
+                {
+                    "UnityEditor.XR.Management.XRProjectValidation",
+                    "UnityEditor.XR.Management.XRProjectValidationUtility",
+                    "UnityEditor.XR.Management.Metadata.XRPackageMetadataStore",
+                };
+
+                foreach (var tn in candidateTypeNames)
+                {
+                    var t = FindTypeInLoadedAssemblies(tn);
+                    if (t == null) continue;
+
+                    // Try common method names
+                    var mi = t.GetMethod("FixAll", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                          ?? t.GetMethod("FixAllIssues", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                          ?? t.GetMethod("FixAllValidationIssues", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                          ?? t.GetMethod("FixAllProjectValidationIssues", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+                    if (mi != null && mi.GetParameters().Length == 0)
+                    {
+                        mi.Invoke(null, null);
+                        Debug.Log($"[Arsist-{ADAPTER_ID}] XR Project Validation FixAll invoked via: {tn}.{mi.Name}()");
+                        return;
+                    }
+                }
+
+                // Last resort: scan assemblies for a static parameterless FixAll() method on a type name that contains "ProjectValidation".
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    Type[] types;
+                    try { types = asm.GetTypes(); }
+                    catch { continue; }
+
+                    foreach (var t in types)
+                    {
+                        if (t == null) continue;
+                        var name = t.FullName ?? t.Name;
+                        if (string.IsNullOrWhiteSpace(name) || name.IndexOf("ProjectValidation", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            continue;
+                        }
+
+                        var mi = t.GetMethod("FixAll", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                        if (mi != null && mi.GetParameters().Length == 0)
+                        {
+                            mi.Invoke(null, null);
+                            Debug.Log($"[Arsist-{ADAPTER_ID}] XR Project Validation FixAll invoked via scan: {name}.{mi.Name}()");
+                            return;
+                        }
+                    }
+                }
+
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] XR Project Validation FixAll API not found. Manual settings are applied, but Unity's validation auto-fix could not be invoked programmatically in this editor/version.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to run XR Project Validation FixAll (best-effort): {e.Message}");
+            }
         }
 
         private static void ApplyTransparentCameraSettingsToBuildScenes()
@@ -244,6 +314,9 @@ namespace Arsist.Adapters.XrealOne
             // XREAL SDK 3.x は Input System を前提にする箇所があるため、可能なら Both にする
             TrySetActiveInputHandlingToBoth();
 
+            // glTFast をランタイムで使うための定義シンボルを追加
+            EnsureGltfFastDefineSymbol(BuildTargetGroup.Android);
+
             // === 画面設定（XREAL One固定）===
             PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
             PlayerSettings.allowedAutorotateToLandscapeLeft = true;
@@ -263,6 +336,26 @@ namespace Arsist.Adapters.XrealOne
             PlayerSettings.Android.optimizedFramePacing = true;
 
             Debug.Log($"[Arsist-{ADAPTER_ID}] Player Settings applied");
+        }
+
+        private static void EnsureGltfFastDefineSymbol(BuildTargetGroup group)
+        {
+            try
+            {
+                var symbols = PlayerSettings.GetScriptingDefineSymbolsForGroup(group);
+                var list = symbols.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                if (!list.Contains("GLTFAST"))
+                {
+                    list.Add("GLTFAST");
+                    var updated = string.Join(";", list.Distinct());
+                    PlayerSettings.SetScriptingDefineSymbolsForGroup(group, updated);
+                    Debug.Log($"[Arsist-{ADAPTER_ID}] Added scripting define: GLTFAST");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to set GLTFAST define: {e.Message}");
+            }
         }
 
         /// <summary>
@@ -529,6 +622,13 @@ namespace Arsist.Adapters.XrealOne
                 l != null && string.Equals(l.GetType().FullName, xrealLoaderTypeName, StringComparison.Ordinal));
             if (alreadyEnabled)
             {
+                // 競合を避けるため、XREALビルドではXREAL以外のLoaderを外す（XrealOneガイド準拠で最小構成）。
+                try
+                {
+                    RemoveNonXrealLoadersBestEffort(managerSettings, xrealLoaderTypeName);
+                }
+                catch { /* best-effort */ }
+
                 Debug.Log($"[Arsist-{ADAPTER_ID}] XREAL Loader already enabled");
                 return;
             }
@@ -538,6 +638,13 @@ namespace Arsist.Adapters.XrealOne
                 // XRPackageMetadataStore は XREAL SDK 側で IXRPackage を登録しているため、型名で割当できる
                 XRPackageMetadataStore.AssignLoader(managerSettings, xrealLoaderTypeName, BuildTargetGroup.Android);
                 Debug.Log($"[Arsist-{ADAPTER_ID}] Assigned XREAL Loader via XRPackageMetadataStore");
+
+                // 競合を避けるため、XREAL以外のLoaderを外す
+                try
+                {
+                    RemoveNonXrealLoadersBestEffort(managerSettings, xrealLoaderTypeName);
+                }
+                catch { /* best-effort */ }
                 return;
             }
             catch (Exception e)
@@ -571,6 +678,56 @@ namespace Arsist.Adapters.XrealOne
             catch (Exception e)
             {
                 Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Fallback XREAL loader add failed: {e.Message}");
+            }
+        }
+
+        private static void RemoveNonXrealLoadersBestEffort(XRManagerSettings managerSettings, string keepLoaderTypeFullName)
+        {
+            try
+            {
+                if (managerSettings == null) return;
+
+                // Unity 6 では activeLoaders が IReadOnlyList になるため、内部の List を reflection で触る。
+                var t = managerSettings.GetType();
+                var fi = t.GetField("m_ActiveLoaders", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var listObj = fi != null ? fi.GetValue(managerSettings) : null;
+                if (listObj is System.Collections.IList list)
+                {
+                    // Remove non-XREAL
+                    for (int i = list.Count - 1; i >= 0; i--)
+                    {
+                        var loader = list[i] as XRLoader;
+                        if (loader == null) continue;
+                        if (!string.Equals(loader.GetType().FullName, keepLoaderTypeFullName, StringComparison.Ordinal))
+                        {
+                            list.RemoveAt(i);
+                        }
+                    }
+
+                    // Move XREAL to index 0
+                    int keepIndex = -1;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var loader = list[i] as XRLoader;
+                        if (loader != null && string.Equals(loader.GetType().FullName, keepLoaderTypeFullName, StringComparison.Ordinal))
+                        {
+                            keepIndex = i;
+                            break;
+                        }
+                    }
+                    if (keepIndex > 0)
+                    {
+                        var keep = list[keepIndex];
+                        list.RemoveAt(keepIndex);
+                        list.Insert(0, keep);
+                    }
+
+                    EditorUtility.SetDirty(managerSettings);
+                }
+            }
+            catch
+            {
+                // ignore (best-effort)
             }
         }
 

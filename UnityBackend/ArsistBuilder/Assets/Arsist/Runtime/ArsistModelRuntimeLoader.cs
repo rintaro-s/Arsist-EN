@@ -40,8 +40,21 @@ namespace Arsist.Runtime
                 string fullPath = modelPath;
                 if (!modelPath.StartsWith("http") && !System.IO.Path.IsPathRooted(modelPath))
                 {
-                    fullPath = System.IO.Path.Combine(Application.streamingAssetsPath, modelPath);
+                    // AndroidのStreamingAssetsはAPK内(jar:)になりやすく、Path.Combine だと壊れることがあるので
+                    // URLとして扱える形に寄せる。
+                    var basePath = Application.streamingAssetsPath;
+                    if (!basePath.EndsWith("/")) basePath += "/";
+                    fullPath = basePath + modelPath;
                 }
+
+#if !UNITY_ANDROID || UNITY_EDITOR
+                // エディタ/PCではローカルファイルとして存在チェックできる
+                if (!fullPath.StartsWith("http") && System.IO.Path.IsPathRooted(fullPath) && !System.IO.File.Exists(fullPath))
+                {
+                    Debug.LogError($"[ArsistModelLoader] File not found: {fullPath} (modelPath={modelPath})");
+                    return;
+                }
+#endif
 
                 bool success = await gltf.Load(fullPath);
                 
@@ -52,7 +65,7 @@ namespace Arsist.Runtime
                 }
                 else
                 {
-                    Debug.LogError($"[ArsistModelLoader] Failed to load: {modelPath}");
+                    Debug.LogError($"[ArsistModelLoader] Failed to load: {modelPath} (fullPath={fullPath})");
                 }
 
                 if (destroyAfterLoad)
@@ -62,7 +75,8 @@ namespace Arsist.Runtime
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"[ArsistModelLoader] Exception: {e.Message}");
+                Debug.LogError($"[ArsistModelLoader] Exception while loading: {modelPath}");
+                Debug.LogException(e);
             }
 #else
             Debug.LogWarning("[ArsistModelLoader] glTFast package not installed. Model will not load.");

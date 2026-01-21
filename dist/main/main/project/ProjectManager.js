@@ -475,7 +475,7 @@ class ProjectManager {
                 return this.createARSettings('3d_ar_scene');
         }
     }
-    createUIAuthoring(mode = 'hybrid', syncMode = 'two-way') {
+    createUIAuthoring(mode = 'code', syncMode = 'code-to-visual') {
         return {
             mode,
             syncMode,

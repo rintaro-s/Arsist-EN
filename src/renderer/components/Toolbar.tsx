@@ -180,7 +180,7 @@ export function Toolbar() {
         )}
 
         {/* UIデザインツール */}
-        {currentView === 'ui' && (
+        {currentView === 'ui' && project?.uiAuthoring?.mode === 'hybrid' && (
           <div className="flex items-center bg-arsist-bg rounded p-0.5 gap-0.5">
             <ToolButton
               icon={<MousePointer size={16} />}

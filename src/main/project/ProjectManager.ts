@@ -533,7 +533,7 @@ export class ProjectManager {
     }
   }
 
-  private createUIAuthoring(mode: UIAuthoringMode = 'hybrid', syncMode: UISyncMode = 'two-way'): UIAuthoringSettings {
+  private createUIAuthoring(mode: UIAuthoringMode = 'code', syncMode: UISyncMode = 'code-to-visual'): UIAuthoringSettings {
     return {
       mode,
       syncMode,

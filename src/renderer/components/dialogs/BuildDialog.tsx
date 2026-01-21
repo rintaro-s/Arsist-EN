@@ -153,14 +153,23 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
 
     // Ensure UI state is consistent before build.
     // If the last edits came from code, re-generate the visual layout; otherwise ensure code bundle is up to date.
-    if (project.uiCode?.lastSyncedFrom === 'code') {
+    const uiAuthoringMode = project.uiAuthoring?.mode || 'hybrid';
+    if (uiAuthoringMode === 'code') {
       const result = syncUIFromCode();
       if (!result.success) {
         addNotification({ type: 'error', message: result.error || 'UIコードの同期に失敗しました' });
         return;
       }
     } else {
-      syncCodeFromUI();
+      if (project.uiCode?.lastSyncedFrom === 'code') {
+        const result = syncUIFromCode();
+        if (!result.success) {
+          addNotification({ type: 'error', message: result.error || 'UIコードの同期に失敗しました' });
+          return;
+        }
+      } else {
+        syncCodeFromUI();
+      }
     }
 
     clearBuildLogs();

@@ -15,7 +15,7 @@ export function ViewportContainer() {
       {currentView === 'scene' && <SceneViewport />}
       {currentView === 'ui' && (
         uiAuthoringMode === 'code'
-          ? <UICodeEditor mode="code-only" />
+          ? <CodeOnlyUINotice />
           : uiAuthoringMode === 'visual'
             ? <UICanvas />
             : (uiEditMode === 'visual' ? <UICanvas /> : <UICodeEditor />)
@@ -52,6 +52,14 @@ function VisualOnlyNotice() {
   return (
     <div className="w-full h-full flex items-center justify-center text-arsist-muted text-sm">
       このプロジェクトはビジュアル専用です。コード編集は無効です。
+    </div>
+  );
+}
+
+function CodeOnlyUINotice() {
+  return (
+    <div className="w-full h-full flex items-center justify-center text-arsist-muted text-sm">
+      UI/HUDのGUI編集は無効です。コードタブでHTML/CSS/JSを編集してください。
     </div>
   );
 }

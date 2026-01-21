@@ -257,7 +257,22 @@ namespace Arsist.Builder
             var material = objData["material"] as JObject;
             if (material != null && go.TryGetComponent<Renderer>(out var renderer))
             {
-                var mat = new Material(Shader.Find("Standard"));
+                var shader = FindSafeShader(new[]
+                {
+                    "Standard",
+                    "Universal Render Pipeline/Lit",
+                    "Universal Render Pipeline/Unlit",
+                    "Unlit/Color",
+                    "Sprites/Default",
+                });
+
+                if (shader == null)
+                {
+                    Debug.LogWarning("[Arsist] No compatible shader found for material. Skipping material setup.");
+                    return;
+                }
+
+                var mat = new Material(shader);
                 
                 var colorHex = material["color"]?.ToString() ?? "#FFFFFF";
                 if (ColorUtility.TryParseHtmlString(colorHex, out Color color))
@@ -270,6 +285,17 @@ namespace Arsist.Builder
                 
                 renderer.material = mat;
             }
+        }
+
+        private static Shader FindSafeShader(IEnumerable<string> candidates)
+        {
+            foreach (var name in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var s = Shader.Find(name);
+                if (s != null) return s;
+            }
+            return null;
         }
 
         private static void EnsureRuntimeManifestResource(JObject manifest)
@@ -391,7 +417,6 @@ namespace Arsist.Builder
                 // SDK固有型は不明なため、名前候補でbest-effort追加
                 TryAddComponentByTypeName(xrealConfigGO, "XREALSessionConfig");
                 TryAddComponentByTypeName(xrealConfigGO, "XrealSessionConfig");
-                TryAddComponentByTypeName(xrealConfigGO, "NRSessionConfig");
             }
 
             Debug.Log(isXreal ? "[Arsist] XREAL_Rig created" : "[Arsist] XR Origin created");
@@ -431,25 +456,98 @@ namespace Arsist.Builder
                 return placeholder;
             }
 
-            // Unityのインポートを待機
-            AssetDatabase.ImportAsset(foundAssetPath, ImportAssetOptions.ForceUpdate);
-            AssetDatabase.Refresh();
-
-            // GLB/GLTFを読み込み（gltfastはランタイム向けなので、Editorではプレハブとしてインスタンス化）
-            var loadedPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(foundAssetPath);
-            if (loadedPrefab != null)
+            // GLB/GLTFはStreamingAssetsへコピーし、ランタイムでglTFast読み込みに切り替える
+            var runtimePath = PrepareModelForRuntime(foundAssetPath, modelPath);
+            var runtimeGo = new GameObject(name);
+            if (!TryConfigureRuntimeModelLoader(runtimeGo, runtimePath))
             {
-                var instance = (GameObject)PrefabUtility.InstantiatePrefab(loadedPrefab);
-                instance.name = name;
-                Debug.Log($"[Arsist] Model loaded: {name} from {foundAssetPath}");
-                return instance;
+                Debug.LogWarning($"[Arsist] Runtime model loader not available. Creating placeholder for: {foundAssetPath}");
+                runtimeGo.AddComponent<MeshRenderer>();
+            }
+            else
+            {
+                Debug.Log($"[Arsist] Model scheduled for runtime load: {runtimePath}");
+            }
+            return runtimeGo;
+        }
+
+        private static string PrepareModelForRuntime(string assetPath, string originalPath)
+        {
+            if (!string.IsNullOrWhiteSpace(originalPath) &&
+                (originalPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                 originalPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+            {
+                return originalPath;
             }
 
-            // 失敗時: glTFast RuntimeLoaderを使う準備（ランタイムで動的読み込み）
-            Debug.LogWarning($"[Arsist] Could not load model as prefab: {foundAssetPath}. Creating empty placeholder.");
-            var go = new GameObject(name);
-            go.AddComponent<MeshRenderer>();
-            return go;
+            var ext = Path.GetExtension(assetPath)?.ToLowerInvariant();
+            // .gib はエンジン側のtypo/独自拡張子でGLBを指しているケースがあるためGLB扱いする
+            if (ext != ".glb" && ext != ".gltf" && ext != ".gib")
+            {
+                return assetPath;
+            }
+
+            var streamingDir = Path.Combine(Application.dataPath, "StreamingAssets", "ArsistModels");
+            Directory.CreateDirectory(streamingDir);
+
+            var srcFull = Path.Combine(Application.dataPath, "..", assetPath);
+            var fileName = Path.GetFileName(assetPath);
+            // glTFastは拡張子依存の分岐が入るケースがあるため、.gib は .glb に正規化して配置する
+            var destFileName = fileName;
+            if (string.Equals(ext, ".gib", StringComparison.OrdinalIgnoreCase))
+            {
+                destFileName = Path.GetFileNameWithoutExtension(fileName) + ".glb";
+            }
+
+            var destFull = Path.Combine(streamingDir, destFileName);
+
+            try
+            {
+                File.Copy(srcFull, destFull, true);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to copy model to StreamingAssets: {e.Message}");
+                return assetPath;
+            }
+
+            var assetRelative = $"Assets/StreamingAssets/ArsistModels/{destFileName}";
+            try
+            {
+                AssetDatabase.ImportAsset(assetRelative, ImportAssetOptions.ForceUpdate);
+                AssetDatabase.Refresh();
+            }
+            catch { }
+
+            return $"ArsistModels/{destFileName}";
+        }
+
+        private static bool TryConfigureRuntimeModelLoader(GameObject go, string runtimePath)
+        {
+            try
+            {
+                var comp = TryAddComponentByTypeName(go, "Arsist.Runtime.ArsistModelRuntimeLoader");
+                if (comp == null) return false;
+
+                var t = comp.GetType();
+                var field = t.GetField("modelPath");
+                if (field != null)
+                {
+                    field.SetValue(comp, runtimePath);
+                }
+
+                var destroyField = t.GetField("destroyAfterLoad");
+                if (destroyField != null)
+                {
+                    destroyField.SetValue(comp, true);
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static Component TryAddComponentByTypeName(GameObject go, string fullTypeName)
@@ -980,6 +1078,7 @@ namespace Arsist.Builder
             }
             return false;
         }
+
 
         private static void ValidateTransparentCameraScenes(ref List<string> problems)
         {
