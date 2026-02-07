@@ -1,9 +1,7 @@
 using System;
-using System.Threading.Tasks;
+using System.Collections;
 using UnityEngine;
-#if GLTFAST
 using UnityEngine.Networking;
-#endif
 #if GLTFAST
 using GLTFast;
 #endif
@@ -11,241 +9,203 @@ using GLTFast;
 namespace Arsist.Runtime
 {
     /// <summary>
-    /// ランタイムでGLB/GLTFモデルを読み込むコンポーネント
-    /// glTFastパッケージが必要
+    /// ランタイムでGLB/GLTFモデルを読み込むコンポーネント（glTFast 6.x対応）
+    /// StreamingAssetsからUnityWebRequestでバイト取得→glTFast.Load(byte[])→InstantiateSceneAsync
     /// </summary>
     public class ArsistModelRuntimeLoader : MonoBehaviour
     {
         [Tooltip("モデルファイルのパス（StreamingAssets相対またはURL）")]
         public string modelPath;
-        
+
         [Tooltip("読み込み完了後に自動でこのコンポーネントを削除")]
         public bool destroyAfterLoad = true;
 
-        private async void Start()
+        private void Start()
         {
             if (string.IsNullOrEmpty(modelPath))
             {
                 Debug.LogWarning("[ArsistModelLoader] modelPath is empty");
                 return;
             }
-
-            await LoadModelAsync();
+            StartCoroutine(LoadModelCoroutine());
         }
 
-        private async Task LoadModelAsync()
+        private IEnumerator LoadModelCoroutine()
         {
 #if GLTFAST
-            try
+            Debug.Log($"[ArsistModelLoader] Start loading: {modelPath}");
+
+            // --- Step 1: URIを組み立て ---
+            string uri = modelPath;
+            if (!modelPath.StartsWith("http", StringComparison.OrdinalIgnoreCase) &&
+                !System.IO.Path.IsPathRooted(modelPath))
             {
-                // Null check: このコンポーネントがアタッチされているGameObjectが破棄されていないか確認
-                if (this == null || gameObject == null)
-                {
-                    Debug.LogWarning("[ArsistModelLoader] GameObject destroyed before loading started");
-                    return;
-                }
-
-                var gltf = new GltfImport();
-                if (gltf == null)
-                {
-                    Debug.LogError("[ArsistModelLoader] Failed to create GltfImport instance");
-                    return;
-                }
-                
-                // StreamingAssetsから読む場合のパス構築
-                string fullPath = modelPath;
-                if (!modelPath.StartsWith("http") && !System.IO.Path.IsPathRooted(modelPath))
-                {
-#if UNITY_ANDROID && !UNITY_EDITOR
-                    // Androidの場合：常にfile:///android_asset/スキームを使う
-                    fullPath = "file:///android_asset/" + modelPath;
-#else
-                    // PC/エディタ：StreamingAssets ディレクトリからの相対パス
-                    var basePath = Application.streamingAssetsPath;
-                    if (!basePath.EndsWith("/") && !basePath.EndsWith("\\")) basePath += "/";
-                    fullPath = basePath + modelPath;
-#endif
-                }
-
-#if !UNITY_ANDROID || UNITY_EDITOR
-                // エディタ/PCではローカルファイルとして存在チェックできる
-                if (!fullPath.StartsWith("http") && System.IO.Path.IsPathRooted(fullPath) && !System.IO.File.Exists(fullPath))
-                {
-                    Debug.LogError($"[ArsistModelLoader] File not found: {fullPath} (modelPath={modelPath})");
-                    return;
-                }
-#endif
-
-                Debug.Log($"[ArsistModelLoader] Loading from: {fullPath}");
-                bool success = await LoadGltfWithFallbackAsync(gltf, fullPath);
-                Debug.Log($"[ArsistModelLoader] LoadGltfWithFallbackAsync result: {success}, gltf scene count: {(gltf != null ? "valid" : "null")}");
-                
-                // ロード後のnullチェック
-                if (this == null || gameObject == null)
-                {
-                    Debug.LogWarning("[ArsistModelLoader] GameObject destroyed during loading");
-                    return;
-                }
-                
-                if (success)
-                {
-                    // gltf と transform が null でないことを確認
-                    if (gltf == null)
-                    {
-                        Debug.LogError($"[ArsistModelLoader] GltfImport became null after load: {modelPath}");
-                        return;
-                    }
-                    
-                    if (transform == null)
-                    {
-                        Debug.LogError($"[ArsistModelLoader] Transform is null: {modelPath}");
-                        return;
-                    }
-                    
-                    try
-                    {
-                        Debug.Log($"[ArsistModelLoader] About to instantiate: {modelPath} (gltf={gltf}, transform={transform})");
-                        await gltf.InstantiateMainSceneAsync(transform);
-                        Debug.Log($"[ArsistModelLoader] Loaded: {modelPath}");
-                    }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogError($"[ArsistModelLoader] InstantiateMainSceneAsync failed: {ex.Message}");
-                        Debug.LogException(ex);
-                    }
-                }
-                else
-                {
-                    Debug.LogError($"[ArsistModelLoader] Failed to load: {modelPath} (fullPath={fullPath})");
-                }
-
-                if (destroyAfterLoad && this != null)
-                {
-                    Destroy(this);
-                }
+                var basePath = Application.streamingAssetsPath;
+                if (!basePath.EndsWith("/")) basePath += "/";
+                uri = basePath + modelPath;
             }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"[ArsistModelLoader] Exception while loading: {modelPath}");
-                Debug.LogException(e);
-            }
-#else
-            Debug.LogWarning("[ArsistModelLoader] glTFast package not installed. Model will not load.");
-            await Task.CompletedTask;
-#endif
-        }
+            Debug.Log($"[ArsistModelLoader] Resolved URI: {uri}");
 
-#if GLTFAST
-        private async Task<bool> LoadGltfWithFallbackAsync(GltfImport gltf, string fullPath)
-        {
-            Debug.Log($"[ArsistModelLoader] LoadGltfWithFallbackAsync starting with path: {fullPath}");
-
-#if UNITY_ANDROID && !UNITY_EDITOR
-            // Androidでは file:///android_asset/ のパスを使う場合、バイナリロードを試みる
-            if (fullPath.StartsWith("file:///android_asset/", StringComparison.OrdinalIgnoreCase))
+            // --- Step 2: UnityWebRequestでバイトダウンロード（全プラットフォーム共通） ---
+            byte[] data = null;
+            using (var req = UnityWebRequest.Get(uri))
             {
-                Debug.Log("[ArsistModelLoader] Using binary load for Android StreamingAssets");
-                var data = await DownloadBytesAsync(fullPath);
-                if (data != null && data.Length > 0)
-                {
-                    Debug.Log($"[ArsistModelLoader] Downloaded {data.Length} bytes");
-                    return await TryLoadGltfBinaryAsync(gltf, data, fullPath);
-                }
-                else
-                {
-                    Debug.LogWarning("[ArsistModelLoader] Binary download failed, trying gltf.Load");
-                }
-            }
-#endif
-
-            try
-            {
-                Debug.Log($"[ArsistModelLoader] Calling gltf.Load({fullPath})");
-                var result = await gltf.Load(fullPath);
-                Debug.Log($"[ArsistModelLoader] gltf.Load returned: {result}");
-                
-                if (!result)
-                {
-                    Debug.LogError($"[ArsistModelLoader] gltf.Load returned false for {fullPath}");
-                    return false;
-                }
-                
-                // glTFastが正常にロードされたか確認
-                Debug.Log("[ArsistModelLoader] glTF load successful");
-                return true;
-            }
-            catch (System.Exception ex)
-            {
-                Debug.LogError($"[ArsistModelLoader] gltf.Load threw exception: {ex.Message}");
-                Debug.LogException(ex);
-                return false;
-            }
-        }
-
-        private async Task<byte[]> DownloadBytesAsync(string url)
-        {
-            using (var req = UnityWebRequest.Get(url))
-            {
-                var op = req.SendWebRequest();
-                while (!op.isDone)
-                {
-                    await Task.Yield();
-                }
-
+                yield return req.SendWebRequest();
                 if (req.result != UnityWebRequest.Result.Success)
                 {
-                    Debug.LogError($"[ArsistModelLoader] Download failed: {req.error} ({url})");
-                    return null;
+                    Debug.LogError($"[ArsistModelLoader] Download failed: {req.error} ({uri})");
+                    CreateFallbackCube("DL Error");
+                    yield break;
                 }
-
-                return req.downloadHandler?.data;
-            }
-        }
-
-        private async Task<bool> TryLoadGltfBinaryAsync(GltfImport gltf, byte[] data, string sourceUrl)
-        {
-            var mi = typeof(GltfImport).GetMethod("LoadGltfBinary");
-            if (mi == null)
-            {
-                Debug.LogWarning("[ArsistModelLoader] LoadGltfBinary not available, falling back to Load(string)");
-                return await gltf.Load(sourceUrl);
+                data = req.downloadHandler.data;
+                Debug.Log($"[ArsistModelLoader] Downloaded {data.Length} bytes");
             }
 
-            object result = null;
-            var parameters = mi.GetParameters();
-            try
+            if (data == null || data.Length == 0)
             {
-                if (parameters.Length == 1)
+                Debug.LogError($"[ArsistModelLoader] Empty data for: {uri}");
+                CreateFallbackCube("Empty");
+                yield break;
+            }
+
+            // --- Step 3: glTFastでロード ---
+            var gltf = new GltfImport();
+            var loadTask = gltf.Load(data, new Uri(uri));
+            while (!loadTask.IsCompleted) yield return null;
+
+            if (loadTask.IsFaulted)
+            {
+                Debug.LogError($"[ArsistModelLoader] Load faulted: {loadTask.Exception?.Message}");
+                CreateFallbackCube("Load Error");
+                yield break;
+            }
+
+            bool loaded = loadTask.Result;
+            Debug.Log($"[ArsistModelLoader] gltf.Load result={loaded}, SceneCount={gltf.SceneCount}");
+
+            if (!loaded)
+            {
+                Debug.LogError($"[ArsistModelLoader] Failed to parse GLB: {modelPath}");
+                CreateFallbackCube("Parse Error");
+                yield break;
+            }
+
+            // --- Step 4: シーンのインスタンス化 ---
+            // InstantiateSceneAsync(Transform, int) を使用（最もシンプルなAPI）
+            // これは内部で GameObjectInstantiator を自動生成する
+            bool instantiated = false;
+            Exception instantiateError = null;
+
+            if (gltf.SceneCount > 0)
+            {
+                // scene 0 を直接指定（Main Scene選択ロジックをスキップ）
+                var instantiateTask = gltf.InstantiateSceneAsync(transform, 0);
+                while (!instantiateTask.IsCompleted) yield return null;
+
+                if (instantiateTask.IsFaulted)
                 {
-                    result = mi.Invoke(gltf, new object[] { data });
+                    instantiateError = instantiateTask.Exception;
                 }
-                else if (parameters.Length == 2)
+                else
                 {
-                    result = mi.Invoke(gltf, new object[] { data, new Uri(sourceUrl) });
+                    instantiated = instantiateTask.Result;
                 }
-                else if (parameters.Length >= 3)
+            }
+
+            if (!instantiated && instantiateError != null)
+            {
+                Debug.LogWarning($"[ArsistModelLoader] InstantiateSceneAsync(0) failed: {instantiateError.Message}");
+                // フォールバック: Main Scene を試す（try-catch内ではyield不可なので外で実行）
+                var mainTask = gltf.InstantiateMainSceneAsync(transform);
+                while (!mainTask.IsCompleted) yield return null;
+
+                if (mainTask.IsFaulted)
                 {
-                    result = mi.Invoke(gltf, new object[] { data, new Uri(sourceUrl), null });
+                    Debug.LogWarning($"[ArsistModelLoader] MainScene fallback also failed: {mainTask.Exception?.Message}");
+                }
+                else
+                {
+                    instantiated = mainTask.Result;
                 }
             }
-            catch (Exception e)
+
+            if (instantiated)
             {
-                Debug.LogWarning($"[ArsistModelLoader] LoadGltfBinary invoke failed: {e.Message}");
+                Debug.Log($"[ArsistModelLoader] Successfully instantiated: {modelPath}");
+                // スケール調整: XRシーンでは巨大すぎるモデルを補正
+                AdjustScaleForXR();
+            }
+            else
+            {
+                Debug.LogError($"[ArsistModelLoader] Could not instantiate any scene from: {modelPath}");
+                CreateFallbackCube("Instance Error");
             }
 
-            if (result is Task<bool> taskBool)
+            if (destroyAfterLoad && this != null)
             {
-                return await taskBool;
+                Destroy(this);
             }
-
-            if (result is bool boolResult)
-            {
-                return boolResult;
-            }
-
-            Debug.LogWarning("[ArsistModelLoader] LoadGltfBinary returned unexpected type, falling back to Load(string)");
-            return await gltf.Load(sourceUrl);
-        }
+#else
+            Debug.LogWarning("[ArsistModelLoader] GLTFAST not defined. glTFast package required.");
+            CreateFallbackCube("No glTFast");
+            yield break;
 #endif
+        }
+
+        /// <summary>
+        /// XR空間で適切なサイズに自動調整
+        /// </summary>
+        private void AdjustScaleForXR()
+        {
+            var renderers = GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0) return;
+
+            var combinedBounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++)
+            {
+                combinedBounds.Encapsulate(renderers[i].bounds);
+            }
+
+            float maxExtent = Mathf.Max(combinedBounds.size.x, combinedBounds.size.y, combinedBounds.size.z);
+            if (maxExtent > 10f)
+            {
+                // 10mを超える場合は1m以内に縮小
+                float scale = 1f / maxExtent;
+                transform.localScale = Vector3.one * scale;
+                Debug.Log($"[ArsistModelLoader] Auto-scaled model from {maxExtent:F1}m to {scale:F3}x");
+            }
+            else if (maxExtent < 0.01f)
+            {
+                // 1cm未満の場合は50cmに拡大
+                float scale = 0.5f / maxExtent;
+                transform.localScale = Vector3.one * scale;
+                Debug.Log($"[ArsistModelLoader] Auto-scaled model from {maxExtent:F4}m to {scale:F1}x");
+            }
+        }
+
+        /// <summary>
+        /// エラー時にフォールバックキューブを生成（デバッグ用）
+        /// </summary>
+        private void CreateFallbackCube(string label)
+        {
+            Debug.LogWarning($"[ArsistModelLoader] Creating fallback cube: {label} ({modelPath})");
+            var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            cube.transform.SetParent(transform, false);
+            cube.transform.localScale = Vector3.one * 0.3f;
+
+            var renderer = cube.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                // 赤いマテリアルをエラー表示用に使用
+                var shader = Shader.Find("Unlit/Color");
+                if (shader == null) shader = Shader.Find("Standard");
+                if (shader != null)
+                {
+                    var mat = new Material(shader);
+                    mat.color = Color.red;
+                    renderer.material = mat;
+                }
+            }
+        }
     }
 }

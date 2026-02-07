@@ -80,6 +80,10 @@ namespace Arsist.Builder
                 Debug.Log("[Arsist] Phase 3.2: Validating build readiness...");
                 ValidateBuildReadiness(_targetDevice);
 
+                // Phase 3.3: glTFast に必要なシェーダーを確実にビルドに含める
+                Debug.Log("[Arsist] Phase 3.3: Ensuring required shaders...");
+                EnsureGltfastShaders();
+
                 // OpenXR は初回ロード直後だと Settings が未ロード扱いになり、BuildPlayer が失敗することがある。
                 // Build 前に明示的にロードしておく。
                 EnsureOpenXRPackageSettingsLoaded();
@@ -310,6 +314,107 @@ namespace Arsist.Builder
                 if (s != null) return s;
             }
             return null;
+        }
+
+        /// <summary>
+        /// glTFast がランタイムで使用するシェーダーを Always Included Shaders に追加。
+        /// Built-in RP では Standard / Unlit 系が必要。これがないと IL2CPP ストリップで
+        /// Shader.Find("Standard") が null を返し、マテリアル生成で NullRef になる。
+        /// </summary>
+        private static void EnsureGltfastShaders()
+        {
+            try
+            {
+                var graphicsSettings = AssetDatabase.LoadAssetAtPath<UnityEngine.Rendering.GraphicsSettings>(
+                    "ProjectSettings/GraphicsSettings.asset");
+
+                // GraphicsSettings はSerializedObject経由で編集する
+                var so = new SerializedObject(
+                    AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset")[0]);
+                var arrayProp = so.FindProperty("m_AlwaysIncludedShaders");
+
+                // 必要なシェーダー名リスト
+                var requiredShaders = new[]
+                {
+                    "Standard",
+                    "Unlit/Color",
+                    "Unlit/Texture",
+                    "Unlit/Transparent",
+                    "UI/Default",
+                    "TextMeshPro/Mobile/Distance Field",
+                    "Sprites/Default",
+                };
+
+                // 既に含まれているシェーダーを収集
+                var existingGuids = new HashSet<string>();
+                for (int i = 0; i < arrayProp.arraySize; i++)
+                {
+                    var elem = arrayProp.GetArrayElementAtIndex(i);
+                    var shader = elem.objectReferenceValue as Shader;
+                    if (shader != null) existingGuids.Add(shader.name);
+                }
+
+                int added = 0;
+                foreach (var shaderName in requiredShaders)
+                {
+                    if (existingGuids.Contains(shaderName)) continue;
+
+                    var shader = Shader.Find(shaderName);
+                    if (shader == null)
+                    {
+                        Debug.LogWarning($"[Arsist] Shader not found: {shaderName}");
+                        continue;
+                    }
+
+                    int idx = arrayProp.arraySize;
+                    arrayProp.InsertArrayElementAtIndex(idx);
+                    arrayProp.GetArrayElementAtIndex(idx).objectReferenceValue = shader;
+                    added++;
+                }
+
+                if (added > 0)
+                {
+                    so.ApplyModifiedPropertiesWithoutUndo();
+                    Debug.Log($"[Arsist] Added {added} shaders to Always Included Shaders");
+                }
+                else
+                {
+                    Debug.Log("[Arsist] All required shaders already included");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to ensure shaders: {e.Message}");
+
+                // フォールバック: Resources フォルダにダミーマテリアルを作ってシェーダーを強制含有
+                try
+                {
+                    var resourcesDir = Path.Combine(Application.dataPath, "Resources");
+                    Directory.CreateDirectory(resourcesDir);
+
+                    // Standard シェーダーのダミーマテリアルを作成
+                    var standardShader = Shader.Find("Standard");
+                    if (standardShader != null)
+                    {
+                        var mat = new Material(standardShader);
+                        AssetDatabase.CreateAsset(mat, "Assets/Resources/GltfastFallbackStandard.mat");
+                    }
+
+                    var unlitShader = Shader.Find("Unlit/Color");
+                    if (unlitShader != null)
+                    {
+                        var mat = new Material(unlitShader);
+                        AssetDatabase.CreateAsset(mat, "Assets/Resources/GltfastFallbackUnlit.mat");
+                    }
+
+                    AssetDatabase.Refresh();
+                    Debug.Log("[Arsist] Created fallback materials in Resources to ensure shader inclusion");
+                }
+                catch (Exception e2)
+                {
+                    Debug.LogError($"[Arsist] Shader fallback also failed: {e2.Message}");
+                }
+            }
         }
 
         private static void EnsureRuntimeManifestResource(JObject manifest)
