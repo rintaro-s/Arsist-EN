@@ -1,0 +1,445 @@
+Xreal x VRChat: 6DoF & OSC手動補正システム (XREAL SDK 3.x / XR Plugin版)
+
+XREAL One + Beam Pro (with XREAL Eye) の 6DoFトラッキング を、最新の XREAL SDK 3.x (XR Plugin) を用いて実装する構成です。
+旧来のNRSDK（独自API）ではなく、Unity標準の XR Origin を使用し、XREAL公式の推奨構成で構築します。
+
+0. プロジェクトのゴール
+
+6DoF空間固定: XREAL One + XREAL Eye のセンサーを使用し、現実の部屋にバーチャルな部屋を固定する。
+
+OSC手動リセンター: PCからの操作で、ズレた位置を瞬時に補正する。
+
+リアルタイム同期: VRChat内のゲストの動きを表示する。
+
+Phase 1: 空間・アセットの準備
+
+部屋のスキャン: Polycam 等でスキャンし、Unityへインポート。
+
+モデルの最適化: Blenderでポリゴン削減を行い、Unityへインポート。
+
+配置: ARアプリのシーン内にある WorldRoot の子として配置し、スケールを 1.0 (等身大) に設定します。
+
+Phase 2: VRChatワールドの開発（VCC 2022.3.22f1 固定）
+
+プロジェクト作成: VCCから World プロジェクトを新規作成。
+
+スクリプト作成: GuestLogger.cs を作成（付録1）。
+
+Udon化: GuestLoggerAsset を作成し、Inspectorで Source Code にスクリプトをセット。
+
+シーン配置:
+
+部屋のモデルを配置（重要：部屋の中心＝自分が立つ位置を 0,0,0 に合わせる）。
+
+空の LoggerManager を作成し、Udon Behaviour で上記アセットをセット。
+
+Phase 3: PCブリッジ & GUIコントローラー
+
+ライブラリ: pip install python-osc tk
+
+スクリプト: 付録2 のコードを bridge_gui.py として保存。
+
+設定: スクリプト内の XREAL_IP を Beam Pro のIPに書き換え。
+
+Phase 4: Xreal ARアプリの開発（Unity 6 or 2022.3 LTS / XREAL SDK 3.x）
+
+重要: 最新の XREAL SDK 3.x は Unity の XR Plug-in Management システムで動作します。
+
+1. プロジェクト作成とSDK導入
+
+Unityバージョン: Unity 6 (6000.x) または 2022.3.x LTS。
+
+※Android Build Support (OpenJDK, SDK, NDK) を確実にインストールしてください。
+
+必須パッケージのインストール (Package Manager):
+
+XR Interaction Toolkit (XRI): Packages: Unity Registry からインストール。
+
+AR Foundation: Packages: Unity Registry からインストール。
+
+OscJack: + > Add package from git URL... > https://github.com/keijiro/OscJack.git
+
+XREAL SDK 3.x のインポート:
+
+XREAL Developer から XREAL SDK for Unity (com.xreal.xr.tar.gz) をダウンロード。
+
+Package Manager の + > Add package from tarball... を選択し、ダウンロードした tar.gz ファイルを選択。
+
+2. プロジェクト設定 (XREAL One / Beam Pro 最適化)
+
+Edit > Project Settings > XR Plug-in Management:
+
+Androidタブ を選択し、XREAL にチェックを入れる。
+
+Edit > Project Settings > Player > Android:
+
+Minimum API Level: Android 10 (API 29)
+
+Scripting Backend: IL2CPP
+
+Target Architectures: ARM64
+
+Graphics APIs: OpenGLES3
+
+Project Validation:
+
+XR Plug-in Management > Project Validation を開き、エラーや警告をすべて Fix All する。
+
+3. シーン構築 (XR Originの使用と罠の回避)
+
+XREAL SDK 3.x では XR Origin を使用しますが、Camera Tag の設定など特有の注意点があります。
+
+Main Cameraを削除。
+
+XR Originの配置:
+
+Hierarchyで 右クリック > XR > XR Origin (AR) を選択。
+
+カメラ設定 (重要：シースルー & 6DoF対策):
+
+XR Origin > Camera Offset > Main Camera を選択。
+
+Tag設定 (最重要): Inspector上部の Tag を必ず MainCamera に設定してください。
+
+Background Type (または Clear Flags): Solid Color に変更。
+
+Background: 色をクリックし Black (R:0, G:0, B:0, A:0) に設定。
+
+ここが青い空のままだと、現実が見えなくなります。
+
+AR Camera Background削除: もし付いていたら必ず Remove Component してください。
+
+Tracked Pose Driverの確認:
+
+Main Camera に Tracked Pose Driver (Input System) が付いていることを確認。
+
+オブジェクト配置:
+
+空のオブジェクト WorldRoot を作成。
+
+部屋の3Dモデル を WorldRoot の子にする。
+
+シェーダー設定: 部屋モデルのマテリアルを 付録4「Matte Shadow」 に変更。
+
+4. スクリプト適用
+
+XR Origin 等に適当なGameObjectを作成し、ArVrcController.cs をアタッチ（コードは付録3）。
+
+Inspector設定:
+
+World Root: WorldRoot をセット。
+
+Guest Prefab: ユニティちゃん等のプレハブをセット。
+
+Ar Camera: XR Origin の子にある Main Camera をセット。
+
+Initial Scale: 1.0 (等身大)
+
+注意: スケールを変更したい場合は、WorldRoot のTransformではなく、ここの数値を変更してください。スクリプトが起動時にこの値を強制適用します。
+
+運用フロー
+
+準備:
+
+PCでVRChatに入り、bridge_gui.py を起動。
+
+起動: Beam Proでアプリを起動。
+
+リセンター:
+
+現実の部屋の中央（VRChatの0,0,0地点）に立つ。
+
+PCのGUIで RESET (Recenter) を押す。
+
+→ 部屋のモデルが「自分の位置」に固定されます。
+
+同期・歩行:
+
+6DoFが効いているため、部屋の中を自由に歩き回れます。
+
+トラブルシューティング
+
+Q. Unityの空（地平線）が見えて、現実が見えない
+
+A. カメラの背景設定ミスです。
+XREALは「黒色」を透明として扱います。
+
+XR Origin > Main Camera を選択。
+
+Background Type を Solid Color に変更。
+
+Background の色を 黒 (0,0,0,0) に変更。
+
+AR Camera Background コンポーネントが付いていたら削除。
+
+Q. WorldRootのスケールを変えても大きさが変わらない
+
+A. スクリプトによる上書きが原因です。
+ArVrcController スクリプトは、起動時およびGUI操作時に WorldRoot のスケールを強制的に設定します。
+
+修正方法: ArVrcController コンポーネントの Initial Scale の数値を変更してください。
+
+実行中: PCのGUIツールの Scale スライダーでも変更できます。
+
+Q. ユニティちゃん（アバター）がHierarchyに見当たらない
+
+A. 実行中に動的に生成される仕様です。
+
+プレハブとして登録されているため、停止中はシーンに存在しません。
+
+アプリを実行し、PCからゲスト情報が送られてくると、WorldRoot オブジェクトの子階層 に自動的に生成（Instantiate）されます。
+
+付録1：GuestLogger.cs (VRChat側)
+
+using UdonSharp;
+using UnityEngine;
+using VRC.SDKBase;
+
+[UdonBehaviourSyncMode(BehaviourSyncMode.None)]
+public class GuestLogger : UdonSharpBehaviour
+{
+    private float _timer = 0f;
+    private const float Interval = 0.05f;
+    private VRCPlayerApi[] _players;
+
+    void Start() { _players = new VRCPlayerApi[80]; }
+
+    void Update()
+    {
+        _timer += Time.deltaTime;
+        if (_timer < Interval) return;
+        _timer = 0f;
+
+        if (_players == null) return;
+        int count = VRCPlayerApi.GetPlayerCount();
+        VRCPlayerApi.GetPlayers(_players);
+
+        for (int i = 0; i < count; i++)
+        {
+            var p = _players[i];
+            if (p == null || !p.IsValid() || p.isLocal) continue;
+            Vector3 pos = p.GetPosition();
+            Vector3 rot = p.GetRotation().eulerAngles;
+            Debug.Log("[GUEST]" + p.playerId + ":" + pos.x.ToString("F3") + ":" + pos.y.ToString("F3") + ":" + pos.z.ToString("F3") + ":" + rot.x.ToString("F1") + ":" + rot.y.ToString("F1") + ":" + rot.z.ToString("F1"));
+        }
+    }
+}
+
+
+付録2：bridge_gui.py (PC側)
+
+import threading, os, re, time
+import tkinter as tk
+from tkinter import ttk
+from pythonosc import udp_client
+
+# ★Beam ProのIPアドレス★
+XREAL_IP = "192.168.1.15" 
+XREAL_PORT = 9005
+LOG_DIR = os.path.expanduser("~/AppData/LocalLow/VRChat/VRChat")
+
+client = udp_client.SimpleUDPClient(XREAL_IP, XREAL_PORT)
+
+current_pos = [0.0, 0.0, 0.0]
+current_rot_y = 0.0
+current_scale = 1.0
+
+def send_update(event=None):
+    global current_pos, current_rot_y, current_scale
+    current_pos[0] = float(scale_x.get())
+    current_pos[1] = float(scale_y.get())
+    current_pos[2] = float(scale_z.get())
+    current_rot_y = float(scale_rot.get())
+    current_scale = float(scale_s.get())
+    client.send_message("/calib/move", current_pos)
+    client.send_message("/calib/set_scale", current_scale)
+    client.send_message("/calib/set_rotation", current_rot_y)
+
+def reset_values():
+    scale_x.set(0); scale_y.set(0); scale_z.set(0); scale_rot.set(0); scale_s.set(1.0)
+    send_update()
+    client.send_message("/calib/recenter", 1)
+
+def log_monitor():
+    if not os.path.exists(LOG_DIR): return
+    while True:
+        try:
+            files = [os.path.join(LOG_DIR, f) for f in os.listdir(LOG_DIR) if f.startswith("output_log")]
+            if files:
+                log_file = max(files, key=os.path.getmtime)
+                break
+        except: pass
+        time.sleep(1)
+    
+    print(f"Monitoring: {log_file}")
+    with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+        f.seek(0, os.SEEK_END)
+        while True:
+            line = f.readline()
+            if not line:
+                time.sleep(0.02); continue
+            m = re.search(r"\[GUEST\](\d+):([\d\.-]+):([\d\.-]+):([\d\.-]+):([\d\.-]+):([\d\.-]+):([\d\.-]+)", line)
+            if m:
+                pid = int(m.group(1))
+                pos = [float(m.group(2)), float(m.group(3)), float(m.group(4))]
+                rot = [float(m.group(5)), float(m.group(6)), float(m.group(7))]
+                client.send_message(f"/vrc/guest/{pid}/pos", pos)
+                client.send_message(f"/vrc/guest/{pid}/rot", rot)
+
+threading.Thread(target=log_monitor, daemon=True).start()
+
+root = tk.Tk(); root.title("Xreal VRC Controller"); root.geometry("400x600")
+ttk.Label(root, text="Position X").pack()
+scale_x = tk.Scale(root, from_=-2.0, to=2.0, resolution=0.005, orient="horizontal", command=send_update, length=300); scale_x.pack()
+ttk.Label(root, text="Position Y").pack()
+scale_y = tk.Scale(root, from_=-2.0, to=2.0, resolution=0.005, orient="horizontal", command=send_update, length=300); scale_y.pack()
+ttk.Label(root, text="Position Z").pack()
+scale_z = tk.Scale(root, from_=-2.0, to=2.0, resolution=0.005, orient="horizontal", command=send_update, length=300); scale_z.pack()
+ttk.Label(root, text="Rotation Y").pack()
+scale_rot = tk.Scale(root, from_=-180, to=180, resolution=0.5, orient="horizontal", command=send_update, length=300); scale_rot.pack()
+ttk.Label(root, text="Scale").pack()
+scale_s = tk.Scale(root, from_=0.1, to=2.0, resolution=0.01, orient="horizontal", command=send_update, length=300); scale_s.set(1.0); scale_s.pack()
+ttk.Button(root, text="RESET (Recenter)", command=reset_values).pack(pady=20)
+root.mainloop()
+
+
+付録3：ArVrcController.cs (XREAL SDK 3.x対応版)
+
+using UnityEngine;
+using OscJack;
+using System.Collections.Generic;
+
+public class ArVrcController : MonoBehaviour
+{
+    [Header("Basic")]
+    public Transform worldRoot;
+    public Transform arCamera; // XR OriginのMain Camera
+    public GameObject guestPrefab;
+    public int port = 9005;
+    public float initialScale = 1.0f; 
+
+    private OscServer _server;
+    private Dictionary<int, GuestData> _guests = new Dictionary<int, GuestData>();
+    
+    // 基準点
+    private Vector3 _basePosition;
+    private Quaternion _baseRotation = Quaternion.identity;
+    private Vector3 _guiOffsetPos;
+    private float _guiOffsetRot;
+    private float _guiScale = 1.0f;
+
+    class GuestData {
+        public GameObject obj;
+        public Vector3 targetPos;
+        public Vector3 targetRot;
+        public Vector3 currentVelocity;
+    }
+
+    void Start()
+    {
+        _server = new OscServer(port);
+        // 重要：ここで初期スケールを強制適用しているため、InspectorでScaleを変えても戻ります
+        if (worldRoot != null) worldRoot.localScale = Vector3.one * initialScale;
+
+        // 1. Recenter
+        _server.MessageDispatcher.AddCallback("/calib/recenter", (string addr, OscDataHandle data) => {
+            UnityMainThreadDispatcher.Instance().Enqueue(() => {
+                if (arCamera == null) return;
+                Vector3 p = arCamera.position; 
+                p.y = 0; 
+                _basePosition = p;
+                _baseRotation = Quaternion.Euler(0, arCamera.eulerAngles.y, 0);
+                UpdateWorldTransform();
+            });
+        });
+
+        // 2. GUI微調整
+        _server.MessageDispatcher.AddCallback("/calib/move", (string addr, OscDataHandle data) => {
+            _guiOffsetPos = new Vector3(data.GetElementAsFloat(0), data.GetElementAsFloat(1), data.GetElementAsFloat(2));
+            UpdateWorldTransform();
+        });
+        _server.MessageDispatcher.AddCallback("/calib/set_scale", (string addr, OscDataHandle data) => {
+            _guiScale = data.GetElementAsFloat(0);
+            UpdateWorldTransform();
+        });
+        _server.MessageDispatcher.AddCallback("/calib/set_rotation", (string addr, OscDataHandle data) => {
+            _guiOffsetRot = data.GetElementAsFloat(0);
+            UpdateWorldTransform();
+        });
+
+        // 3. ゲスト同期
+        for (int i = 1; i <= 20; i++) {
+            int id = i;
+            _server.MessageDispatcher.AddCallback($"/vrc/guest/{id}/pos", (string addr, OscDataHandle data) => {
+                Vector3 p = new Vector3(data.GetElementAsFloat(0), data.GetElementAsFloat(1), data.GetElementAsFloat(2));
+                UnityMainThreadDispatcher.Instance().Enqueue(() => UpdateTarget(id, p, null));
+            });
+            _server.MessageDispatcher.AddCallback($"/vrc/guest/{id}/rot", (string addr, OscDataHandle data) => {
+                Vector3 r = new Vector3(data.GetElementAsFloat(0), data.GetElementAsFloat(1), data.GetElementAsFloat(2));
+                UnityMainThreadDispatcher.Instance().Enqueue(() => UpdateTarget(id, null, r));
+            });
+        }
+    }
+
+    void UpdateWorldTransform()
+    {
+        UnityMainThreadDispatcher.Instance().Enqueue(() => {
+            if (worldRoot == null) return;
+            // 空間固定のための逆変換
+            worldRoot.position = -(_baseRotation * (_basePosition + _guiOffsetPos));
+            worldRoot.rotation = Quaternion.Inverse(_baseRotation) * Quaternion.Euler(0, _guiOffsetRot, 0);
+            worldRoot.localScale = Vector3.one * (initialScale * _guiScale);
+        });
+    }
+
+    void OnDestroy() { if (_server != null) { _server.Dispose(); _server = null; } }
+
+    void UpdateTarget(int id, Vector3? pos, Vector3? rot)
+    {
+        if (!_guests.ContainsKey(id)) {
+            if (guestPrefab != null && worldRoot != null) {
+                GameObject g = Instantiate(guestPrefab, worldRoot);
+                _guests.Add(id, new GuestData { obj = g, targetPos = Vector3.zero, targetRot = Vector3.zero });
+            }
+        }
+        if (_guests.ContainsKey(id)) {
+            if (pos.HasValue) _guests[id].targetPos = pos.Value;
+            if (rot.HasValue) _guests[id].targetRot = rot.Value;
+        }
+    }
+
+    void Update()
+    {
+        foreach (var kvp in _guests) {
+            GuestData g = kvp.Value;
+            if (g.obj == null) continue;
+            g.obj.transform.localPosition = Vector3.SmoothDamp(g.obj.transform.localPosition, g.targetPos, ref g.currentVelocity, 0.15f);
+            g.obj.transform.localRotation = Quaternion.Slerp(g.obj.transform.localRotation, Quaternion.Euler(g.targetRot), Time.deltaTime * 8f);
+        }
+    }
+}
+
+public class UnityMainThreadDispatcher : MonoBehaviour {
+    private static UnityMainThreadDispatcher _instance;
+    private readonly Queue<System.Action> _queue = new Queue<System.Action>();
+    public static UnityMainThreadDispatcher Instance() {
+        if (_instance == null) { var go = new GameObject("Dispatcher"); _instance = go.AddComponent<UnityMainThreadDispatcher>(); DontDestroyOnLoad(go); }
+        return _instance;
+    }
+    void Update() { lock(_queue) { while (_queue.Count > 0) _queue.Dequeue().Invoke(); } }
+    public void Enqueue(System.Action action) { lock(_queue) { _queue.Enqueue(action); } }
+}
+
+
+付録4：Matte Shadow Shader (透明な壁)
+
+Shader "Custom/MatteShadow"
+{
+    Properties { _Color ("Main Color", Color) = (1,1,1,1) }
+    SubShader {
+        Tags {"Queue"="Geometry-1" "IgnoreProjector"="True" "RenderType"="Opaque"}
+        ZWrite On
+        ColorMask 0
+        Pass {}
+    }
+}

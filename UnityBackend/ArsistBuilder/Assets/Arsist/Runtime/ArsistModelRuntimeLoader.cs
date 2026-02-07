@@ -1,5 +1,9 @@
+using System;
 using System.Threading.Tasks;
 using UnityEngine;
+#if GLTFAST
+using UnityEngine.Networking;
+#endif
 #if GLTFAST
 using GLTFast;
 #endif
@@ -34,7 +38,19 @@ namespace Arsist.Runtime
 #if GLTFAST
             try
             {
+                // Null check: このコンポーネントがアタッチされているGameObjectが破棄されていないか確認
+                if (this == null || gameObject == null)
+                {
+                    Debug.LogWarning("[ArsistModelLoader] GameObject destroyed before loading started");
+                    return;
+                }
+
                 var gltf = new GltfImport();
+                if (gltf == null)
+                {
+                    Debug.LogError("[ArsistModelLoader] Failed to create GltfImport instance");
+                    return;
+                }
                 
                 // StreamingAssetsから読む場合
                 string fullPath = modelPath;
@@ -56,19 +72,35 @@ namespace Arsist.Runtime
                 }
 #endif
 
-                bool success = await gltf.Load(fullPath);
+                Debug.Log($"[ArsistModelLoader] Loading from: {fullPath}");
+                bool success = await LoadGltfWithFallbackAsync(gltf, fullPath);
+                
+                // ロード後のnullチェック
+                if (this == null || gameObject == null)
+                {
+                    Debug.LogWarning("[ArsistModelLoader] GameObject destroyed during loading");
+                    return;
+                }
                 
                 if (success)
                 {
-                    await gltf.InstantiateMainSceneAsync(transform);
-                    Debug.Log($"[ArsistModelLoader] Loaded: {modelPath}");
+                    // transform が null でないことを確認
+                    if (transform != null)
+                    {
+                        await gltf.InstantiateMainSceneAsync(transform);
+                        Debug.Log($"[ArsistModelLoader] Loaded: {modelPath}");
+                    }
+                    else
+                    {
+                        Debug.LogError($"[ArsistModelLoader] Transform is null: {modelPath}");
+                    }
                 }
                 else
                 {
                     Debug.LogError($"[ArsistModelLoader] Failed to load: {modelPath} (fullPath={fullPath})");
                 }
 
-                if (destroyAfterLoad)
+                if (destroyAfterLoad && this != null)
                 {
                     Destroy(this);
                 }
@@ -83,5 +115,93 @@ namespace Arsist.Runtime
             await Task.CompletedTask;
 #endif
         }
+
+#if GLTFAST
+        private async Task<bool> LoadGltfWithFallbackAsync(GltfImport gltf, string fullPath)
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            // AndroidのStreamingAssets(jar:)はgltf.Loadが失敗するケースがあるため、バイナリ読み込みを試す
+            if (fullPath.StartsWith("jar:", StringComparison.OrdinalIgnoreCase) ||
+                fullPath.StartsWith("content:", StringComparison.OrdinalIgnoreCase) ||
+                fullPath.StartsWith("file:///android_asset", StringComparison.OrdinalIgnoreCase))
+            {
+                var data = await DownloadBytesAsync(fullPath);
+                if (data == null || data.Length == 0)
+                {
+                    Debug.LogError($"[ArsistModelLoader] Failed to download model bytes: {fullPath}");
+                    return false;
+                }
+                return await TryLoadGltfBinaryAsync(gltf, data, fullPath);
+            }
+#endif
+
+            return await gltf.Load(fullPath);
+        }
+
+        private async Task<bool> DownloadBytesAsync(string url)
+        {
+            using (var req = UnityWebRequest.Get(url))
+            {
+                var op = req.SendWebRequest();
+                while (!op.isDone)
+                {
+                    await Task.Yield();
+                }
+
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    Debug.LogError($"[ArsistModelLoader] Download failed: {req.error} ({url})");
+                    return null;
+                }
+
+                return req.downloadHandler?.data;
+            }
+        }
+
+        private async Task<bool> TryLoadGltfBinaryAsync(GltfImport gltf, byte[] data, string sourceUrl)
+        {
+            var mi = typeof(GltfImport).GetMethod("LoadGltfBinary");
+            if (mi == null)
+            {
+                Debug.LogWarning("[ArsistModelLoader] LoadGltfBinary not available, falling back to Load(string)");
+                return await gltf.Load(sourceUrl);
+            }
+
+            object result = null;
+            var parameters = mi.GetParameters();
+            try
+            {
+                if (parameters.Length == 1)
+                {
+                    result = mi.Invoke(gltf, new object[] { data });
+                }
+                else if (parameters.Length == 2)
+                {
+                    result = mi.Invoke(gltf, new object[] { data, new Uri(sourceUrl) });
+                }
+                else if (parameters.Length >= 3)
+                {
+                    result = mi.Invoke(gltf, new object[] { data, new Uri(sourceUrl), null });
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[ArsistModelLoader] LoadGltfBinary invoke failed: {e.Message}");
+            }
+
+            if (result is Task<bool> taskBool)
+            {
+                return await taskBool;
+            }
+
+            if (result is bool boolResult)
+            {
+                return boolResult;
+            }
+
+            Debug.LogWarning("[ArsistModelLoader] LoadGltfBinary returned unexpected type, falling back to Load(string)");
+            return await gltf.Load(sourceUrl);
+        }
+#endif
     }
 }

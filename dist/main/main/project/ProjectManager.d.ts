@@ -69,5 +69,9 @@ export declare class ProjectManager {
     private createInitialUICodeFromAppType;
     private convertLogicToCode;
     private sanitizeClassName;
+    /**
+     * HTML断片からビルド用の完全なHTMLドキュメントを生成
+     */
+    private generateCompleteHTML;
 }
 //# sourceMappingURL=ProjectManager.d.ts.map

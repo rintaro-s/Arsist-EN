@@ -65,6 +65,7 @@ namespace Arsist.Builder
 
                 // Phase 2: UI生成
                 Debug.Log("[Arsist] Phase 2: Generating UI...");
+                CopyUICodeToStreamingAssets();
                 GenerateUI();
 
                 // Phase 3: ビルド設定適用
@@ -614,9 +615,68 @@ namespace Arsist.Builder
             Debug.Log("[Arsist] Runtime systems created");
         }
 
+        /// <summary>
+        /// UIコード（HTML/CSS/JS）をStreamingAssetsにコピー
+        /// </summary>
+        private static void CopyUICodeToStreamingAssets()
+        {
+            var uiCodeDir = Path.Combine(Application.dataPath, "ArsistGenerated", "UICode");
+            if (!Directory.Exists(uiCodeDir))
+            {
+                Debug.Log("[Arsist] UICode directory not found, skipping WebView UI");
+                return;
+            }
+
+            var streamingUIDir = Path.Combine(Application.dataPath, "StreamingAssets", "ArsistUI");
+            Directory.CreateDirectory(streamingUIDir);
+
+            try
+            {
+                // HTMLファイルをコピー
+                var htmlSrc = Path.Combine(uiCodeDir, "index.html");
+                if (File.Exists(htmlSrc))
+                {
+                    File.Copy(htmlSrc, Path.Combine(streamingUIDir, "index.html"), true);
+                    Debug.Log("[Arsist] Copied UI HTML to StreamingAssets");
+                }
+
+                // CSSファイルをコピー
+                var cssSrc = Path.Combine(uiCodeDir, "styles.css");
+                if (File.Exists(cssSrc))
+                {
+                    File.Copy(cssSrc, Path.Combine(streamingUIDir, "styles.css"), true);
+                }
+
+                // JSファイルをコピー
+                var jsSrc = Path.Combine(uiCodeDir, "script.js");
+                if (File.Exists(jsSrc))
+                {
+                    File.Copy(jsSrc, Path.Combine(streamingUIDir, "script.js"), true);
+                }
+
+                AssetDatabase.Refresh();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to copy UI code to StreamingAssets: {e.Message}");
+            }
+        }
+
         private static void GenerateUI()
         {
             var uiPath = Path.Combine(Application.dataPath, "ArsistGenerated", "ui_layouts.json");
+            var uiCodeDir = Path.Combine(Application.dataPath, "ArsistGenerated", "UICode");
+            var hasUICode = Directory.Exists(uiCodeDir) && File.Exists(Path.Combine(uiCodeDir, "index.html"));
+
+            // UIコード（HTML/CSS/JS）がある場合はWebViewで表示
+            if (hasUICode)
+            {
+                Debug.Log("[Arsist] Creating WebView UI");
+                CreateWebViewUI();
+                return;
+            }
+
+            // UIレイアウトがある場合は従来のCanvas UIを生成
             if (!File.Exists(uiPath)) return;
 
             var uiJson = File.ReadAllText(uiPath);
@@ -665,6 +725,64 @@ namespace Arsist.Builder
                 {
                     CreateUIElement(root, canvasGO.transform);
                 }
+            }
+        }
+
+        /// <summary>
+        /// WebView UIを生成して常時表示
+        /// </summary>
+        private static void CreateWebViewUI()
+        {
+            var webViewGO = new GameObject("[ArsistWebViewUI]");
+            
+            var webViewComp = TryAddComponentByTypeName(webViewGO, "Arsist.Runtime.UI.ArsistWebViewUI");
+            if (webViewComp != null)
+            {
+                var t = webViewComp.GetType();
+                
+                // htmlPathを設定
+                var htmlPathField = t.GetField("htmlPath");
+                if (htmlPathField != null)
+                {
+                    htmlPathField.SetValue(webViewComp, "ArsistUI/index.html");
+                }
+                
+                // 画面サイズを設定（XREAL One: 1920x1080）
+                var widthField = t.GetField("width");
+                if (widthField != null)
+                {
+                    widthField.SetValue(webViewComp, 1920);
+                }
+                
+                var heightField = t.GetField("height");
+                if (heightField != null)
+                {
+                    heightField.SetValue(webViewComp, 1080);
+                }
+                
+                // Head-locked設定
+                var presentationMode = _manifest?["arSettings"]?["presentationMode"]?.ToString() ?? "world_anchored";
+                var headLocked = presentationMode == "head_locked_hud" || presentationMode == "floating_screen";
+                
+                var headLockedField = t.GetField("headLocked");
+                if (headLockedField != null)
+                {
+                    headLockedField.SetValue(webViewComp, headLocked);
+                }
+                
+                // 距離を設定
+                var distance = _manifest?["arSettings"]?["floatingScreen"]?["distance"]?.Value<float>() ?? 2f;
+                var distanceField = t.GetField("distance");
+                if (distanceField != null)
+                {
+                    distanceField.SetValue(webViewComp, distance);
+                }
+                
+                Debug.Log("[Arsist] WebView UI component added");
+            }
+            else
+            {
+                Debug.LogWarning("[Arsist] ArsistWebViewUI component not found");
             }
         }
 

@@ -81,5 +81,6 @@ export declare class UnityBuilder extends EventEmitter {
     private readUnityLogIssues;
     private resolveAdapterDir;
     private emitProgress;
+    private generateCompleteHTML;
 }
 //# sourceMappingURL=UnityBuilder.d.ts.map

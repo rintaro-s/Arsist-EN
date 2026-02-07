@@ -205,6 +205,17 @@ class ProjectManager {
             await fs.writeJSON(path.join(exportDir, 'scenes.json'), this.currentProject.scenes, { spaces: 2 });
             // UIレイアウトデータ出力
             await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), this.currentProject.uiLayouts, { spaces: 2 });
+            // UIコード（HTML/CSS/JS）を出力
+            if (this.currentProject.uiCode) {
+                const uiCodeDir = path.join(exportDir, 'UICode');
+                await fs.ensureDir(uiCodeDir);
+                // HTML生成（完全なHTMLドキュメント）
+                const htmlContent = this.generateCompleteHTML(this.currentProject.uiCode.html || '', this.currentProject.uiCode.css || '', this.currentProject.uiCode.js || '');
+                await fs.writeFile(path.join(uiCodeDir, 'index.html'), htmlContent);
+                await fs.writeFile(path.join(uiCodeDir, 'styles.css'), this.currentProject.uiCode.css || '');
+                await fs.writeFile(path.join(uiCodeDir, 'script.js'), this.currentProject.uiCode.js || '');
+                console.log('[ProjectManager] UI Code exported to UICode/');
+            }
             // ロジックグラフをC#コードに変換
             const logicCode = this.convertLogicToCode(this.currentProject.logicGraphs);
             await fs.writeFile(path.join(exportDir, 'GeneratedLogic.cs'), logicCode);
@@ -542,6 +553,56 @@ namespace Arsist.Generated
     }
     sanitizeClassName(name) {
         return name.replace(/[^a-zA-Z0-9]/g, '_');
+    }
+    /**
+     * HTML断片からビルド用の完全なHTMLドキュメントを生成
+     */
+    generateCompleteHTML(htmlFragment, css, js) {
+        return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arsist UI</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: transparent;
+      color: #ffffff;
+    }
+    ${css}
+  </style>
+</head>
+<body>
+  ${htmlFragment}
+  <script>
+    // Arsist Bridge for Unity Communication
+    window.ArsistBridge = window.ArsistBridge || {
+      sendEvent: function(eventName, data) {
+        console.log('[ArsistBridge] Event:', eventName, data);
+        // Unity側で受信する処理を実装
+        if (typeof unityInstance !== 'undefined') {
+          unityInstance.SendMessage('ArsistBridge', 'OnEvent', JSON.stringify({ event: eventName, data: data }));
+        }
+      },
+      receiveEvent: function(eventName, callback) {
+        console.log('[ArsistBridge] Registered event:', eventName);
+        window['arsist_' + eventName] = callback;
+      }
+    };
+    
+    ${js}
+  </script>
+</body>
+</html>`;
     }
 }
 exports.ProjectManager = ProjectManager;
