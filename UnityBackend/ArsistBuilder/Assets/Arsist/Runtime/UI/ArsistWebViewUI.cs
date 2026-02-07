@@ -248,25 +248,38 @@ namespace Arsist.Runtime.UI
             if (string.IsNullOrEmpty(html)) return "Arsist UI";
             try
             {
-                string body = html;
-                int bodyStart = html.IndexOf("<body", StringComparison.OrdinalIgnoreCase);
-                if (bodyStart >= 0)
-                {
-                    int bodyTagEnd = html.IndexOf('>', bodyStart);
-                    if (bodyTagEnd >= 0)
-                    {
-                        int bodyClose = html.IndexOf("</body>", bodyTagEnd, StringComparison.OrdinalIgnoreCase);
-                        if (bodyClose > bodyTagEnd)
-                            body = html.Substring(bodyTagEnd + 1, bodyClose - bodyTagEnd - 1);
-                    }
-                }
-                body = Regex.Replace(body, "<[^>]+>", " ");
-                body = body.Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">")
-                           .Replace("&nbsp;", " ").Replace("&#39;", "'").Replace("&quot;", "\"");
-                body = Regex.Replace(body, @"\s+", " ").Trim();
-                return string.IsNullOrWhiteSpace(body) ? "Arsist UI" : body;
+                string text = html;
+                // <style>...</style> を削除
+                text = Regex.Replace(text, "<style[^>]*>.*?</style>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                // <script>...</script> を削除
+                text = Regex.Replace(text, "<script[^>]*>.*?</script>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                
+                // すべてのHTMLタグ（<...>）を削除
+                text = Regex.Replace(text, "<[^>]*>", "");
+                
+                // HTMLエンティティのデコード
+                text = text.Replace("&amp;", "&");
+                text = text.Replace("&lt;", "<");
+                text = text.Replace("&gt;", ">");
+                text = text.Replace("&quot;", "\"");
+                text = text.Replace("&#39;", "'");
+                text = text.Replace("&nbsp;", " ");
+                
+                // 連続空白を1スペースに統一
+                text = Regex.Replace(text, @"\s+", " ").Trim();
+                
+                // テキストが長すぎれば最初の200文字まで
+                if (text.Length > 200)
+                    text = text.Substring(0, 200) + "...";
+                
+                Debug.Log($"[ArsistWebViewUI] Extracted text: '{text}'");
+                return string.IsNullOrWhiteSpace(text) ? "Arsist UI" : text;
             }
-            catch { return "Arsist UI"; }
+            catch (Exception e)
+            {
+                Debug.LogError($"[ArsistWebViewUI] Failed to extract text: {e.Message}");
+                return "Arsist UI";
+            }
         }
 
         private string GetDefaultHTML()
