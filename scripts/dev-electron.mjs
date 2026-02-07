@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import process from 'node:process';
 import chokidar from 'chokidar';
 
@@ -8,12 +9,10 @@ let restartTimer = null;
 
 function start() {
   const env = { ...process.env, NODE_ENV: 'development' };
-  // Windows対応: npx electronで起動
-  const isWin = process.platform === 'win32';
-  const electronCmd = isWin ? 'npx.cmd' : 'npx';
-  child = spawn(electronCmd, ['electron', '.'], {
+  child = spawn('npx', ['electron', '.'], {
     stdio: 'inherit',
     env,
+    shell: true,
   });
 
   child.on('exit', (code, signal) => {

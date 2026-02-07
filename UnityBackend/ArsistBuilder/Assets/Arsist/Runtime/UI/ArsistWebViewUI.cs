@@ -59,11 +59,14 @@ namespace Arsist.Runtime.UI
         /// </summary>
         public void Initialize()
         {
+            Debug.Log($"[ArsistWebViewUI] Initialize called with htmlPath={htmlPath}, width={width}, height={height}, headLocked={headLocked}");
+            
             // メインカメラを取得
             var mainCam = Camera.main;
             if (mainCam != null)
             {
                 _cameraTransform = mainCam.transform;
+                Debug.Log("[ArsistWebViewUI] Main camera found");
             }
             else
             {
@@ -73,8 +76,12 @@ namespace Arsist.Runtime.UI
 
             // プラットフォーム別に初期化
 #if UNITY_ANDROID && !UNITY_EDITOR
-            InitializeAndroidWebView();
+            Debug.Log("[ArsistWebViewUI] Initializing Canvas-based UI (Android AR)...");
+            // Android AR では Canvas ベースの UI を使用（WebView はスマホ画面に表示されるため使いません）
+            string htmlContent = LoadHTMLContent();
+            InitializeFallbackCanvas(htmlContent);
 #else
+            Debug.Log("[ArsistWebViewUI] Initializing Fallback Canvas (Editor/PC)...");
             // エディタではHTMLの内容を読み込んで簡易表示
             string htmlContent = LoadHTMLContent();
             InitializeFallbackCanvas(htmlContent);
@@ -90,21 +97,50 @@ namespace Arsist.Runtime.UI
         {
             try
             {
+                Debug.Log($"[ArsistWebViewUI] StreamingAssetsPath: {Application.streamingAssetsPath}");
+                Debug.Log($"[ArsistWebViewUI] htmlPath: {htmlPath}");
+                
                 string fullPath = Path.Combine(Application.streamingAssetsPath, htmlPath);
-
+                Debug.Log($"[ArsistWebViewUI] Attempting to load HTML from: {fullPath}");
+                
+                // PCではファイルシステムをチェック可能
+#if !UNITY_ANDROID || UNITY_EDITOR
                 if (File.Exists(fullPath))
                 {
+                    Debug.Log($"[ArsistWebViewUI] HTML file found, reading...");
                     return File.ReadAllText(fullPath);
                 }
                 else
                 {
-                    Debug.LogWarning($"[ArsistWebViewUI] HTML file not found: {fullPath}");
+                    Debug.LogWarning($"[ArsistWebViewUI] HTML file not found at: {fullPath}");
+                    // StreamingAssets ディレクトリの内容をログ出力
+                    var baseDir = Path.Combine(Application.streamingAssetsPath, "ArsistUI");
+                    Debug.LogWarning($"[ArsistWebViewUI] Checking ArsistUI directory: {baseDir}");
+                    if (Directory.Exists(baseDir))
+                    {
+                        var files = Directory.GetFiles(baseDir);
+                        Debug.LogWarning($"[ArsistWebViewUI] Files in ArsistUI: {string.Join(", ", files)}");
+                    }
                     return GetDefaultHTML();
                 }
+#else
+                // Android: ファイルチェック不可能かもしれないため、読み込みを試みる
+                Debug.Log($"[ArsistWebViewUI] Android: Attempting to read HTML file directly");
+                try
+                {
+                    return File.ReadAllText(fullPath);
+                }
+                catch
+                {
+                    Debug.LogWarning($"[ArsistWebViewUI] Android: Direct file read failed, using default HTML");
+                    return GetDefaultHTML();
+                }
+#endif
             }
             catch (System.Exception e)
             {
                 Debug.LogError($"[ArsistWebViewUI] Error loading HTML: {e.Message}");
+                Debug.LogException(e);
                 return GetDefaultHTML();
             }
         }
@@ -179,6 +215,7 @@ namespace Arsist.Runtime.UI
             _canvas.transform.SetParent(transform);
             _canvas.transform.localPosition = Vector3.zero;
             _canvas.transform.localRotation = Quaternion.identity;
+            _canvas.transform.localScale = Vector3.one;
             
             var canvas = _canvas.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
@@ -188,11 +225,15 @@ namespace Arsist.Runtime.UI
             
             _canvas.AddComponent<UnityEngine.UI.GraphicRaycaster>();
             
+            // Canvas の RectTransform を設定
             var rectTransform = _canvas.GetComponent<RectTransform>();
             rectTransform.sizeDelta = new Vector2(width, height);
-            rectTransform.localScale = new Vector3(0.001f, 0.001f, 0.001f);
+            // グラス用に適切なスケール（メートル単位）
+            // 1920x1080 の UI が距離 distance メートルで見やすいスケール
+            float scale = distance / 1000f;  // distance メートルに応じたスケール
+            _canvas.transform.localScale = new Vector3(scale, scale, scale);
             
-            // テキストとして表示（デバッグ用）
+            // テキストとして HTMLタイトルを表示（デバッグ用）
             var textObj = new GameObject("UIText");
             textObj.transform.SetParent(_canvas.transform, false);
             
@@ -202,7 +243,7 @@ namespace Arsist.Runtime.UI
             textRect.sizeDelta = Vector2.zero;
             
             var text = textObj.AddComponent<TMPro.TextMeshProUGUI>();
-            text.text = "Arsist UI\n(WebView not available in Editor)";
+            text.text = "Arsist UI\n(AR Glasses Display)";
             text.fontSize = 48;
             text.color = Color.white;
             text.alignment = TMPro.TextAlignmentOptions.Center;
@@ -220,7 +261,7 @@ namespace Arsist.Runtime.UI
             var bgImage = bgObj.AddComponent<UnityEngine.UI.Image>();
             bgImage.color = new Color(0, 0, 0, 0.4f);
             
-            Debug.Log("[ArsistWebViewUI] Fallback canvas initialized");
+            Debug.Log("[ArsistWebViewUI] Canvas initialized with WorldSpace rendering");
         }
 
         private string GetDefaultHTML()

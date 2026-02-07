@@ -52,15 +52,19 @@ namespace Arsist.Runtime
                     return;
                 }
                 
-                // StreamingAssetsから読む場合
+                // StreamingAssetsから読む場合のパス構築
                 string fullPath = modelPath;
                 if (!modelPath.StartsWith("http") && !System.IO.Path.IsPathRooted(modelPath))
                 {
-                    // AndroidのStreamingAssetsはAPK内(jar:)になりやすく、Path.Combine だと壊れることがあるので
-                    // URLとして扱える形に寄せる。
+#if UNITY_ANDROID && !UNITY_EDITOR
+                    // Androidの場合：常にfile:///android_asset/スキームを使う
+                    fullPath = "file:///android_asset/" + modelPath;
+#else
+                    // PC/エディタ：StreamingAssets ディレクトリからの相対パス
                     var basePath = Application.streamingAssetsPath;
-                    if (!basePath.EndsWith("/")) basePath += "/";
+                    if (!basePath.EndsWith("/") && !basePath.EndsWith("\\")) basePath += "/";
                     fullPath = basePath + modelPath;
+#endif
                 }
 
 #if !UNITY_ANDROID || UNITY_EDITOR
@@ -74,6 +78,7 @@ namespace Arsist.Runtime
 
                 Debug.Log($"[ArsistModelLoader] Loading from: {fullPath}");
                 bool success = await LoadGltfWithFallbackAsync(gltf, fullPath);
+                Debug.Log($"[ArsistModelLoader] LoadGltfWithFallbackAsync result: {success}, gltf scene count: {(gltf != null ? "valid" : "null")}");
                 
                 // ロード後のnullチェック
                 if (this == null || gameObject == null)
@@ -84,15 +89,29 @@ namespace Arsist.Runtime
                 
                 if (success)
                 {
-                    // transform が null でないことを確認
-                    if (transform != null)
+                    // gltf と transform が null でないことを確認
+                    if (gltf == null)
                     {
+                        Debug.LogError($"[ArsistModelLoader] GltfImport became null after load: {modelPath}");
+                        return;
+                    }
+                    
+                    if (transform == null)
+                    {
+                        Debug.LogError($"[ArsistModelLoader] Transform is null: {modelPath}");
+                        return;
+                    }
+                    
+                    try
+                    {
+                        Debug.Log($"[ArsistModelLoader] About to instantiate: {modelPath} (gltf={gltf}, transform={transform})");
                         await gltf.InstantiateMainSceneAsync(transform);
                         Debug.Log($"[ArsistModelLoader] Loaded: {modelPath}");
                     }
-                    else
+                    catch (System.Exception ex)
                     {
-                        Debug.LogError($"[ArsistModelLoader] Transform is null: {modelPath}");
+                        Debug.LogError($"[ArsistModelLoader] InstantiateMainSceneAsync failed: {ex.Message}");
+                        Debug.LogException(ex);
                     }
                 }
                 else
@@ -119,26 +138,51 @@ namespace Arsist.Runtime
 #if GLTFAST
         private async Task<bool> LoadGltfWithFallbackAsync(GltfImport gltf, string fullPath)
         {
+            Debug.Log($"[ArsistModelLoader] LoadGltfWithFallbackAsync starting with path: {fullPath}");
+
 #if UNITY_ANDROID && !UNITY_EDITOR
-            // AndroidのStreamingAssets(jar:)はgltf.Loadが失敗するケースがあるため、バイナリ読み込みを試す
-            if (fullPath.StartsWith("jar:", StringComparison.OrdinalIgnoreCase) ||
-                fullPath.StartsWith("content:", StringComparison.OrdinalIgnoreCase) ||
-                fullPath.StartsWith("file:///android_asset", StringComparison.OrdinalIgnoreCase))
+            // Androidでは file:///android_asset/ のパスを使う場合、バイナリロードを試みる
+            if (fullPath.StartsWith("file:///android_asset/", StringComparison.OrdinalIgnoreCase))
             {
+                Debug.Log("[ArsistModelLoader] Using binary load for Android StreamingAssets");
                 var data = await DownloadBytesAsync(fullPath);
-                if (data == null || data.Length == 0)
+                if (data != null && data.Length > 0)
                 {
-                    Debug.LogError($"[ArsistModelLoader] Failed to download model bytes: {fullPath}");
-                    return false;
+                    Debug.Log($"[ArsistModelLoader] Downloaded {data.Length} bytes");
+                    return await TryLoadGltfBinaryAsync(gltf, data, fullPath);
                 }
-                return await TryLoadGltfBinaryAsync(gltf, data, fullPath);
+                else
+                {
+                    Debug.LogWarning("[ArsistModelLoader] Binary download failed, trying gltf.Load");
+                }
             }
 #endif
 
-            return await gltf.Load(fullPath);
+            try
+            {
+                Debug.Log($"[ArsistModelLoader] Calling gltf.Load({fullPath})");
+                var result = await gltf.Load(fullPath);
+                Debug.Log($"[ArsistModelLoader] gltf.Load returned: {result}");
+                
+                if (!result)
+                {
+                    Debug.LogError($"[ArsistModelLoader] gltf.Load returned false for {fullPath}");
+                    return false;
+                }
+                
+                // glTFastが正常にロードされたか確認
+                Debug.Log("[ArsistModelLoader] glTF load successful");
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[ArsistModelLoader] gltf.Load threw exception: {ex.Message}");
+                Debug.LogException(ex);
+                return false;
+            }
         }
 
-        private async Task<bool> DownloadBytesAsync(string url)
+        private async Task<byte[]> DownloadBytesAsync(string url)
         {
             using (var req = UnityWebRequest.Get(url))
             {

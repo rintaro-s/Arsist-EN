@@ -145,6 +145,8 @@ namespace Arsist.Builder
             var scenesJson = File.ReadAllText(scenesPath);
             var scenes = JArray.Parse(scenesJson);
 
+            var buildScenes = new List<EditorBuildSettingsScene>();
+
             foreach (JObject scene in scenes)
             {
                 var sceneName = scene["name"]?.ToString() ?? "MainScene";
@@ -180,6 +182,17 @@ namespace Arsist.Builder
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(Application.dataPath, "..", scenePath)));
                 UnityEditor.SceneManagement.EditorSceneManager.SaveScene(newScene, scenePath);
                 AssetDatabase.Refresh();
+                
+                // ビルド設定に追加
+                buildScenes.Add(new EditorBuildSettingsScene(scenePath, true));
+                Debug.Log($"[Arsist] Scene added to build settings: {scenePath}");
+            }
+            
+            // ビルド設定を更新
+            if (buildScenes.Count > 0)
+            {
+                EditorBuildSettings.scenes = buildScenes.ToArray();
+                Debug.Log($"[Arsist] Build settings updated with {buildScenes.Count} scene(s)");
             }
         }
 
@@ -672,7 +685,25 @@ namespace Arsist.Builder
             if (hasUICode)
             {
                 Debug.Log("[Arsist] Creating WebView UI");
-                CreateWebViewUI();
+                
+                // 最初のシーンを開く
+                var buildScenes = EditorBuildSettings.scenes;
+                if (buildScenes != null && buildScenes.Length > 0)
+                {
+                    var firstScenePath = buildScenes[0].path;
+                    var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(firstScenePath);
+                    
+                    // WebView UIを追加
+                    CreateWebViewUI();
+                    
+                    // シーンを保存
+                    UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene);
+                    Debug.Log($"[Arsist] WebView UI added to scene: {firstScenePath}");
+                }
+                else
+                {
+                    Debug.LogWarning("[Arsist] No scenes found in build settings, WebView UI not added");
+                }
                 return;
             }
 
