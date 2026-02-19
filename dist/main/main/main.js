@@ -46,6 +46,7 @@ const fs = __importStar(require("fs-extra"));
 const crypto_1 = require("crypto");
 const os = __importStar(require("os"));
 const electron_store_1 = __importDefault(require("electron-store"));
+const child_process_1 = require("child_process");
 const UnityBuilder_1 = require("./unity/UnityBuilder");
 const ProjectManager_1 = require("./project/ProjectManager");
 const AdapterManager_1 = require("./adapters/AdapterManager");
@@ -83,6 +84,9 @@ let projectManager = null;
 let unityBuilder = null;
 let adapterManager = null;
 let currentProjectPathForAssets = null;
+let mcpServerProcess = null;
+let mcpServerEnabled = false;
+let mcpServerPort = 0; // stdio transport なので不要だが、情報として保持
 const isDev = process.env.NODE_ENV === 'development';
 // Linux向け：Vulkan周りの警告/不安定さを避ける（WebGLは通常OpenGL経由）
 if (process.platform === 'linux') {
@@ -504,6 +508,28 @@ electron_1.ipcMain.handle('sdk:xreal-status', async () => {
         return { exists: false, error: error.message };
     }
 });
+electron_1.ipcMain.handle('sdk:quest-status', async () => {
+    try {
+        const repoRoot = path.join(__dirname, '../../..');
+        const questDir = path.join(repoRoot, 'sdk', 'quest');
+        if (!await fs.pathExists(questDir)) {
+            return { exists: false, path: questDir, error: 'sdk/quest directory not found' };
+        }
+        const entries = await fs.readdir(questDir);
+        const core = entries.find((f) => /^com\.meta\.xr\.sdk\.core-.*\.tgz$/i.test(f));
+        const mruk = entries.find((f) => /^com\.meta\.xr\.mrutilitykit-.*\.tgz$/i.test(f));
+        return {
+            exists: !!core,
+            path: questDir,
+            corePackage: core,
+            mrukPackage: mruk,
+            error: core ? undefined : 'com.meta.xr.sdk.core-*.tgz not found in sdk/quest',
+        };
+    }
+    catch (error) {
+        return { exists: false, error: error.message };
+    }
+});
 electron_1.ipcMain.handle('assets:import', async (_, params) => {
     try {
         const projectPath = params?.projectPath;
@@ -605,7 +631,155 @@ electron_1.ipcMain.handle('store:set', async (_, key, value) => {
     store.set(key, value);
     return { success: true };
 });
+// ========================================
+// MCP サーバー管理
+// ========================================
+function startMCPServer(projectPath) {
+    return new Promise((resolve) => {
+        if (mcpServerProcess) {
+            resolve({ success: false, message: 'MCP server is already running' });
+            return;
+        }
+        try {
+            const scriptPath = isDev
+                ? path.join(process.cwd(), 'scripts', 'mcp-ir-server.mjs')
+                : path.join(process.resourcesPath, 'scripts', 'mcp-ir-server.mjs');
+            // Node.js パスを取得（Electron内蔵のNode.jsを使用）
+            const nodePath = process.execPath; // Electronの実行ファイル
+            const args = [scriptPath];
+            // 環境変数で stdio transport を使う
+            const env = {
+                ...process.env,
+                MCP_PROJECT_PATH: projectPath,
+            };
+            mcpServerProcess = (0, child_process_1.spawn)(nodePath, args, {
+                env,
+                stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
+            });
+            mcpServerProcess.on('error', (err) => {
+                mcpServerEnabled = false;
+                mcpServerProcess = null;
+                resolve({ success: false, message: `Failed to start MCP server: ${err.message}` });
+            });
+            mcpServerProcess.on('exit', (code) => {
+                mcpServerEnabled = false;
+                mcpServerProcess = null;
+            });
+            // サーバー起動確認（stderr にログが出る）
+            let startupOutput = '';
+            const startupTimeout = setTimeout(() => {
+                if (mcpServerProcess) {
+                    mcpServerEnabled = true;
+                    resolve({
+                        success: true,
+                        message: 'MCP server started (stdio transport)',
+                        config: {
+                            transport: 'stdio',
+                            command: nodePath,
+                            args: args,
+                            projectPath: projectPath,
+                            tools: 17, // 現在のツール数
+                            clientSetup: {
+                                description: 'Add the following configuration to your MCP client (e.g., Claude Desktop settings.json):',
+                                config: {
+                                    mcpServers: {
+                                        'arsist-ir': {
+                                            command: nodePath,
+                                            args: args,
+                                            env: {
+                                                MCP_PROJECT_PATH: projectPath,
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    });
+                }
+            }, 500);
+            mcpServerProcess.stderr?.on('data', (data) => {
+                startupOutput += data.toString();
+                if (startupOutput.includes('error') || startupOutput.includes('Error')) {
+                    clearTimeout(startupTimeout);
+                    mcpServerProcess?.kill();
+                    mcpServerProcess = null;
+                    mcpServerEnabled = false;
+                    resolve({ success: false, message: `MCP server startup error: ${startupOutput}` });
+                }
+            });
+        }
+        catch (error) {
+            mcpServerEnabled = false;
+            mcpServerProcess = null;
+            resolve({ success: false, message: `Exception: ${error.message}` });
+        }
+    });
+}
+function stopMCPServer() {
+    if (!mcpServerProcess) {
+        return { success: false, message: 'MCP server is not running' };
+    }
+    try {
+        mcpServerProcess.kill('SIGTERM');
+        mcpServerProcess = null;
+        mcpServerEnabled = false;
+        return { success: true, message: 'MCP server stopped' };
+    }
+    catch (error) {
+        return { success: false, message: `Failed to stop MCP server: ${error.message}` };
+    }
+}
+function getMCPServerStatus() {
+    return {
+        enabled: mcpServerEnabled,
+        running: mcpServerProcess !== null,
+        config: mcpServerEnabled && currentProjectPathForAssets
+            ? {
+                transport: 'stdio',
+                projectPath: currentProjectPathForAssets,
+                tools: 17,
+            }
+            : undefined,
+    };
+}
+electron_1.ipcMain.handle('mcp:start', async (_, projectPath) => {
+    return await startMCPServer(projectPath);
+});
+electron_1.ipcMain.handle('mcp:stop', async () => {
+    return stopMCPServer();
+});
+electron_1.ipcMain.handle('mcp:status', async () => {
+    return getMCPServerStatus();
+});
+electron_1.ipcMain.handle('mcp:get-client-config', async () => {
+    if (!mcpServerEnabled || !currentProjectPathForAssets) {
+        return { success: false, message: 'MCP server is not running' };
+    }
+    const nodePath = process.execPath;
+    const scriptPath = isDev
+        ? path.join(process.cwd(), 'scripts', 'mcp-ir-server.mjs')
+        : path.join(process.resourcesPath, 'scripts', 'mcp-ir-server.mjs');
+    return {
+        success: true,
+        config: {
+            description: 'Add this configuration to your MCP client (e.g., Claude Desktop settings.json on Windows: %APPDATA%\\Claude\\claude_desktop_config.json)',
+            json: {
+                mcpServers: {
+                    'arsist-ir': {
+                        command: nodePath,
+                        args: [scriptPath],
+                        env: {
+                            MCP_PROJECT_PATH: currentProjectPathForAssets,
+                        },
+                    },
+                },
+            },
+        },
+    };
+});
+// ========================================
 // ウィンドウ操作
+// ========================================
 electron_1.ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize();
 });

@@ -33,6 +33,7 @@ export declare class UnityBuilder extends EventEmitter {
     private unityTemplatePath;
     private buildInProgress;
     private lastLogFile;
+    private isLicensingNoise;
     constructor(unityPath: string);
     private resolveUnityTemplatePath;
     private resolveRepoRoot;
@@ -72,8 +73,13 @@ export declare class UnityBuilder extends EventEmitter {
     private transferProjectData;
     private applyDevicePatch;
     private isXrealTarget;
+    private isQuestTarget;
     private integrateRequiredSdks;
     private integrateXrealSdk;
+    private integrateQuestSdk;
+    private applyQuestXrBootstrap;
+    private readQuestSampleDependencies;
+    private applyQuestRequiredDependencies;
     private executeUnityBuild;
     private parseUnityProgress;
     private verifyBuildOutput;

@@ -16,6 +16,7 @@ interface DeviceOption {
 
 const devices: DeviceOption[] = [
   { id: 'XREAL_One', name: 'XREAL One (Beam Pro)', available: true },
+  { id: 'Meta_Quest', name: 'Meta Quest', available: true },
   { id: 'XREAL_Air2', name: 'XREAL Air 2', available: false },
   { id: 'Rokid_Max', name: 'Rokid Max', available: false },
   { id: 'VITURE_One', name: 'VITURE One', available: false },
@@ -37,7 +38,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   
   const [selectedDevice, setSelectedDevice] = useState(project?.targetDevice || 'XREAL_One');
   const [outputPath, setOutputPath] = useState('');
-  const [developmentBuild, setDevelopmentBuild] = useState(true);
+  const [developmentBuild, setDevelopmentBuild] = useState(false);
   const [unityPath, setUnityPath] = useState('');
   const [unityValid, setUnityValid] = useState<boolean | null>(null);
   const [unityManualLicenseFile, setUnityManualLicenseFile] = useState('');
@@ -187,7 +188,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         projectName: project.name,
         version: project.version,
         appType: project.appType,
-        targetDevice: project.targetDevice,
+        targetDevice: selectedDevice,
         arSettings: project.arSettings,
         designSystem: project.designSystem,
         build: androidBuild,

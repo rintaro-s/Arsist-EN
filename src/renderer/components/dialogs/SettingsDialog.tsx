@@ -25,6 +25,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [unityCandidates, setUnityCandidates] = useState<string[]>([]);
   const [detectingUnity, setDetectingUnity] = useState(false);
   const [xrealSdkStatus, setXrealSdkStatus] = useState<{ exists: boolean; path?: string; version?: string; error?: string } | null>(null);
+  const [questSdkStatus, setQuestSdkStatus] = useState<{ exists: boolean; path?: string; corePackage?: string; mrukPackage?: string; error?: string } | null>(null);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -66,6 +67,19 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         }
       } catch (e) {
         setXrealSdkStatus({ exists: false, error: String((e as any)?.message || e) });
+      }
+
+      // Quest SDK状態
+      try {
+        const api: any = window.electronAPI as any;
+        if (api.sdk?.questStatus) {
+          const s = await api.sdk.questStatus();
+          setQuestSdkStatus(s);
+        } else {
+          setQuestSdkStatus({ exists: false, error: 'SDK検出APIが利用できません（Electronの再起動が必要な可能性があります）' });
+        }
+      } catch (e) {
+        setQuestSdkStatus({ exists: false, error: String((e as any)?.message || e) });
       }
     };
 
@@ -362,6 +376,45 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               </div>
               <div className="text-[10px] text-arsist-muted">
                 ※ XREAL向けビルド時は、SDKをUnityプロジェクトの <span className="font-mono">Packages/com.xreal.xr</span> に埋め込み、
+                <span className="font-mono">Packages/manifest.json</span> を自動更新します。
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">SDK（Quest）</h3>
+            <div className="space-y-2 text-xs">
+              <div className="text-arsist-muted">
+                Quest向けSDKは
+                <span className="font-mono"> sdk/quest </span>
+                に配置してください。
+              </div>
+              <div className="p-2 bg-arsist-bg border border-arsist-border rounded">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] text-arsist-muted">検出状態（Core）</div>
+                  <div className={questSdkStatus?.exists ? 'text-arsist-success' : 'text-arsist-error'}>
+                    {questSdkStatus?.exists ? 'OK' : '未検出'}
+                  </div>
+                </div>
+                <div className="mt-1 text-[10px] text-arsist-muted">SDK配置先</div>
+                <div className="font-mono text-[10px] text-arsist-text break-all">
+                  {questSdkStatus?.path || 'sdk/quest'}
+                </div>
+                <div className="mt-1 text-[10px] text-arsist-muted">Core package</div>
+                <div className="font-mono text-[10px] text-arsist-text break-all">
+                  {questSdkStatus?.corePackage || 'com.meta.xr.sdk.core-*.tgz'}
+                </div>
+                <div className="mt-1 text-[10px] text-arsist-muted">MR Utility Kit（任意）</div>
+                <div className="font-mono text-[10px] text-arsist-text break-all">
+                  {questSdkStatus?.mrukPackage || 'com.meta.xr.mrutilitykit-*.tgz'}
+                </div>
+                {questSdkStatus?.error && (
+                  <div className="mt-1 text-[10px] text-arsist-error whitespace-pre-wrap">{questSdkStatus.error}</div>
+                )}
+              </div>
+              <div className="text-[10px] text-arsist-muted">
+                ※ Quest向けビルド時は、<span className="font-mono">sdk/quest</span> の .tgz をUnityプロジェクトの
+                <span className="font-mono">Packages</span> に埋め込み、
                 <span className="font-mono">Packages/manifest.json</span> を自動更新します。
               </div>
             </div>

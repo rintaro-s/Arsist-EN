@@ -50,6 +50,16 @@ class UnityBuilder extends events_1.EventEmitter {
     unityTemplatePath;
     buildInProgress = false;
     lastLogFile = null;
+    isLicensingNoise(text) {
+        const s = text || '';
+        return (/Access token is unavailable/i.test(s) ||
+            /Licensing::Module/i.test(s) ||
+            /Licensing::Client/i.test(s) ||
+            /LicensingClient has failed validation/i.test(s) ||
+            /Code\s*10\s*while verifying Licensing Client signature/i.test(s) ||
+            /Exception\s*occ?u?r?e?d?\s+while\s+accepting\s+client\s+connection/i.test(s) ||
+            (/System\.IO\.IOException/i.test(s) && /(pipe|\u30D1\u30A4\u30D7)/i.test(s)));
+    }
     constructor(unityPath) {
         super();
         this.unityPath = unityPath;
@@ -332,12 +342,7 @@ class UnityBuilder extends events_1.EventEmitter {
             this.emitProgress('build', 50, 'Unityビルドを実行中...');
             const buildStartedAt = Date.now();
             const isLicensingError = (msg) => {
-                const s = msg || '';
-                return (/Licensing::Module/i.test(s) ||
-                    /Licensing::Client/i.test(s) ||
-                    /LicensingClient has failed validation/i.test(s) ||
-                    /Code\s*10\s*while verifying Licensing Client signature/i.test(s) ||
-                    /Access token is unavailable/i.test(s));
+                return this.isLicensingNoise(msg);
             };
             const findManualLicenseFile = async () => {
                 // Unity Hubでログイン済みでも、ヘッドレス環境ではtoken更新に失敗することがある。
@@ -643,9 +648,16 @@ class UnityBuilder extends events_1.EventEmitter {
         const normalized = (targetDevice || '').toLowerCase();
         return normalized.includes('xreal');
     }
+    isQuestTarget(targetDevice) {
+        const normalized = (targetDevice || '').toLowerCase();
+        return normalized.includes('quest') || normalized.includes('meta');
+    }
     async integrateRequiredSdks(unityProjectPath, targetDevice) {
         if (this.isXrealTarget(targetDevice)) {
             await this.integrateXrealSdk(unityProjectPath);
+        }
+        if (this.isQuestTarget(targetDevice)) {
+            await this.integrateQuestSdk(unityProjectPath);
         }
     }
     async integrateXrealSdk(unityProjectPath) {
@@ -672,6 +684,119 @@ class UnityBuilder extends events_1.EventEmitter {
         manifest.dependencies = dependencies;
         await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
         this.emit('log', '[Arsist] Embedded XREAL SDK: Packages/com.xreal.xr (manifest.json updated)');
+    }
+    async integrateQuestSdk(unityProjectPath) {
+        const resolvedRepo = this.resolveRepoRoot();
+        if (!resolvedRepo.path) {
+            throw new Error(`Quest SDK not found (repo root not detected).\nSearched:\n- ${resolvedRepo.searched.join('\n- ')}`);
+        }
+        const questSdkDir = path.join(resolvedRepo.path, 'sdk', 'quest');
+        if (!await fs.pathExists(questSdkDir)) {
+            throw new Error(`Quest SDK directory not found: ${questSdkDir}`);
+        }
+        const files = await fs.readdir(questSdkDir);
+        const coreTgz = files.find((f) => /^com\.meta\.xr\.sdk\.core-.*\.tgz$/i.test(f));
+        const mrukTgz = files.find((f) => /^com\.meta\.xr\.mrutilitykit-.*\.tgz$/i.test(f));
+        if (!coreTgz) {
+            throw new Error(`Quest SDK core package not found. Place com.meta.xr.sdk.core-*.tgz under sdk/quest.\nLooked in:\n- ${questSdkDir}`);
+        }
+        const packagesDir = path.join(unityProjectPath, 'Packages');
+        await fs.ensureDir(packagesDir);
+        const copiedPackages = [];
+        const copyTgzToPackages = async (packageId, fileName) => {
+            const source = path.join(questSdkDir, fileName);
+            const destination = path.join(packagesDir, fileName);
+            await fs.copy(source, destination, { overwrite: true });
+            copiedPackages.push({ id: packageId, fileName });
+        };
+        await copyTgzToPackages('com.meta.xr.sdk.core', coreTgz);
+        if (mrukTgz) {
+            await copyTgzToPackages('com.meta.xr.mrutilitykit', mrukTgz);
+        }
+        const manifestPath = path.join(packagesDir, 'manifest.json');
+        if (!await fs.pathExists(manifestPath)) {
+            throw new Error(`Unity manifest.json not found: ${manifestPath}`);
+        }
+        const manifest = await fs.readJSON(manifestPath);
+        const dependencies = (manifest.dependencies ?? {});
+        for (const pkg of copiedPackages) {
+            dependencies[pkg.id] = `file:${pkg.fileName}`;
+        }
+        // Quest SDKサンプル準拠の最低依存を補完
+        const questSampleDependencies = await this.readQuestSampleDependencies(resolvedRepo.path);
+        this.applyQuestRequiredDependencies(dependencies, questSampleDependencies);
+        manifest.dependencies = dependencies;
+        await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
+        const names = copiedPackages.map((p) => `${p.id} -> ${p.fileName}`).join(', ');
+        const physics2d = dependencies['com.unity.modules.physics2d'] || '(missing)';
+        await this.applyQuestXrBootstrap(unityProjectPath, resolvedRepo.path);
+        this.emit('log', `[Arsist] Embedded Quest SDK packages: ${names} (manifest.json updated)`);
+        this.emit('log', `[Arsist] Quest dependencies ensured (physics2d=${physics2d})`);
+    }
+    async applyQuestXrBootstrap(unityProjectPath, repoRoot) {
+        const sampleRoot = path.join(repoRoot, 'sdk', 'quest', 'Unity-InteractionSDK-Samples');
+        if (!await fs.pathExists(sampleRoot)) {
+            this.emit('log', `[Arsist] Quest XR bootstrap skipped: sample root not found (${sampleRoot})`);
+            return;
+        }
+        const sampleAssetsXr = path.join(sampleRoot, 'Assets', 'XR');
+        const sampleProjectSettings = path.join(sampleRoot, 'ProjectSettings');
+        if (await fs.pathExists(sampleAssetsXr)) {
+            const destAssetsXr = path.join(unityProjectPath, 'Assets', 'XR');
+            await fs.copy(sampleAssetsXr, destAssetsXr, { overwrite: true });
+        }
+        const copySettingIfExists = async (fileName) => {
+            const src = path.join(sampleProjectSettings, fileName);
+            const dst = path.join(unityProjectPath, 'ProjectSettings', fileName);
+            if (await fs.pathExists(src)) {
+                await fs.copy(src, dst, { overwrite: true });
+            }
+        };
+        await copySettingIfExists('EditorBuildSettings.asset');
+        await copySettingIfExists('XRPackageSettings.asset');
+        await copySettingIfExists('XRSettings.asset');
+        this.emit('log', '[Arsist] Quest XR bootstrap assets/settings applied (Assets/XR + ProjectSettings XR files)');
+    }
+    async readQuestSampleDependencies(repoRoot) {
+        const sampleManifestPath = path.join(repoRoot, 'sdk', 'quest', 'Unity-InteractionSDK-Samples', 'Packages', 'manifest.json');
+        if (!await fs.pathExists(sampleManifestPath)) {
+            return null;
+        }
+        try {
+            const sampleManifest = await fs.readJSON(sampleManifestPath);
+            const deps = sampleManifest?.dependencies;
+            if (!deps || typeof deps !== 'object')
+                return null;
+            return deps;
+        }
+        catch {
+            return null;
+        }
+    }
+    applyQuestRequiredDependencies(targetDependencies, sampleDependencies) {
+        const setIfMissing = (pkg, fallbackVersion) => {
+            if (!targetDependencies[pkg]) {
+                targetDependencies[pkg] = sampleDependencies?.[pkg] || fallbackVersion;
+            }
+        };
+        // Meta Quest SDK core compileで必要になりやすい依存
+        setIfMissing('com.unity.modules.physics2d', '1.0.0');
+        setIfMissing('com.unity.modules.physics', '1.0.0');
+        setIfMissing('com.unity.modules.ui', '1.0.0');
+        setIfMissing('com.unity.modules.uielements', '1.0.0');
+        setIfMissing('com.unity.ugui', '1.0.0');
+        setIfMissing('com.unity.xr.management', '4.5.0');
+        setIfMissing('com.unity.xr.oculus', '4.4.0');
+        // サンプルにある built-in modules を不足分だけ補完
+        if (sampleDependencies) {
+            for (const [pkg, version] of Object.entries(sampleDependencies)) {
+                if (!pkg.startsWith('com.unity.modules.'))
+                    continue;
+                if (!targetDependencies[pkg]) {
+                    targetDependencies[pkg] = version;
+                }
+            }
+        }
     }
     async executeUnityBuild(unityProjectPath, config, options) {
         return new Promise((resolve) => {
@@ -784,13 +909,21 @@ class UnityBuilder extends events_1.EventEmitter {
                 if (logIssues.errors.length > 0) {
                     logIssues.errors.forEach((line) => this.emit('log', `[Unity Error] ${line}`));
                 }
+                const isLicensingMessage = (text) => this.isLicensingNoise(text);
                 const pickBestError = (errors) => {
-                    const prefer = errors.find((e) => /error\s+CS\d+/i.test(e));
-                    if (prefer)
-                        return prefer;
-                    const ignoreLic = errors.find((e) => !/Access token is unavailable/i.test(e));
-                    if (ignoreLic)
-                        return ignoreLic;
+                    // 1) コンパイルエラー
+                    const csError = errors.find((e) => /error\s+CS\d+/i.test(e));
+                    if (csError)
+                        return csError;
+                    // 2) BuildFailedException / Player build error
+                    const buildFailure = errors.find((e) => /BuildFailedException|Error building Player/i.test(e));
+                    if (buildFailure)
+                        return buildFailure;
+                    // 3) ライセンス以外のエラーを優先
+                    const nonLicensing = errors.find((e) => !isLicensingMessage(e));
+                    if (nonLicensing)
+                        return nonLicensing;
+                    // 4) それでも無ければ先頭
                     return errors[0];
                 };
                 // Unity はログに例外が出ても exit code 0 で成功することがあるため、
@@ -801,11 +934,8 @@ class UnityBuilder extends events_1.EventEmitter {
                 }
                 if (logIssues.errors.length > 0) {
                     const best = pickBestError(logIssues.errors);
-                    if (/Access token is unavailable/i.test(best) ||
-                        /Licensing::Module/i.test(best) ||
-                        /Licensing::Client/i.test(best) ||
-                        /LicensingClient has failed validation/i.test(best) ||
-                        /Code\s*10\s*while verifying Licensing Client signature/i.test(best)) {
+                    const hasNonLicensingError = logIssues.errors.some((e) => !isLicensingMessage(e));
+                    if (isLicensingMessage(best) && !hasNonLicensingError) {
                         const hint = [];
                         hint.push(best);
                         hint.push('');
@@ -898,6 +1028,45 @@ class UnityBuilder extends events_1.EventEmitter {
         catch (e) {
             // ignore
         }
+        // サブディレクトリも含めて探索（Unity設定によっては下位フォルダへ出力されるため）
+        try {
+            const maxDepth = 5;
+            const stack = [{ dir: config.outputPath, depth: 0 }];
+            let best = null;
+            while (stack.length > 0) {
+                const current = stack.pop();
+                if (current.depth > maxDepth)
+                    continue;
+                const entries = await fs.readdir(current.dir);
+                for (const entry of entries) {
+                    const fullPath = path.join(current.dir, entry);
+                    let stat;
+                    try {
+                        stat = await fs.stat(fullPath);
+                    }
+                    catch {
+                        continue;
+                    }
+                    if (stat.isDirectory()) {
+                        stack.push({ dir: fullPath, depth: current.depth + 1 });
+                        continue;
+                    }
+                    const lower = entry.toLowerCase();
+                    if (!lower.endsWith('.apk') && !lower.endsWith('.aab'))
+                        continue;
+                    if (options?.sinceEpochMs && stat.mtimeMs < options.sinceEpochMs)
+                        continue;
+                    if (!best || stat.mtimeMs > best.mtimeMs) {
+                        best = { path: fullPath, mtimeMs: stat.mtimeMs };
+                    }
+                }
+            }
+            if (best)
+                return best.path;
+        }
+        catch {
+            // ignore
+        }
         return null;
     }
     async readUnityLogIssues(logFile) {
@@ -917,9 +1086,12 @@ class UnityBuilder extends events_1.EventEmitter {
                     errors.push(t);
                     continue;
                 }
+                if (this.isLicensingNoise(t)) {
+                    continue;
+                }
                 // Unity/CSC は "error CSxxxx" のように小文字になることがある
                 // ただし "ValidationExceptions.json" のようなファイル名もあるため、Exception 判定はコロン付きに限定する
-                if (/(^|\s)error(\s|:)/i.test(t) || /Exception\s*:/i.test(t) || /BuildFailedException\s*:/i.test(t)) {
+                if (/(^|\s)error(\s|:)/i.test(t) || (/Exception\s*:/i.test(t) && !this.isLicensingNoise(t)) || /BuildFailedException\s*:/i.test(t)) {
                     errors.push(t);
                     continue;
                 }

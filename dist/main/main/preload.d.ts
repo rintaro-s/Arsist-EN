@@ -28,6 +28,7 @@ declare const electronAPI: {
     };
     sdk: {
         xrealStatus: () => Promise<any>;
+        questStatus: () => Promise<any>;
     };
     assets: {
         import: (params: {
@@ -42,6 +43,12 @@ declare const electronAPI: {
     store: {
         get: (key: string) => Promise<any>;
         set: (key: string, value: any) => Promise<any>;
+    };
+    mcp: {
+        start: (projectPath: string) => Promise<any>;
+        stop: () => Promise<any>;
+        getStatus: () => Promise<any>;
+        getClientConfig: () => Promise<any>;
     };
     window: {
         minimize: () => Promise<any>;

@@ -6,6 +6,7 @@ import { BuildDialog } from './components/dialogs/BuildDialog';
 import { NewProjectDialog } from './components/dialogs/NewProjectDialog';
 import { SettingsDialog } from './components/dialogs/SettingsDialog';
 import { PreviewDialog } from './components/dialogs/PreviewDialog';
+import { MCPDialog } from './components/dialogs/MCPDialog';
 import { useProjectStore } from './stores/projectStore';
 import { useUIStore } from './stores/uiStore';
 import { DataStoreProvider } from './stores/dataStoreContext';
@@ -33,6 +34,10 @@ declare global {
         get: (id: string) => Promise<any>;
         applyPatch: (id: string, path: string) => Promise<any>;
       };
+      sdk?: {
+        xrealStatus: () => Promise<{ exists: boolean; path?: string; version?: string; error?: string }>;
+        questStatus: () => Promise<{ exists: boolean; path?: string; corePackage?: string; mrukPackage?: string; error?: string }>;
+      };
       fs: {
         readFile: (path: string) => Promise<any>;
         writeFile: (path: string, content: string) => Promise<any>;
@@ -50,6 +55,12 @@ declare global {
       store: {
         get: (key: string) => Promise<any>;
         set: (key: string, value: any) => Promise<any>;
+      };
+      mcp?: {
+        start: (projectPath: string) => Promise<{ success: boolean; message?: string; config?: any }>;
+        stop: () => Promise<{ success: boolean; message: string }>;
+        getStatus: () => Promise<{ enabled: boolean; running: boolean; config?: any }>;
+        getClientConfig: () => Promise<{ success: boolean; message?: string; config?: any }>;
       };
       window: {
         minimize: () => void;
@@ -78,10 +89,12 @@ export default function App() {
     showBuildDialog,
     showSettingsDialog,
     showPreviewDialog,
+    showMCPDialog,
     setShowNewProjectDialog,
     setShowBuildDialog,
     setShowSettingsDialog,
     setShowPreviewDialog,
+    setShowMCPDialog,
     setCurrentView 
   } = useUIStore();
 
@@ -155,6 +168,10 @@ export default function App() {
 
         {showPreviewDialog && (
           <PreviewDialog onClose={() => setShowPreviewDialog(false)} />
+        )}
+
+        {showMCPDialog && (
+          <MCPDialog onClose={() => setShowMCPDialog(false)} />
         )}
       </div>
     </DataStoreProvider>

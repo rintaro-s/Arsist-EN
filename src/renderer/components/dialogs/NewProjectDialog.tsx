@@ -38,6 +38,7 @@ const templates: TemplateOption[] = [
 
 const devices = [
   { id: 'XREAL_One', name: 'XREAL One', available: true },
+  { id: 'Meta_Quest', name: 'Meta Quest', available: true },
   { id: 'XREAL_Air2', name: 'XREAL Air 2', available: false },
   { id: 'Rokid_Max', name: 'Rokid Max', available: false },
   { id: 'VITURE_One', name: 'VITURE One', available: false },
@@ -254,7 +255,9 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
                   選択されたデバイス: {devices.find(d => d.id === selectedDevice)?.name}
                 </h4>
                 <p className="text-xs text-arsist-muted">
-                  XREAL One SDK 3.1.0 • Unity 2022.3.20f1 LTS • OpenXR準拠
+                  {selectedDevice === 'Meta_Quest'
+                    ? 'Meta XR SDK（sdk/quest）• Unity 2022.3 LTS+ • OpenXR準拠'
+                    : 'XREAL One SDK 3.1.0 • Unity 2022.3.20f1 LTS • OpenXR準拠'}
                 </p>
               </div>
             </div>

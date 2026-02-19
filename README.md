@@ -12,6 +12,7 @@ ArsistはARグラス向けのクロスプラットフォーム開発エンジン
 - 3Dシーン編集、2D UI編集、ビジュアルロジックの統合
 - Unity CLIによる自動ビルド
 - デバイスアダプターによる拡張可能なSDKパッチ機構
+- `sdk/quest` のMeta XR SDK（.tgz）を使ったQuest向けビルド
 - レイアウトやUnityバージョン指定などの詳細設定
 
 ## 開発環境
@@ -19,6 +20,7 @@ ArsistはARグラス向けのクロスプラットフォーム開発エンジン
 - Node.js 18以上
 - Unity 2022.3.20f1 LTS 以上を推奨
 - XREAL SDK 3.1.0
+- Meta Quest SDK（`sdk/quest` 配下の `com.meta.xr.sdk.core-*.tgz`）
 
 ## 起動方法
 

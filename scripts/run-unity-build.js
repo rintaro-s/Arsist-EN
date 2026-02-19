@@ -50,12 +50,13 @@ function pickFirstExisting(paths) {
   const manualLicenseFile = process.env.ARSIST_MANUAL_LICENSE_FILE;
 
   const { remoteInput, ...androidBuild } = project.buildSettings || {};
+  const selectedTargetDevice = process.env.ARSIST_TARGET_DEVICE || project.targetDevice || 'XREAL_One';
   const manifestData = {
     projectId: project.id,
     projectName: project.name,
     version: project.version,
     appType: project.appType,
-    targetDevice: project.targetDevice,
+    targetDevice: selectedTargetDevice,
     arSettings: project.arSettings,
     uiAuthoring: project.uiAuthoring,
     uiCode: project.uiCode,
@@ -80,9 +81,9 @@ function pickFirstExisting(paths) {
     projectPath: unityWorkDir,
     sourceProjectPath,
     outputPath,
-    targetDevice: project.targetDevice || 'XREAL_One',
+    targetDevice: selectedTargetDevice,
     buildTarget: 'Android',
-    developmentBuild: true,
+    developmentBuild: process.env.ARSIST_DEVELOPMENT_BUILD === 'true',
     manualLicenseFile: manualLicenseFile || undefined,
     manifestData,
     scenesData: project.scenes || [],

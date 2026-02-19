@@ -16,7 +16,12 @@
     "package": "npm run build && electron-builder",
     "lint": "eslint src --ext .ts,.tsx",
     "test": "vitest",
-    "xreal:diag": "node scripts/xreal-diag.js"
+    "xreal:diag": "node scripts/xreal-diag.js",
+    "mcp:ir": "node scripts/mcp-ir-server.mjs",
+    "verify:ir": "node scripts/verify-ir-consistency.js",
+    "verify:mcp": "node scripts/mcp-ir-smoke.mjs",
+    "verify:mcp:full": "node scripts/mcp-ir-full-test.mjs",
+    "build:unity:test": "node scripts/run-unity-build.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

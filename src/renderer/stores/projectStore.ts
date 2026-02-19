@@ -300,7 +300,7 @@ export const useProjectStore = create<ProjectState>()(
           root: {
             id: uuidv4(),
             type: 'Panel',
-            layout: 'FlexColumn',
+            layout: 'Absolute',
             style: { width: '100%', height: '100%' },
             children: [],
           },

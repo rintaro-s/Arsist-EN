@@ -68,6 +68,8 @@ class ProjectManager {
             await fs.ensureDir(path.join(projectDir, 'UI'));
             await fs.ensureDir(path.join(projectDir, 'Build'));
             const arSettings = this.createARSettings(options.template);
+            const normalizedTarget = (options.targetDevice || '').toLowerCase();
+            const isQuest = normalizedTarget.includes('quest') || normalizedTarget.includes('meta');
             const project = {
                 id: (0, uuid_1.v4)(),
                 name: options.name,
@@ -91,8 +93,8 @@ class ProjectManager {
                     packageName: `com.arsist.${options.name.toLowerCase().replace(/\s+/g, '')}`,
                     version: '1.0.0',
                     versionCode: 1,
-                    minSdkVersion: 29,
-                    targetSdkVersion: 34,
+                    minSdkVersion: isQuest ? 32 : 29,
+                    targetSdkVersion: isQuest ? 32 : 34,
                     remoteInput: {
                         udp: { enabled: true, port: 19100 },
                         tcp: { enabled: true, port: 19101 },

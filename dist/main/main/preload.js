@@ -53,6 +53,7 @@ const electronAPI = {
     // SDK状態
     sdk: {
         xrealStatus: () => electron_1.ipcRenderer.invoke('sdk:xreal-status'),
+        questStatus: () => electron_1.ipcRenderer.invoke('sdk:quest-status'),
     },
     // アセット管理
     assets: {
@@ -63,6 +64,13 @@ const electronAPI = {
     store: {
         get: (key) => electron_1.ipcRenderer.invoke('store:get', key),
         set: (key, value) => electron_1.ipcRenderer.invoke('store:set', key, value),
+    },
+    // MCP サーバー管理
+    mcp: {
+        start: (projectPath) => electron_1.ipcRenderer.invoke('mcp:start', projectPath),
+        stop: () => electron_1.ipcRenderer.invoke('mcp:stop'),
+        getStatus: () => electron_1.ipcRenderer.invoke('mcp:status'),
+        getClientConfig: () => electron_1.ipcRenderer.invoke('mcp:get-client-config'),
     },
     // ウィンドウ操作
     window: {

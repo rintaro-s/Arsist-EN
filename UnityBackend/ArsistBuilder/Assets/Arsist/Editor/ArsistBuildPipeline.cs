@@ -38,8 +38,6 @@ namespace Arsist.Builder
         /// </summary>
         public static void BuildFromCLI()
         {
-            Debug.Log("[Arsist] Build pipeline started");
-
             // コマンドライン引数を解析
             ParseCommandLineArgs();
 
@@ -288,7 +286,7 @@ namespace Arsist.Builder
                 go = CreateModelGameObject(name, modelPath);
             }
             // Dynamic UI Surface
-            else if (type == "ui_surface")
+            else if (type == "ui_surface" || type == "canvas")
             {
                 go = CreateUISurfaceGameObject(objData);
             }
@@ -698,11 +696,28 @@ namespace Arsist.Builder
         {
             var name = objData["name"]?.ToString() ?? "UISurface";
             var surfaceData = objData["uiSurface"] as JObject;
+            var canvasSettings = objData["canvasSettings"] as JObject;
 
-            var layoutId = surfaceData?["layoutId"]?.ToString() ?? string.Empty;
-            var width = surfaceData?["width"]?.Value<float>() ?? 1.2f;
-            var height = surfaceData?["height"]?.Value<float>() ?? 0.7f;
-            var pixelsPerUnit = surfaceData?["pixelsPerUnit"]?.Value<float>() ?? 1000f;
+            // 後方互換: uiSurface（旧）と canvasSettings（現行）を両対応
+            var layoutId =
+                surfaceData?["layoutId"]?.ToString() ??
+                canvasSettings?["layoutId"]?.ToString() ??
+                string.Empty;
+
+            var width =
+                surfaceData?["width"]?.Value<float>() ??
+                canvasSettings?["widthMeters"]?.Value<float>() ??
+                1.2f;
+
+            var height =
+                surfaceData?["height"]?.Value<float>() ??
+                canvasSettings?["heightMeters"]?.Value<float>() ??
+                0.7f;
+
+            var pixelsPerUnit =
+                surfaceData?["pixelsPerUnit"]?.Value<float>() ??
+                canvasSettings?["pixelsPerUnit"]?.Value<float>() ??
+                1000f;
 
             var root = new GameObject(name);
 
@@ -967,53 +982,14 @@ ScriptedImporter:
         private static void GenerateUI()
         {
             var uiPath = Path.Combine(Application.dataPath, "ArsistGenerated", "ui_layouts.json");
-            var uiCodeDir = Path.Combine(Application.dataPath, "ArsistGenerated", "UICode");
-            var hasUICode = Directory.Exists(uiCodeDir) && File.Exists(Path.Combine(uiCodeDir, "index.html"));
-
-            // **FIX: HTMLコンテンツが存在する場合は常にWebViewUIを作成**
-            // （uiAuthoringModeに依存せず、HTMLの存在で判断）
-            if (hasUICode)
-            {
-                Debug.Log("[Arsist] Creating WebView UI (HTML content detected)");
-                
-                // 最初のシーンを開く
-                var buildScenes = EditorBuildSettings.scenes;
-                if (buildScenes != null && buildScenes.Length > 0)
-                {
-                    var firstScenePath = buildScenes[0].path;
-                    var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(firstScenePath);
-                    
-                    // WebView UIを追加
-                    CreateWebViewUI();
-                    
-                    // シーンを保存
-                    UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene);
-                    Debug.Log($"[Arsist] ✅ WebView UI added to scene: {firstScenePath}");
-                }
-                else
-                {
-                    Debug.LogError("[Arsist] ❌ No scenes found in build settings, WebView UI not added");
-                }
-                
-                // UHD Canvas UI（UHD only）
-                if (File.Exists(uiPath))
-                {
-                    Debug.Log("[Arsist] Also generating UHD Canvas UI");
-                    GenerateCanvasUI(uiPath);
-                }
-                
-                return;
-            }
-
-            // UIレイアウトがある場合は従来のCanvas UIを生成
             if (File.Exists(uiPath))
             {
-                Debug.Log("[Arsist] Generating Canvas UI (no HTML detected)");
+                Debug.Log("[Arsist] Generating Canvas UI from IR (ui_layouts.json)");
                 GenerateCanvasUI(uiPath);
             }
             else
             {
-                Debug.LogWarning("[Arsist] No UI content found (neither HTML nor layouts)");
+                Debug.LogWarning("[Arsist] No UI layout IR found: ui_layouts.json");
             }
         }
 
@@ -1028,7 +1004,8 @@ ScriptedImporter:
             foreach (JObject layout in layouts)
             {
                 var scope = layout["scope"]?.ToString() ?? "uhd";
-                if (scope == "surface")
+                // 常時表示CanvasはUHDのみ生成。3D配置canvasはScene object側で生成する。
+                if (scope != "uhd")
                 {
                     continue;
                 }
@@ -1039,6 +1016,7 @@ ScriptedImporter:
                 var canvasGO = new GameObject($"Canvas_{layoutName}");
                 var canvas = canvasGO.AddComponent<Canvas>();
                 canvas.renderMode = RenderMode.WorldSpace;
+                canvas.sortingOrder = 100;
                 
                 var canvasScaler = canvasGO.AddComponent<UnityEngine.UI.CanvasScaler>();
                 canvasScaler.dynamicPixelsPerUnit = 100;
@@ -1054,13 +1032,16 @@ ScriptedImporter:
                 var trackingMode = _manifest?["arSettings"]?["trackingMode"]?.ToString() ?? "6dof";
                 var presentationMode = _manifest?["arSettings"]?["presentationMode"]?.ToString() ?? "world_anchored";
                 var distance = _manifest?["arSettings"]?["floatingScreen"]?["distance"]?.Value<float>() ?? 2f;
+                var normalizedTarget = (_targetDevice ?? "").ToLowerInvariant();
+                var isQuest = normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
 
                 var mainCam = Camera.main;
-                if (mainCam != null && (trackingMode == "3dof" || presentationMode == "head_locked_hud" || presentationMode == "floating_screen"))
+                if (mainCam != null && (isQuest || trackingMode == "3dof" || presentationMode == "head_locked_hud" || presentationMode == "floating_screen"))
                 {
-                    // カメラ前方に配置（3DoF必須）
-                    rectTransform.position = mainCam.transform.position + mainCam.transform.forward * distance;
-                    rectTransform.rotation = Quaternion.LookRotation(rectTransform.position - mainCam.transform.position);
+                    // Quest/UHDは確実に見えるようにカメラ直下へ固定
+                    canvasGO.transform.SetParent(mainCam.transform, false);
+                    rectTransform.localPosition = new Vector3(0f, 0f, Mathf.Max(0.5f, distance));
+                    rectTransform.localRotation = Quaternion.identity;
                 }
                 else
                 {
@@ -1163,59 +1144,83 @@ ScriptedImporter:
             go.transform.SetParent(parent, false);
 
             var rectTransform = go.AddComponent<RectTransform>();
-            
-            // スタイル適用
             var style = elementData["style"] as JObject;
+            ApplyRectTransformStyle(rectTransform, style);
             
             switch (type)
             {
                 case "Panel":
                     var image = go.AddComponent<UnityEngine.UI.Image>();
-                    if (style != null)
+                    if (TryParseColor(style?["backgroundColor"], out var panelColor))
                     {
-                        var bgColor = style["backgroundColor"]?.ToString();
-                        if (!string.IsNullOrEmpty(bgColor) && ColorUtility.TryParseHtmlString(bgColor, out Color color))
-                        {
-                            image.color = color;
-                        }
+                        image.color = panelColor;
+                    }
+                    else
+                    {
+                        image.color = Color.clear;
                     }
                     break;
                     
                 case "Text":
                     var text = go.AddComponent<TMPro.TextMeshProUGUI>();
                     text.text = elementData["content"]?.ToString() ?? "Text";
+                    text.enableAutoSizing = false;
                     if (style != null)
                     {
                         text.fontSize = style["fontSize"]?.Value<float>() ?? 24;
-                        var textColor = style["color"]?.ToString();
-                        if (!string.IsNullOrEmpty(textColor) && ColorUtility.TryParseHtmlString(textColor, out Color tColor))
+                        if (TryParseColor(style["color"], out var textColor))
                         {
-                            text.color = tColor;
+                            text.color = textColor;
                         }
+
+                        var align = style["textAlign"]?.ToString();
+                        text.alignment = align switch
+                        {
+                            "center" => TMPro.TextAlignmentOptions.Center,
+                            "right" => TMPro.TextAlignmentOptions.Right,
+                            _ => TMPro.TextAlignmentOptions.Left,
+                        };
+                    }
+
+                    if (IsAutoValue(style?["width"]) || IsAutoValue(style?["height"]))
+                    {
+                        var fitter = go.AddComponent<UnityEngine.UI.ContentSizeFitter>();
+                        fitter.horizontalFit = IsAutoValue(style?["width"]) ? UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize : UnityEngine.UI.ContentSizeFitter.FitMode.Unconstrained;
+                        fitter.verticalFit = IsAutoValue(style?["height"]) ? UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize : UnityEngine.UI.ContentSizeFitter.FitMode.Unconstrained;
                     }
                     break;
                     
                 case "Button":
                     var buttonImage = go.AddComponent<UnityEngine.UI.Image>();
-                    buttonImage.color = new Color(0.91f, 0.27f, 0.38f, 1f); // #E94560
+                    if (TryParseColor(style?["backgroundColor"], out var buttonColor))
+                    {
+                        buttonImage.color = buttonColor;
+                    }
+                    else
+                    {
+                        buttonImage.color = new Color(0.91f, 0.27f, 0.38f, 1f);
+                    }
                     var button = go.AddComponent<UnityEngine.UI.Button>();
                     
-                    // Gaze対応: Colliderを追加して視線入力を受け付ける
                     go.AddComponent<BoxCollider>();
                     TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistGazeTarget");
                     
-                    // Button text
                     var buttonTextGO = new GameObject("Text");
                     buttonTextGO.transform.SetParent(go.transform, false);
+                    var buttonTextRt = buttonTextGO.AddComponent<RectTransform>();
+                    buttonTextRt.anchorMin = Vector2.zero;
+                    buttonTextRt.anchorMax = Vector2.one;
+                    buttonTextRt.offsetMin = Vector2.zero;
+                    buttonTextRt.offsetMax = Vector2.zero;
+
                     var buttonText = buttonTextGO.AddComponent<TMPro.TextMeshProUGUI>();
                     buttonText.text = elementData["content"]?.ToString() ?? "Button";
                     buttonText.alignment = TMPro.TextAlignmentOptions.Center;
-                    buttonText.fontSize = 16;
-                    var buttonTextRect = buttonTextGO.GetComponent<RectTransform>();
-                    buttonTextRect.anchorMin = Vector2.zero;
-                    buttonTextRect.anchorMax = Vector2.one;
-                    buttonTextRect.offsetMin = Vector2.zero;
-                    buttonTextRect.offsetMax = Vector2.zero;
+                    buttonText.fontSize = style?["fontSize"]?.Value<float>() ?? 16f;
+                    if (TryParseColor(style?["color"], out var buttonTextColor))
+                    {
+                        buttonText.color = buttonTextColor;
+                    }
                     break;
 
                 case "Image":
@@ -1234,7 +1239,7 @@ ScriptedImporter:
                         if (sprite != null)
                         {
                             uiImage.sprite = sprite;
-                            uiImage.preserveAspect = true;
+                            uiImage.preserveAspect = false;
                         }
                         else
                         {
@@ -1267,15 +1272,54 @@ ScriptedImporter:
                 var vlg = go.AddComponent<UnityEngine.UI.VerticalLayoutGroup>();
                 vlg.childAlignment = TextAnchor.UpperCenter;
                 vlg.spacing = style?["gap"]?.Value<float>() ?? 0;
+                if (style?["padding"] is JObject vPadding)
+                {
+                    vlg.padding = ParseRectOffset(vPadding);
+                }
+                vlg.childControlWidth = false;
+                vlg.childControlHeight = false;
+                vlg.childForceExpandWidth = false;
+                vlg.childForceExpandHeight = false;
             }
             else if (layout == "FlexRow")
             {
                 var hlg = go.AddComponent<UnityEngine.UI.HorizontalLayoutGroup>();
                 hlg.childAlignment = TextAnchor.MiddleCenter;
                 hlg.spacing = style?["gap"]?.Value<float>() ?? 0;
+                if (style?["padding"] is JObject hPadding)
+                {
+                    hlg.padding = ParseRectOffset(hPadding);
+                }
+                hlg.childControlWidth = false;
+                hlg.childControlHeight = false;
+                hlg.childForceExpandWidth = false;
+                hlg.childForceExpandHeight = false;
             }
 
-            // 子要素を再帰的に処理
+            if (style != null)
+            {
+                var layoutElement = go.GetComponent<UnityEngine.UI.LayoutElement>();
+                if (layoutElement == null)
+                {
+                    layoutElement = go.AddComponent<UnityEngine.UI.LayoutElement>();
+                }
+
+                if (TryParseNumeric(style["minWidth"], out var minWidth)) layoutElement.minWidth = minWidth;
+                if (TryParseNumeric(style["minHeight"], out var minHeight)) layoutElement.minHeight = minHeight;
+
+                if (TryParseNumeric(style["width"], out var preferredWidth)) layoutElement.preferredWidth = preferredWidth;
+                if (TryParseNumeric(style["height"], out var preferredHeight)) layoutElement.preferredHeight = preferredHeight;
+
+                if (IsAutoValue(style["width"])) layoutElement.preferredWidth = -1;
+                if (IsAutoValue(style["height"])) layoutElement.preferredHeight = -1;
+
+                var isAbsolute = string.Equals(style["position"]?.ToString(), "absolute", StringComparison.OrdinalIgnoreCase);
+                if (isAbsolute)
+                {
+                    layoutElement.ignoreLayout = true;
+                }
+            }
+
             var children = elementData["children"] as JArray;
             if (children != null)
             {
@@ -1284,6 +1328,186 @@ ScriptedImporter:
                     CreateUIElement(child, go.transform);
                 }
             }
+        }
+
+        private static void ApplyRectTransformStyle(RectTransform rectTransform, JObject style)
+        {
+            if (style == null)
+            {
+                rectTransform.anchorMin = new Vector2(0f, 1f);
+                rectTransform.anchorMax = new Vector2(0f, 1f);
+                rectTransform.pivot = new Vector2(0f, 1f);
+                rectTransform.anchoredPosition = Vector2.zero;
+                rectTransform.sizeDelta = new Vector2(200f, 120f);
+                return;
+            }
+
+            var isAbsolute = string.Equals(style["position"]?.ToString(), "absolute", StringComparison.OrdinalIgnoreCase);
+
+            if (isAbsolute)
+            {
+                rectTransform.anchorMin = new Vector2(0f, 1f);
+                rectTransform.anchorMax = new Vector2(0f, 1f);
+                rectTransform.pivot = new Vector2(0f, 1f);
+
+                var left = style["left"]?.Value<float>() ?? 0f;
+                var top = style["top"]?.Value<float>() ?? 0f;
+                rectTransform.anchoredPosition = new Vector2(left, -top);
+
+                var width = ParseSizeValue(style["width"], 200f);
+                var height = ParseSizeValue(style["height"], 120f);
+                rectTransform.sizeDelta = new Vector2(width, height);
+                return;
+            }
+
+            var stretchWidth = IsPercent100(style["width"]);
+            var stretchHeight = IsPercent100(style["height"]);
+
+            if (stretchWidth || stretchHeight)
+            {
+                rectTransform.anchorMin = new Vector2(stretchWidth ? 0f : 0f, stretchHeight ? 0f : 1f);
+                rectTransform.anchorMax = new Vector2(stretchWidth ? 1f : 0f, stretchHeight ? 1f : 1f);
+                rectTransform.pivot = new Vector2(0f, 1f);
+                rectTransform.offsetMin = Vector2.zero;
+                rectTransform.offsetMax = Vector2.zero;
+
+                if (!stretchWidth || !stretchHeight)
+                {
+                    var width = stretchWidth ? 0f : ParseSizeValue(style["width"], 200f);
+                    var height = stretchHeight ? 0f : ParseSizeValue(style["height"], 120f);
+                    rectTransform.sizeDelta = new Vector2(width, height);
+                }
+
+                return;
+            }
+
+            rectTransform.anchorMin = new Vector2(0f, 1f);
+            rectTransform.anchorMax = new Vector2(0f, 1f);
+            rectTransform.pivot = new Vector2(0f, 1f);
+            rectTransform.anchoredPosition = Vector2.zero;
+            rectTransform.sizeDelta = new Vector2(
+                ParseSizeValue(style["width"], 200f),
+                ParseSizeValue(style["height"], 120f)
+            );
+        }
+
+        private static float ParseSizeValue(JToken token, float fallback)
+        {
+            if (token == null) return fallback;
+
+            if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
+            {
+                return token.Value<float>();
+            }
+
+            var raw = token.ToString().Trim();
+            if (string.IsNullOrEmpty(raw)) return fallback;
+            if (string.Equals(raw, "auto", StringComparison.OrdinalIgnoreCase)) return fallback;
+            if (raw.EndsWith("%"))
+            {
+                if (float.TryParse(raw.TrimEnd('%'), out var percent))
+                {
+                    return Mathf.Clamp01(percent / 100f) * fallback;
+                }
+            }
+
+            if (float.TryParse(raw, out var parsed))
+            {
+                return parsed;
+            }
+
+            return fallback;
+        }
+
+        private static bool TryParseNumeric(JToken token, out float value)
+        {
+            value = 0f;
+            if (token == null) return false;
+
+            if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
+            {
+                value = token.Value<float>();
+                return true;
+            }
+
+            var raw = token.ToString().Trim();
+            if (string.IsNullOrEmpty(raw)) return false;
+            if (raw.EndsWith("%", StringComparison.Ordinal)) return false;
+            if (string.Equals(raw, "auto", StringComparison.OrdinalIgnoreCase)) return false;
+
+            return float.TryParse(raw, out value);
+        }
+
+        private static bool IsAutoValue(JToken token)
+        {
+            if (token == null) return false;
+            var raw = token.ToString().Trim();
+            return string.Equals(raw, "auto", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsPercent100(JToken token)
+        {
+            if (token == null) return false;
+            var raw = token.ToString().Trim();
+            return string.Equals(raw, "100%", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static RectOffset ParseRectOffset(JObject spacing)
+        {
+            if (spacing == null) return new RectOffset();
+            return new RectOffset(
+                spacing["left"]?.Value<int>() ?? 0,
+                spacing["right"]?.Value<int>() ?? 0,
+                spacing["top"]?.Value<int>() ?? 0,
+                spacing["bottom"]?.Value<int>() ?? 0
+            );
+        }
+
+        private static bool TryParseColor(JToken token, out Color color)
+        {
+            color = Color.white;
+            if (token == null) return false;
+
+            var raw = token.ToString().Trim();
+            if (string.IsNullOrEmpty(raw)) return false;
+
+            if (ColorUtility.TryParseHtmlString(raw, out color))
+            {
+                return true;
+            }
+
+            if (raw.StartsWith("rgba", StringComparison.OrdinalIgnoreCase) || raw.StartsWith("rgb", StringComparison.OrdinalIgnoreCase))
+            {
+                var start = raw.IndexOf('(');
+                var end = raw.IndexOf(')');
+                if (start >= 0 && end > start)
+                {
+                    var values = raw.Substring(start + 1, end - start - 1).Split(',');
+                    if (values.Length >= 3)
+                    {
+                        if (float.TryParse(values[0], out var r) &&
+                            float.TryParse(values[1], out var g) &&
+                            float.TryParse(values[2], out var b))
+                        {
+                            var a = 1f;
+                            if (values.Length >= 4)
+                            {
+                                float.TryParse(values[3], out a);
+                            }
+
+                            color = new Color(
+                                Mathf.Clamp01(r / 255f),
+                                Mathf.Clamp01(g / 255f),
+                                Mathf.Clamp01(b / 255f),
+                                Mathf.Clamp01(a)
+                            );
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
         }
 
         private static void EnsureTextureIsSprite(string unityAssetPath)
@@ -1304,6 +1528,10 @@ ScriptedImporter:
             var build = manifest["build"] as JObject;
             if (build == null) return;
 
+            var normalizedTarget = (_targetDevice ?? "").ToLowerInvariant();
+            var isXreal = normalizedTarget.Contains("xreal");
+            var isQuest = normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
+
             // Android 設定
             PlayerSettings.productName = manifest["projectName"]?.ToString() ?? "ArsistApp";
             PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, 
@@ -1313,12 +1541,52 @@ ScriptedImporter:
             
             PlayerSettings.Android.minSdkVersion = (AndroidSdkVersions)(build["minSdkVersion"]?.Value<int>() ?? 29);
             PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)(build["targetSdkVersion"]?.Value<int>() ?? 34);
+
+            // Quest SDKサンプル準拠: minSdkVersion>=32
+            if (isQuest && (int)PlayerSettings.Android.minSdkVersion < 32)
+            {
+                PlayerSettings.Android.minSdkVersion = (AndroidSdkVersions)32;
+            }
+            if (isQuest && (int)PlayerSettings.Android.targetSdkVersion < 32)
+            {
+                PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)32;
+            }
             
             PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
             PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
 
+            // Quest(OpenXR + Oculus Utilities) は Linear color space が必須
+            if (isQuest)
+            {
+                PlayerSettings.colorSpace = ColorSpace.Linear;
+                EnsureQuestXRLoaderConfigured();
+            }
+
+            ApplyDeviceScriptingDefines(BuildTargetGroup.Android, isXreal, isQuest);
+
             Debug.Log("[Arsist] Build settings applied");
+        }
+
+        private static void ApplyDeviceScriptingDefines(BuildTargetGroup group, bool isXreal, bool isQuest)
+        {
+            var current = PlayerSettings.GetScriptingDefineSymbolsForGroup(group);
+            var defines = new HashSet<string>(
+                (current ?? "")
+                    .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(d => d.Trim())
+                    .Where(d => !string.IsNullOrWhiteSpace(d))
+            );
+
+            defines.Remove("ARSIST_XREAL");
+            defines.Remove("ARSIST_META_QUEST");
+
+            if (isXreal) defines.Add("ARSIST_XREAL");
+            if (isQuest) defines.Add("ARSIST_META_QUEST");
+
+            var joined = string.Join(";", defines.OrderBy(x => x));
+            PlayerSettings.SetScriptingDefineSymbolsForGroup(group, joined);
+            Debug.Log($"[Arsist] Scripting Defines ({group}): {joined}");
         }
 
         private static void ApplyDevicePatches(string targetDevice)
@@ -1347,6 +1615,7 @@ ScriptedImporter:
 
             var normalized = (targetDevice ?? "").ToLowerInvariant();
             var isXreal = normalized.Contains("xreal");
+            var isQuest = normalized.Contains("quest") || normalized.Contains("meta");
 
             // ==== Android 基本要件（XrealOneガイド準拠）====
             if (EditorUserBuildSettings.activeBuildTarget != _buildTarget)
@@ -1368,6 +1637,66 @@ ScriptedImporter:
             if (_buildTarget == BuildTarget.Android && (int)PlayerSettings.Android.minSdkVersion < 29)
             {
                 problems.Add($"minSdkVersion is too low: {(int)PlayerSettings.Android.minSdkVersion} (need >=29)");
+            }
+
+            if (isQuest && _buildTarget == BuildTarget.Android && (int)PlayerSettings.Android.minSdkVersion < 32)
+            {
+                problems.Add($"Quest requires minSdkVersion >= 32 (actual: {(int)PlayerSettings.Android.minSdkVersion})");
+            }
+
+            if (isQuest && PlayerSettings.colorSpace != ColorSpace.Linear)
+            {
+                problems.Add($"Quest requires Linear color space (actual: {PlayerSettings.colorSpace})");
+            }
+
+            if (isQuest)
+            {
+                try
+                {
+                    ValidateQuestPackageDependencies(ref problems);
+                }
+                catch (Exception e)
+                {
+                    problems.Add($"Failed to validate Quest package dependencies: {e.Message}");
+                }
+
+                try
+                {
+                    var generalSettings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+                    if (generalSettings == null)
+                    {
+                        Debug.LogWarning("[Arsist] Quest XR General Settings (Android) not found. Continuing build without hard-fail.");
+                    }
+                    else
+                    {
+                        if (!generalSettings.InitManagerOnStart)
+                        {
+                            Debug.LogWarning("[Arsist] Quest 'Initialize XR on Startup' is disabled. Continuing build without hard-fail.");
+                        }
+
+                        var manager = generalSettings.Manager;
+                        if (manager == null)
+                        {
+                            Debug.LogWarning("[Arsist] Quest XR Manager Settings is null. Continuing build without hard-fail.");
+                        }
+                        else
+                        {
+                            var hasQuestLoader = manager.activeLoaders.Any(loader => loader != null && (
+                                loader.GetType().FullName == "UnityEngine.XR.OpenXR.OpenXRLoader" ||
+                                loader.GetType().FullName == "Unity.XR.Oculus.OculusLoader"
+                            ));
+
+                            if (!hasQuestLoader)
+                            {
+                                Debug.LogWarning("[Arsist] Quest XR loader (OpenXRLoader/OculusLoader) not active. Continuing build without hard-fail.");
+                            }
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[Arsist] Quest XR validation warning (ignored): {e.Message}");
+                }
             }
 
             // Graphics API（XrealOne: Vulkan削除 & OpenGLES3のみ）
@@ -1625,6 +1954,48 @@ ScriptedImporter:
             }
         }
 
+        private static void ValidateQuestPackageDependencies(ref List<string> problems)
+        {
+            var manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                problems.Add($"Quest dependency validation failed: manifest.json not found ({manifestPath})");
+                return;
+            }
+
+            JObject manifest;
+            try
+            {
+                manifest = JObject.Parse(File.ReadAllText(manifestPath));
+            }
+            catch (Exception e)
+            {
+                problems.Add($"Quest dependency validation failed: cannot parse manifest.json ({e.Message})");
+                return;
+            }
+
+            var deps = manifest["dependencies"] as JObject;
+            if (deps == null)
+            {
+                problems.Add("Quest dependency validation failed: dependencies section is missing in manifest.json");
+                return;
+            }
+
+            var required = new[]
+            {
+                "com.meta.xr.sdk.core",
+                "com.unity.modules.physics2d",
+            };
+
+            foreach (var pkg in required)
+            {
+                if (deps[pkg] == null)
+                {
+                    problems.Add($"Quest required package is missing: {pkg}");
+                }
+            }
+        }
+
         private static XRGeneralSettings GetXRGeneralSettingsForBuildTarget(BuildTargetGroup target)
         {
             try
@@ -1665,6 +2036,123 @@ ScriptedImporter:
             catch { }
 
             return null;
+        }
+
+        private static void EnsureQuestXRLoaderConfigured()
+        {
+            if (_buildTarget != BuildTarget.Android) return;
+
+            var generalSettings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+            if (generalSettings == null)
+            {
+                Debug.LogWarning("[Arsist] Quest XR setup skipped: XR General Settings (Android) not found");
+                return;
+            }
+
+            generalSettings.InitManagerOnStart = true;
+            EditorUtility.SetDirty(generalSettings);
+
+            var manager = generalSettings.Manager;
+            if (manager == null)
+            {
+                Debug.LogWarning("[Arsist] Quest XR setup skipped: XR Manager Settings is null");
+                return;
+            }
+
+            var hasQuestLoader = manager.activeLoaders.Any(loader => loader != null && (
+                loader.GetType().FullName == "UnityEngine.XR.OpenXR.OpenXRLoader" ||
+                loader.GetType().FullName == "Unity.XR.Oculus.OculusLoader"
+            ));
+
+            if (hasQuestLoader)
+            {
+                return;
+            }
+
+            var added =
+                TryAddXRLoaderByType(manager, "UnityEngine.XR.OpenXR.OpenXRLoader") ||
+                TryAddXRLoaderByType(manager, "Unity.XR.Oculus.OculusLoader");
+
+            if (added)
+            {
+                EditorUtility.SetDirty(manager);
+                AssetDatabase.SaveAssets();
+                Debug.Log("[Arsist] Quest XR loader configured");
+            }
+            else
+            {
+                Debug.LogWarning("[Arsist] Quest XR loader could not be configured automatically");
+            }
+        }
+
+        private static bool TryAddXRLoaderByType(XRManagerSettings manager, string loaderTypeName)
+        {
+            try
+            {
+                var loaderType = FindTypeInLoadedAssemblies(loaderTypeName);
+                if (loaderType == null) return false;
+
+                if (manager.activeLoaders.Any(loader => loader != null && loaderType.IsAssignableFrom(loader.GetType())))
+                {
+                    return true;
+                }
+
+                var managerType = manager.GetType();
+                var tryAddWithIndex = managerType.GetMethod(
+                    "TryAddLoader",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    new[] { typeof(Type), typeof(int) },
+                    null
+                );
+
+                if (tryAddWithIndex != null)
+                {
+                    var index = manager.activeLoaders?.Count ?? 0;
+                    var result = tryAddWithIndex.Invoke(manager, new object[] { loaderType, index });
+                    if (result is bool ok && ok) return true;
+                }
+
+                var tryAdd = managerType.GetMethod(
+                    "TryAddLoader",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    new[] { typeof(Type) },
+                    null
+                );
+                if (tryAdd != null)
+                {
+                    var result = tryAdd.Invoke(manager, new object[] { loaderType });
+                    if (result is bool ok && ok) return true;
+                }
+
+                var metadataStoreType = FindTypeInLoadedAssemblies("UnityEditor.XR.Management.XRPackageMetadataStore");
+                var assignLoader = metadataStoreType?.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                    .FirstOrDefault(mi =>
+                    {
+                        if (mi.Name != "AssignLoader") return false;
+                        var p = mi.GetParameters();
+                        return p.Length == 3 &&
+                               p[0].ParameterType == typeof(XRManagerSettings) &&
+                               p[1].ParameterType == typeof(string) &&
+                               p[2].ParameterType == typeof(BuildTargetGroup);
+                    });
+
+                if (assignLoader != null)
+                {
+                    var result = assignLoader.Invoke(null, new object[] { manager, loaderType.FullName, BuildTargetGroup.Android });
+                    if (result is bool ok && ok) return true;
+
+                    result = assignLoader.Invoke(null, new object[] { manager, loaderType.Name, BuildTargetGroup.Android });
+                    if (result is bool ok2 && ok2) return true;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to add XR loader ({loaderTypeName}): {e.Message}");
+            }
+
+            return false;
         }
 
         private static bool TryHasXrealSettingsConfigObject(out string key, out UnityEngine.Object existing)
@@ -1839,10 +2327,15 @@ ScriptedImporter:
             }
 
             var buildOptions = BuildOptions.None;
+            var normalizedTarget = (_targetDevice ?? "").ToLowerInvariant();
+            var isQuest = normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
             if (_developmentBuild)
             {
                 buildOptions |= BuildOptions.Development;
-                buildOptions |= BuildOptions.AllowDebugging;
+                if (!isQuest)
+                {
+                    buildOptions |= BuildOptions.AllowDebugging;
+                }
             }
 
             var outputFile = Path.Combine(_outputPath, $"{manifest["projectName"]}.apk");

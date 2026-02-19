@@ -14,6 +14,7 @@ import {
   Save,
   FolderOpen,
   Plus,
+  Server,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
@@ -34,6 +35,7 @@ export function Toolbar() {
     setShowSettingsDialog,
     setShowNewProjectDialog,
     setShowPreviewDialog,
+    setShowMCPDialog,
   } = useUIStore();
 
   const { project, saveProject, isDirty, loadProject } = useProjectStore();
@@ -110,6 +112,7 @@ export function Toolbar() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
+        <IconBtn icon={<Server size={16} />} tip="MCP サーバー" onClick={() => setShowMCPDialog(true)} />
         <IconBtn icon={<Eye size={16} />} tip="プレビュー" onClick={() => setShowPreviewDialog(true)} />
         <IconBtn icon={<Settings size={16} />} tip="設定" onClick={() => setShowSettingsDialog(true)} />
         <button

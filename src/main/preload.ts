@@ -58,6 +58,7 @@ const electronAPI = {
   // SDK状態
   sdk: {
     xrealStatus: () => ipcRenderer.invoke('sdk:xreal-status'),
+    questStatus: () => ipcRenderer.invoke('sdk:quest-status'),
   },
 
   // アセット管理
@@ -71,6 +72,14 @@ const electronAPI = {
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
+  },
+
+  // MCP サーバー管理
+  mcp: {
+    start: (projectPath: string) => ipcRenderer.invoke('mcp:start', projectPath),
+    stop: () => ipcRenderer.invoke('mcp:stop'),
+    getStatus: () => ipcRenderer.invoke('mcp:status'),
+    getClientConfig: () => ipcRenderer.invoke('mcp:get-client-config'),
   },
 
   // ウィンドウ操作

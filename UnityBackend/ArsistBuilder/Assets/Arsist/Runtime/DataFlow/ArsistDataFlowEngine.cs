@@ -11,7 +11,9 @@ using System.Text;
 using System.Threading;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+#if ARSIST_XREAL
 using Unity.XR.XREAL;
+#endif
 #if XR_HANDS
 using UnityEngine.XR.Hands;
 #endif
@@ -174,7 +176,11 @@ namespace Arsist.Runtime.DataFlow
                 case "XR_Tracker":
                     return new PollingDataSourceRunner(storeAs, updateRate ?? 60f, () =>
                     {
+#if ARSIST_XREAL
                         var cam = XREALUtility.MainCamera ?? Camera.main;
+#else
+                        var cam = Camera.main;
+#endif
                         if (cam == null) return null;
                         return new Dictionary<string, object>
                         {
@@ -185,7 +191,22 @@ namespace Arsist.Runtime.DataFlow
                     });
 
                 case "Device_Status":
+#if ARSIST_XREAL
                     return new XrealDeviceStatusDataSource(storeAs);
+#else
+                    return new PollingDataSourceRunner(storeAs, updateRate ?? 1f, () =>
+                    {
+                        return new Dictionary<string, object>
+                        {
+                            { "deviceModel", SystemInfo.deviceModel },
+                            { "deviceName", SystemInfo.deviceName },
+                            { "deviceType", SystemInfo.deviceType.ToString() },
+                            { "operatingSystem", SystemInfo.operatingSystem },
+                            { "batteryLevel", SystemInfo.batteryLevel },
+                            { "batteryStatus", SystemInfo.batteryStatus.ToString() },
+                        };
+                    });
+#endif
 
                 case "XR_HandPose":
 #if XR_HANDS
@@ -310,6 +331,7 @@ namespace Arsist.Runtime.DataFlow
             }
         }
 
+#if ARSIST_XREAL
         private sealed class XrealDeviceStatusDataSource : IDataSourceRunner
         {
             private readonly string _storeAs;
@@ -369,6 +391,7 @@ namespace Arsist.Runtime.DataFlow
                 ArsistDataStore.Instance.SetValue(_storeAs, new Dictionary<string, object>(_status));
             }
         }
+#endif
 
         private sealed class RestClientDataSource : IDataSourceRunner
         {
