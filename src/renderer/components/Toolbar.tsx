@@ -15,6 +15,7 @@ import {
   FolderOpen,
   Plus,
   Server,
+  Zap,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
@@ -80,6 +81,12 @@ export function Toolbar() {
             active={currentView === 'dataflow'}
             onClick={() => setCurrentView('dataflow')}
           />
+          <ViewTab
+            icon={<Zap size={15} />}
+            label="Script"
+            active={currentView === 'script'}
+            onClick={() => setCurrentView('script')}
+          />
         </div>
       </div>
 
@@ -107,6 +114,10 @@ export function Toolbar() {
 
         {currentView === 'dataflow' && (
           <span className="text-[11px] text-arsist-muted">DataSource → Transform → DataStore</span>
+        )}
+
+        {currentView === 'script' && (
+          <span className="text-[11px] text-arsist-muted">JavaScript (Jint) • 左パネルからスクリプト追加 / 右パネルでトリガー設定</span>
         )}
       </div>
 

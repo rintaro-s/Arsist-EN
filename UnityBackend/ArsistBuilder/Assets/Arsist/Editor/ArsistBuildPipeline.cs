@@ -75,6 +75,9 @@ namespace Arsist.Builder
                 Debug.Log("[Arsist] Phase 3.1: Applying device patches...");
                 ApplyDevicePatches(_targetDevice);
 
+                // Phase 3.15: Quest向けビルド設定（OVRProjectConfig等）
+                ApplyQuestBuildBootstrap();
+
                 // Phase 3.2: ビルド前検証（ここで落とすことで“成功したけど動かない”を避ける）
                 Debug.Log("[Arsist] Phase 3.2: Validating build readiness...");
                 ValidateBuildReadiness(_targetDevice);
@@ -610,7 +613,12 @@ namespace Arsist.Builder
                 xrOrigin.AddComponent(setupType);
             }
 
-            // AR Session (AR Foundation)
+            if (IsQuestTargetDevice())
+            {
+                EnsureQuestOvrManager(xrOrigin);
+            }
+
+            // AR Session (AR Foundation) - XREAL のみ必要
             if (rigRoot != null)
             {
                 var arSessionGO = new GameObject("AR Session");
@@ -721,29 +729,15 @@ namespace Arsist.Builder
 
             var root = new GameObject(name);
 
-            // Surface plane (for spatial reference)
-            var quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            quad.name = "UISurface";
-            quad.transform.SetParent(root.transform, false);
-            quad.transform.localScale = new Vector3(width, height, 1f);
-
-            var renderer = quad.GetComponent<Renderer>();
-            if (renderer != null)
-            {
-                var shader = FindSafeShader(new[] { "Unlit/Color", "Universal Render Pipeline/Unlit", "Standard" });
-                if (shader != null)
-                {
-                    var mat = new Material(shader);
-                    mat.color = new Color(0.1f, 0.1f, 0.1f, 0.6f);
-                    renderer.material = mat;
-                }
-            }
+            // Canvas は「表示位置のアンカー」としてのみ使用する。
+            // 固定の板(Quad)は視認性を悪化させるため作らない。
 
             // World-space Canvas
             var canvasGO = new GameObject("UISurfaceCanvas");
             canvasGO.transform.SetParent(root.transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
+            canvas.sortingOrder = 200;
 
             var canvasScaler = canvasGO.AddComponent<UnityEngine.UI.CanvasScaler>();
             canvasScaler.dynamicPixelsPerUnit = pixelsPerUnit;
@@ -754,6 +748,15 @@ namespace Arsist.Builder
             rect.localScale = Vector3.one / pixelsPerUnit;
             rect.localPosition = Vector3.zero;
             rect.localRotation = Quaternion.identity;
+
+            var canvasGroup = canvasGO.GetComponent<CanvasGroup>();
+            if (canvasGroup == null)
+            {
+                canvasGroup = canvasGO.AddComponent<CanvasGroup>();
+            }
+            canvasGroup.alpha = 1f;
+            canvasGroup.interactable = true;
+            canvasGroup.blocksRaycasts = true;
 
             EnsureUILayoutCache();
             if (!string.IsNullOrEmpty(layoutId) && _uiLayoutCache != null && _uiLayoutCache.TryGetValue(layoutId, out var layout))
@@ -949,27 +952,19 @@ ScriptedImporter:
 
             try
             {
-                // HTMLファイルをコピー
-                var htmlSrc = Path.Combine(uiCodeDir, "index.html");
-                if (File.Exists(htmlSrc))
+                foreach (var srcPath in Directory.GetFiles(uiCodeDir, "*", SearchOption.AllDirectories))
                 {
-                    File.Copy(htmlSrc, Path.Combine(streamingUIDir, "index.html"), true);
-                    Debug.Log("[Arsist] Copied UI HTML to StreamingAssets");
+                    var relative = srcPath.Substring(uiCodeDir.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var dstPath = Path.Combine(streamingUIDir, relative);
+                    var dstDir = Path.GetDirectoryName(dstPath);
+                    if (!string.IsNullOrEmpty(dstDir))
+                    {
+                        Directory.CreateDirectory(dstDir);
+                    }
+                    File.Copy(srcPath, dstPath, true);
                 }
 
-                // CSSファイルをコピー
-                var cssSrc = Path.Combine(uiCodeDir, "styles.css");
-                if (File.Exists(cssSrc))
-                {
-                    File.Copy(cssSrc, Path.Combine(streamingUIDir, "styles.css"), true);
-                }
-
-                // JSファイルをコピー
-                var jsSrc = Path.Combine(uiCodeDir, "script.js");
-                if (File.Exists(jsSrc))
-                {
-                    File.Copy(jsSrc, Path.Combine(streamingUIDir, "script.js"), true);
-                }
+                Debug.Log($"[Arsist] Copied UI assets recursively: {uiCodeDir} -> {streamingUIDir}");
 
                 AssetDatabase.Refresh();
             }
@@ -1000,6 +995,7 @@ ScriptedImporter:
         {
             var uiJson = File.ReadAllText(uiPath);
             var layouts = JArray.Parse(uiJson);
+            var createdHudCount = 0;
 
             foreach (JObject layout in layouts)
             {
@@ -1036,17 +1032,30 @@ ScriptedImporter:
                 var isQuest = normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
 
                 var mainCam = Camera.main;
-                if (mainCam != null && (isQuest || trackingMode == "3dof" || presentationMode == "head_locked_hud" || presentationMode == "floating_screen"))
+                if (mainCam != null)
                 {
-                    // Quest/UHDは確実に見えるようにカメラ直下へ固定
+                    // UHD HUD は常時表示優先でカメラ直下に固定
                     canvasGO.transform.SetParent(mainCam.transform, false);
                     rectTransform.localPosition = new Vector3(0f, 0f, Mathf.Max(0.5f, distance));
                     rectTransform.localRotation = Quaternion.identity;
+                    canvasGO.layer = mainCam.gameObject.layer;
+                    SetLayerRecursively(canvasGO, mainCam.gameObject.layer);
                 }
                 else
                 {
                     rectTransform.position = new Vector3(0, 1.5f, 3f);
                 }
+
+                var cg = canvasGO.GetComponent<CanvasGroup>();
+                if (cg == null)
+                {
+                    cg = canvasGO.AddComponent<CanvasGroup>();
+                }
+                cg.alpha = 1f;
+                cg.interactable = true;
+                cg.blocksRaycasts = true;
+
+                createdHudCount++;
 
                 // UIエレメントを生成
                 var root = layout["root"] as JObject;
@@ -1055,6 +1064,60 @@ ScriptedImporter:
                     CreateUIElement(root, canvasGO.transform);
                 }
             }
+
+            if (createdHudCount == 0)
+            {
+                CreateFallbackHUDCanvas();
+            }
+        }
+
+        private static void CreateFallbackHUDCanvas()
+        {
+            var mainCam = Camera.main;
+            if (mainCam == null)
+            {
+                Debug.LogWarning("[Arsist] Fallback HUD skipped: MainCamera not found.");
+                return;
+            }
+
+            var canvasGO = new GameObject("Canvas_FallbackHUD");
+            canvasGO.transform.SetParent(mainCam.transform, false);
+            canvasGO.transform.localPosition = new Vector3(0f, 0f, 1.4f);
+            canvasGO.transform.localRotation = Quaternion.identity;
+            canvasGO.layer = mainCam.gameObject.layer;
+
+            var canvas = canvasGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.sortingOrder = 1000;
+
+            var scaler = canvasGO.AddComponent<UnityEngine.UI.CanvasScaler>();
+            scaler.dynamicPixelsPerUnit = 100f;
+            canvasGO.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+
+            var rect = canvasGO.GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(1200f, 320f);
+            rect.localScale = new Vector3(0.001f, 0.001f, 0.001f);
+
+            var labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(canvasGO.transform, false);
+            labelGO.layer = canvasGO.layer;
+
+            var labelRect = labelGO.AddComponent<RectTransform>();
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = new Vector2(24f, 24f);
+            labelRect.offsetMax = new Vector2(-24f, -24f);
+
+            var text = labelGO.AddComponent<UnityEngine.UI.Text>();
+            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            text.fontSize = 48;
+            text.color = Color.white;
+            text.alignment = TextAnchor.MiddleCenter;
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+            text.text = "HUD initialized";
+
+            Debug.Log("[Arsist] Fallback HUD canvas created.");
         }
 
         /// <summary>
@@ -1143,6 +1206,8 @@ ScriptedImporter:
             var go = new GameObject(type);
             go.transform.SetParent(parent, false);
 
+            TryAttachUiBindingRegistry(go, elementData);
+
             var rectTransform = go.AddComponent<RectTransform>();
             var style = elementData["style"] as JObject;
             ApplyRectTransformStyle(rectTransform, style);
@@ -1162,12 +1227,12 @@ ScriptedImporter:
                     break;
                     
                 case "Text":
-                    var text = go.AddComponent<TMPro.TextMeshProUGUI>();
+                    var text = go.AddComponent<UnityEngine.UI.Text>();
                     text.text = elementData["content"]?.ToString() ?? "Text";
-                    text.enableAutoSizing = false;
+                    text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
                     if (style != null)
                     {
-                        text.fontSize = style["fontSize"]?.Value<float>() ?? 24;
+                        text.fontSize = style["fontSize"]?.Value<int>() ?? 24;
                         if (TryParseColor(style["color"], out var textColor))
                         {
                             text.color = textColor;
@@ -1176,9 +1241,9 @@ ScriptedImporter:
                         var align = style["textAlign"]?.ToString();
                         text.alignment = align switch
                         {
-                            "center" => TMPro.TextAlignmentOptions.Center,
-                            "right" => TMPro.TextAlignmentOptions.Right,
-                            _ => TMPro.TextAlignmentOptions.Left,
+                            "center" => TextAnchor.MiddleCenter,
+                            "right" => TextAnchor.MiddleRight,
+                            _ => TextAnchor.MiddleLeft,
                         };
                     }
 
@@ -1213,14 +1278,12 @@ ScriptedImporter:
                     buttonTextRt.offsetMin = Vector2.zero;
                     buttonTextRt.offsetMax = Vector2.zero;
 
-                    var buttonText = buttonTextGO.AddComponent<TMPro.TextMeshProUGUI>();
-                    buttonText.text = elementData["content"]?.ToString() ?? "Button";
-                    buttonText.alignment = TMPro.TextAlignmentOptions.Center;
-                    buttonText.fontSize = style?["fontSize"]?.Value<float>() ?? 16f;
-                    if (TryParseColor(style?["color"], out var buttonTextColor))
-                    {
-                        buttonText.color = buttonTextColor;
-                    }
+                    var legacyButtonText = buttonTextGO.AddComponent<UnityEngine.UI.Text>();
+                    legacyButtonText.text = elementData["content"]?.ToString() ?? "Button";
+                    legacyButtonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                    legacyButtonText.fontSize = style?["fontSize"]?.Value<int>() ?? 16;
+                    legacyButtonText.alignment = TextAnchor.MiddleCenter;
+                    legacyButtonText.color = TryParseColor(style?["color"], out var legacyButtonColor) ? legacyButtonColor : Color.white;
                     break;
 
                 case "Image":
@@ -1326,6 +1389,36 @@ ScriptedImporter:
                 foreach (JObject child in children)
                 {
                     CreateUIElement(child, go.transform);
+                }
+            }
+        }
+
+        private static void TryAttachUiBindingRegistry(GameObject go, JObject elementData)
+        {
+            var bindingId = elementData["bindingId"]?.ToString();
+            if (string.IsNullOrWhiteSpace(bindingId))
+            {
+                bindingId = elementData["id"]?.ToString();
+            }
+
+            if (string.IsNullOrWhiteSpace(bindingId)) return;
+
+            var registryComp = TryAddComponentByTypeName(go, "Arsist.Runtime.Scripting.UiBindingRegistry");
+            if (registryComp == null) return;
+
+            var field = registryComp.GetType().GetField("bindingId", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            field?.SetValue(registryComp, bindingId);
+        }
+
+        private static void SetLayerRecursively(GameObject root, int layer)
+        {
+            if (root == null) return;
+            root.layer = layer;
+            foreach (Transform child in root.transform)
+            {
+                if (child != null)
+                {
+                    SetLayerRecursively(child.gameObject, layer);
                 }
             }
         }
@@ -2311,6 +2404,48 @@ ScriptedImporter:
             return null;
         }
 
+        private static bool IsQuestTargetDevice()
+        {
+            var normalizedTarget = (_targetDevice ?? string.Empty).Trim().ToLowerInvariant();
+            return normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
+        }
+
+        private static void ApplyQuestBuildBootstrap()
+        {
+            if (!IsQuestTargetDevice()) return;
+
+            Debug.Log("[Arsist] Phase 3.15: Applying Quest build bootstrap...");
+            ConfigureOculusProjectConfigForQuest();
+        }
+
+        private static void EnsureQuestOvrManager(GameObject xrOrigin)
+        {
+            var ovrManagerType = FindType("OVRManager") ?? FindTypeInLoadedAssemblies("OVRManager");
+            if (ovrManagerType == null)
+            {
+                Debug.LogWarning("[Arsist] OVRManager type not found. Make sure com.meta.xr.sdk.core is installed.");
+                return;
+            }
+
+            var existingManagers = Resources.FindObjectsOfTypeAll(ovrManagerType);
+            if (existingManagers != null && existingManagers.Length > 0)
+            {
+                Debug.Log("[Arsist] OVRManager already exists in scene.");
+                return;
+            }
+
+            if (xrOrigin != null)
+            {
+                xrOrigin.AddComponent(ovrManagerType);
+                Debug.Log("[Arsist] OVRManager added on XR Origin for Quest.");
+                return;
+            }
+
+            var fallbackRoot = new GameObject("OVR Manager");
+            fallbackRoot.AddComponent(ovrManagerType);
+            Debug.Log("[Arsist] OVRManager added on fallback root for Quest.");
+        }
+
         private static void ExecuteBuild(JObject manifest)
         {
             var scenes = new List<string>();
@@ -2429,6 +2564,109 @@ ScriptedImporter:
             {
                 Debug.LogWarning($"[Arsist] Failed to load OpenXRPackageSettings: {e.Message}");
             }
+        }
+
+        /// <summary>
+        /// Quest向けに OculusProjectConfig.asset を確実に適用する。
+        /// まず SerializedObject で適用し、取得できない場合のみ YAML パッチにフォールバックする。
+        /// </summary>
+        private static void ConfigureOculusProjectConfigForQuest()
+        {
+            try
+            {
+                var assetPath = "Assets/Oculus/OculusProjectConfig.asset";
+                var configAsset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+
+                if (configAsset != null)
+                {
+                    var serialized = new SerializedObject(configAsset);
+                    var changed = false;
+
+                    changed |= SetSerializedIntOrBool(serialized, "handTrackingSupport", 1, true);
+                    changed |= SetSerializedIntOrBool(serialized, "handTrackingFrequency", 1, true);
+                    changed |= SetSerializedIntOrBool(serialized, "insightPassthroughEnabled", 1, true);
+                    changed |= SetSerializedIntOrBool(serialized, "_insightPassthroughSupport", 2, true);
+                    changed |= SetSerializedIntOrBool(serialized, "focusAware", 1, true);
+                    changed |= SetSerializedIntOrBool(serialized, "sceneSupport", 1, true);
+
+                    if (changed)
+                    {
+                        serialized.ApplyModifiedPropertiesWithoutUndo();
+                        EditorUtility.SetDirty(configAsset);
+                        AssetDatabase.SaveAssets();
+                        AssetDatabase.Refresh();
+                    }
+
+                    Debug.Log("[Arsist] OculusProjectConfig applied for Quest: HandTracking=1, Passthrough=1, FocusAware=1, SceneSupport=1");
+                    return;
+                }
+
+                Debug.LogWarning("[Arsist] OculusProjectConfig asset not found in AssetDatabase. Falling back to YAML patch.");
+                PatchOculusProjectConfigYaml();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] ConfigureOculusProjectConfigForQuest failed: {e.Message}. Falling back to YAML patch.");
+                PatchOculusProjectConfigYaml();
+            }
+        }
+
+        private static bool SetSerializedIntOrBool(SerializedObject serialized, string propertyName, int intValue, bool boolValue)
+        {
+            var property = serialized.FindProperty(propertyName);
+            if (property == null)
+            {
+                Debug.LogWarning($"[Arsist] OculusProjectConfig property not found: {propertyName}");
+                return false;
+            }
+
+            switch (property.propertyType)
+            {
+                case SerializedPropertyType.Boolean:
+                    if (property.boolValue == boolValue) return false;
+                    property.boolValue = boolValue;
+                    return true;
+
+                case SerializedPropertyType.Integer:
+                case SerializedPropertyType.Enum:
+                    if (property.intValue == intValue) return false;
+                    property.intValue = intValue;
+                    return true;
+
+                default:
+                    Debug.LogWarning($"[Arsist] Unsupported OculusProjectConfig property type: {propertyName} ({property.propertyType})");
+                    return false;
+            }
+        }
+
+        private static void PatchOculusProjectConfigYaml()
+        {
+            var path = Path.Combine(Application.dataPath, "Oculus", "OculusProjectConfig.asset");
+            if (!File.Exists(path))
+            {
+                Debug.LogWarning($"[Arsist] OculusProjectConfig.asset not found at {path}");
+                return;
+            }
+
+            var yaml = File.ReadAllText(path);
+            yaml = ReplaceYamlNumericValue(yaml, "handTrackingSupport", 1);
+            yaml = ReplaceYamlNumericValue(yaml, "handTrackingFrequency", 1);
+            yaml = ReplaceYamlNumericValue(yaml, "insightPassthroughEnabled", 1);
+            yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", 2);
+            yaml = ReplaceYamlNumericValue(yaml, "focusAware", 1);
+            yaml = ReplaceYamlNumericValue(yaml, "sceneSupport", 1);
+
+            File.WriteAllText(path, yaml);
+            AssetDatabase.Refresh();
+            Debug.Log("[Arsist] OculusProjectConfig YAML patched for Quest.");
+        }
+
+        private static string ReplaceYamlNumericValue(string yaml, string key, int value)
+        {
+            return System.Text.RegularExpressions.Regex.Replace(
+                yaml,
+                $@"(?m)^(\s*{System.Text.RegularExpressions.Regex.Escape(key)}:\s*)\d+(\s*)$",
+                $"$1{value}$2");
         }
     }
 }

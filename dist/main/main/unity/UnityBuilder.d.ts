@@ -70,6 +70,18 @@ export declare class UnityBuilder extends EventEmitter {
     private normalizeUnityVersion;
     private compareVersions;
     private prepareUnityProject;
+    /**
+     * Jint 3.x と Esprima の DLL を NuGet から取得して
+     * Assets/Plugins/Jint/ へ配置する。
+     * DLL がすでに存在する場合はスキップ。
+     */
+    private ensureJintDlls;
+    /** ファイルを HTTP/HTTPS でダウンロードする（リダイレクト追跡） */
+    private downloadFile;
+    /** .nupkg (=ZIP) を destDir に展開する（PowerShell / unzip / python3 互換） */
+    private extractFromZip;
+    /** dir 以下を再帰的に検索して fileName に一致する最初のファイルパスを返す */
+    private findFileRecursive;
     private transferProjectData;
     private applyDevicePatch;
     private isXrealTarget;

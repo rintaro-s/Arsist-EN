@@ -17,6 +17,8 @@ import type {
   DataSourceDefinition,
   TransformDefinition,
   ARSettings,
+  ScriptData,
+  ScriptBundle,
 } from '../../shared/types';
 
 // ========================================
@@ -39,6 +41,9 @@ interface ProjectState {
   // DataFlow
   selectedDataSourceId: string | null;
   selectedTransformId: string | null;
+
+  // Script
+  currentScriptId: string | null;
 
   // --- プロジェクトライフサイクル ---
   createProject: (options: CreateProjectOptions) => Promise<void>;
@@ -79,6 +84,13 @@ interface ProjectState {
 
   // --- AR ---
   updateARSettings: (updates: Partial<ARSettings>) => void;
+
+  // --- Script ---
+  addScript: (name: string) => void;
+  updateScript: (id: string, updates: Partial<ScriptData>) => void;
+  removeScript: (id: string) => void;
+  setCurrentScript: (id: string | null) => void;
+  exportScriptBundle: () => ScriptBundle;
 }
 
 interface CreateProjectOptions {
@@ -105,6 +117,7 @@ export const useProjectStore = create<ProjectState>()(
     selectedUIElementId: null,
     selectedDataSourceId: null,
     selectedTransformId: null,
+    currentScriptId: null,
 
     // ========================================
     // プロジェクトライフサイクル
@@ -122,6 +135,7 @@ export const useProjectStore = create<ProjectState>()(
           s.currentUILayoutId = result.project.uiLayouts[0]?.id ?? null;
           s.selectedDataSourceId = null;
           s.selectedTransformId = null;
+          s.currentScriptId = null;
         });
       }
     },
@@ -138,6 +152,7 @@ export const useProjectStore = create<ProjectState>()(
           s.currentUILayoutId = result.project.uiLayouts[0]?.id ?? null;
           s.selectedDataSourceId = null;
           s.selectedTransformId = null;
+          s.currentScriptId = result.project.scripts?.[0]?.id ?? null;
         });
       }
     },
@@ -164,6 +179,7 @@ export const useProjectStore = create<ProjectState>()(
         s.selectedUIElementId = null;
         s.selectedDataSourceId = null;
         s.selectedTransformId = null;
+        s.currentScriptId = null;
       });
     },
 
@@ -517,6 +533,78 @@ export const useProjectStore = create<ProjectState>()(
         s.project.arSettings = { ...s.project.arSettings, ...updates };
         s.isDirty = true;
       });
+    },
+
+    // ========================================
+    // Script
+    // ========================================
+
+    addScript: (name) => {
+      set((s) => {
+        if (!s.project) return;
+        if (!s.project.scripts) s.project.scripts = [];
+        const script: ScriptData = {
+          id: uuidv4(),
+          name,
+          trigger: { type: 'onStart' },
+          code: `// ${name}\n// 利用可能なAPI: api, ui, event, store, log\n\nlog('${name} 開始');`,
+          enabled: true,
+          description: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        s.project.scripts.push(script);
+        s.currentScriptId = script.id;
+        s.isDirty = true;
+      });
+    },
+
+    updateScript: (id, updates) => {
+      set((s) => {
+        if (!s.project?.scripts) return;
+        const idx = s.project.scripts.findIndex((sc) => sc.id === id);
+        if (idx !== -1) {
+          s.project.scripts[idx] = {
+            ...s.project.scripts[idx],
+            ...updates,
+            updatedAt: new Date().toISOString(),
+          };
+          s.isDirty = true;
+        }
+      });
+    },
+
+    removeScript: (id) => {
+      set((s) => {
+        if (!s.project?.scripts) return;
+        s.project.scripts = s.project.scripts.filter((sc) => sc.id !== id);
+        if (s.currentScriptId === id) {
+          s.currentScriptId = s.project.scripts[0]?.id ?? null;
+        }
+        s.isDirty = true;
+      });
+    },
+
+    setCurrentScript: (id) => {
+      set((s) => {
+        s.currentScriptId = id;
+      });
+    },
+
+    exportScriptBundle: (): ScriptBundle => {
+      const { project } = get();
+      const scripts = project?.scripts ?? [];
+      return {
+        version: '1.0',
+        scripts: scripts
+          .filter((sc) => sc.enabled)
+          .map((sc) => ({
+            id: sc.id,
+            trigger: sc.trigger,
+            code: sc.code,
+            enabled: sc.enabled,
+          })),
+      };
     },
   })),
 );

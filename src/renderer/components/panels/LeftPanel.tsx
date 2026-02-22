@@ -14,6 +14,7 @@ import {
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { UIElement } from '../../../shared/types';
+import { ScriptFileList } from '../viewport/ScriptEditor';
 
 export function LeftPanel() {
   const { currentView } = useUIStore();
@@ -22,6 +23,7 @@ export function LeftPanel() {
       {currentView === 'scene' && <SceneHierarchy />}
       {currentView === 'ui' && <UIHierarchy />}
       {currentView === 'dataflow' && <DataFlowList />}
+      {currentView === 'script' && <ScriptFileList />}
     </div>
   );
 }

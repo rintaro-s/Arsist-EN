@@ -37,7 +37,7 @@ namespace Arsist.Runtime.UI
         public bool headLocked = true;
 
         [Tooltip("AndroidではネイティブWebViewでHTMLを描画")]
-        public bool preferNativeWebView = true;
+        public bool preferNativeWebView = false;
 
         [Tooltip("追従のスムーズさ（小さいほど滑らか）")]
         public float followSmoothness = 5f;
@@ -225,16 +225,8 @@ namespace Arsist.Runtime.UI
                 Debug.Log($"  - First 100 chars: {htmlContent.Substring(0, Math.Min(100, htmlContent.Length))}");
             }
 
-            // Android WebViewを試行（Texture経由でAR表示）
-            if (TryCreateAndroidWebView(htmlContent))
-            {
-                Debug.Log("[ArsistWebViewUI] Android WebView created, setting up XR HUD with texture...");
-                CreateXRHUDWithWebViewTexture();
-                return;
-            }
-
-            // フォールバック: Unity Canvas + Text
-            Debug.LogWarning("[ArsistWebViewUI] Android WebView unavailable, using Canvas+Text fallback");
+            // 安定性優先: Unity Canvas + Text を基本経路とする
+            // （ネイティブWebViewのTexture取り込みは端末差で不安定）
             CreateXRHUDWithText(htmlContent);
         }
 
@@ -373,19 +365,6 @@ namespace Arsist.Runtime.UI
             // 1920px → 1.92m にならないよう縮小（0.001 = 1px → 1mm）
             rectTransform.localScale = new Vector3(0.001f, 0.001f, 0.001f);
 
-            // --- 背景（半透明黒） ---
-            var bgObj = new GameObject("Background");
-            bgObj.transform.SetParent(_canvas.transform, false);
-            bgObj.layer = _canvas.layer;
-
-            var bgRect = bgObj.AddComponent<RectTransform>();
-            bgRect.anchorMin = Vector2.zero;
-            bgRect.anchorMax = Vector2.one;
-            bgRect.sizeDelta = Vector2.zero;
-
-            var bgImage = bgObj.AddComponent<UnityEngine.UI.Image>();
-            bgImage.color = new Color(0, 0, 0, 0.3f);
-
             // --- テキスト表示 ---
             var textObj = new GameObject("HUDText");
             textObj.transform.SetParent(_canvas.transform, false);
@@ -405,7 +384,7 @@ namespace Arsist.Runtime.UI
             text.alignment = TextAnchor.MiddleCenter;
             text.horizontalOverflow = HorizontalWrapMode.Wrap;
             text.verticalOverflow = VerticalWrapMode.Truncate;
-            text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
             Debug.Log($"[ArsistWebViewUI] XR HUD created (headLocked={headLocked}, distance={distance}m, camera={_xrCamera.name})");
         }

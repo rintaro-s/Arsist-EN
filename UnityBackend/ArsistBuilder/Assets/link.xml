@@ -1,0 +1,26 @@
+<linker>
+  <!-- Jint: JavaScript インタープリタ (IL2CPP ストリッピング防止) -->
+  <assembly fullname="Jint" preserve="all" />
+
+  <!-- Esprima: Jint の依存パーサー (AST ビルダー) -->
+  <assembly fullname="Esprima" preserve="all" />
+
+  <!-- Newtonsoft.Json: スクリプトバンドル JSON パース -->
+  <assembly fullname="Newtonsoft.Json" preserve="all" />
+
+  <!-- Arsist Scripting ランタイム -->
+  <assembly fullname="Assembly-CSharp">
+    <type fullname="Arsist.Runtime.Scripting.ScriptEngineManager" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.ScriptTriggerManager" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.CoroutineRunner" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.ApiWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.UiWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.UiBindingRegistry" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.EventWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.StoreWrapper" preserve="all" />
+  </assembly>
+
+  <!-- System.Reflection (Jint が内部的に使用) -->
+  <assembly fullname="System" preserve="all" />
+  <assembly fullname="System.Core" preserve="all" />
+</linker>

@@ -8,6 +8,8 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { app } from 'electron';
 import * as os from 'os';
+import * as https from 'https';
+import * as http from 'http';
 
 export interface UnityBuildConfig {
   projectPath: string;
@@ -358,6 +360,10 @@ export class UnityBuilder extends EventEmitter {
       this.emitProgress('prepare-unity', 5, 'Unityプロジェクトを準備中...');
       const unityProjectPath = await this.prepareUnityProject(config.projectPath);
 
+      // Phase 1.5: Jint/Esprima DLL を確認/ダウンロード
+      this.emitProgress('prepare-jint', 8, 'Jintスクリプトエンジンを準備中...');
+      await this.ensureJintDlls(unityProjectPath);
+
       // Phase 2: データ転送
       this.emitProgress('transfer', 10, 'プロジェクトデータを転送中...');
       await this.transferProjectData(unityProjectPath, config);
@@ -612,6 +618,157 @@ export class UnityBuilder extends EventEmitter {
     await fs.emptyDir(workingDir);
     await fs.copy(this.unityTemplatePath, workingDir);
     return workingDir;
+  }
+
+  /**
+   * Jint 3.x と Esprima の DLL を NuGet から取得して
+   * Assets/Plugins/Jint/ へ配置する。
+   * DLL がすでに存在する場合はスキップ。
+   */
+  private async ensureJintDlls(unityProjectPath: string): Promise<void> {
+    const pluginsDir = path.join(unityProjectPath, 'Assets', 'Plugins', 'Jint');
+    const jintDll    = path.join(pluginsDir, 'Jint.dll');
+    const esprimaDll = path.join(pluginsDir, 'Esprima.dll');
+
+    if (await fs.pathExists(jintDll) && await fs.pathExists(esprimaDll)) {
+      this.emit('log', '[Arsist] Jint/Esprima DLLs already present, skipping download');
+      return;
+    }
+
+    this.emit('log', '[Arsist] Downloading Jint 3.x / Esprima DLLs from NuGet...');
+    await fs.ensureDir(pluginsDir);
+
+    const packages: Array<{ id: string; version: string; dll: string }> = [
+      { id: 'jint',    version: '3.1.6', dll: 'Jint.dll'    },
+      { id: 'esprima', version: '3.0.5', dll: 'Esprima.dll' },
+    ];
+
+    const tmpDir = path.join(pluginsDir, '_dl_tmp');
+    await fs.ensureDir(tmpDir);
+
+    try {
+      for (const pkg of packages) {
+        const url      = `https://api.nuget.org/v3-flatcontainer/${pkg.id}/${pkg.version}/${pkg.id}.${pkg.version}.nupkg`;
+        const nupkg    = path.join(tmpDir, `${pkg.id}.nupkg`);
+        const extract  = path.join(tmpDir, pkg.id);
+        const dllEntry = `lib/netstandard2.0/${pkg.dll}`; // netstandard2.0 が最も互換性が高い
+
+        this.emit('log', `[Arsist] Downloading ${pkg.id} ${pkg.version}...`);
+        await this.downloadFile(url, nupkg);
+
+        await fs.ensureDir(extract);
+        await this.extractFromZip(nupkg, extract);
+
+        // netstandard2.1 > netstandard2.0 > net6.0 の優先順で DLL を探す
+        const candidates = [
+          path.join(extract, 'lib', 'netstandard2.1', pkg.dll),
+          path.join(extract, 'lib', 'netstandard2.0', pkg.dll),
+          path.join(extract, 'lib', 'net6.0',          pkg.dll),
+        ];
+        let found = false;
+        for (const candidate of candidates) {
+          if (await fs.pathExists(candidate)) {
+            await fs.copy(candidate, path.join(pluginsDir, pkg.dll), { overwrite: true });
+            this.emit('log', `[Arsist] Installed ${pkg.dll} from ${path.relative(extract, candidate)}`);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          // フォールバック: lib 以下を再帰検索
+          const fallback = await this.findFileRecursive(extract, pkg.dll);
+          if (fallback) {
+            await fs.copy(fallback, path.join(pluginsDir, pkg.dll), { overwrite: true });
+            this.emit('log', `[Arsist] Installed ${pkg.dll} (fallback search)`);
+          } else {
+            throw new Error(`${pkg.dll} が NuGet パッケージ内に見つかりませんでした`);
+          }
+        }
+      }
+    } finally {
+      await fs.remove(tmpDir).catch(() => {});
+    }
+
+    this.emit('log', '[Arsist] Jint/Esprima DLLs installed to Assets/Plugins/Jint/');
+  }
+
+  /** ファイルを HTTP/HTTPS でダウンロードする（リダイレクト追跡） */
+  private downloadFile(url: string, dest: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const follow = (currentUrl: string, redirectCount = 0) => {
+        if (redirectCount > 10) { reject(new Error(`Too many redirects: ${url}`)); return; }
+        const mod: typeof https | typeof http = currentUrl.startsWith('https') ? https : http;
+        mod.get(currentUrl, { timeout: 60_000 }, (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume();
+            follow(res.headers.location, redirectCount + 1);
+            return;
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            reject(new Error(`HTTP ${res.statusCode} downloading ${currentUrl}`));
+            return;
+          }
+          const file = fs.createWriteStream(dest);
+          res.pipe(file);
+          file.on('finish', () => { (file as any).close(); resolve(); });
+          file.on('error', (err) => { fs.remove(dest).catch(() => {}); reject(err); });
+          res.on('error',  reject);
+        }).on('error', reject);
+      };
+      follow(url);
+    });
+  }
+
+  /** .nupkg (=ZIP) を destDir に展開する（PowerShell / unzip / python3 互換） */
+  private async extractFromZip(zipPath: string, destDir: string): Promise<void> {
+    await fs.ensureDir(destDir);
+    return new Promise((resolve, reject) => {
+      let proc;
+      if (process.platform === 'win32') {
+        const script = `Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${destDir}' -Force`;
+        proc = spawn('powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', script],
+          { shell: false, windowsHide: true });
+      } else {
+        // Linux / macOS: unzip が無ければ python3 にフォールバック
+        proc = spawn('unzip', ['-o', '-q', zipPath, '-d', destDir], { shell: false });
+      }
+      const stderr: string[] = [];
+      proc.stderr?.on('data', (d: Buffer) => stderr.push(d.toString()));
+      proc.on('close', async (code) => {
+        if (code === 0) { resolve(); return; }
+        // unzip 失敗時 python3 でリトライ（Linux）
+        if (process.platform !== 'win32') {
+          const py = spawn('python3', [
+            '-c',
+            `import zipfile,os; z=zipfile.ZipFile(r'${zipPath}'); z.extractall(r'${destDir}'); z.close()`,
+          ], { shell: false });
+          py.on('close', (c) => c === 0 ? resolve() : reject(new Error(`ZIP extraction failed: ${stderr.join('')}`)));
+          py.on('error', reject);
+          return;
+        }
+        reject(new Error(`ZIP extraction failed (code ${code}): ${stderr.join('')}`));
+      });
+      proc.on('error', reject);
+    });
+  }
+
+  /** dir 以下を再帰的に検索して fileName に一致する最初のファイルパスを返す */
+  private async findFileRecursive(dir: string, fileName: string): Promise<string | null> {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          const found = await this.findFileRecursive(full, fileName);
+          if (found) return found;
+        } else if (e.name === fileName) {
+          return full;
+        }
+      }
+    } catch { /* ignore */ }
+    return null;
   }
 
   private async transferProjectData(unityProjectPath: string, config: UnityBuildConfig): Promise<void> {

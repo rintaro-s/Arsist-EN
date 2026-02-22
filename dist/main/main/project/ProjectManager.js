@@ -66,6 +66,7 @@ class ProjectManager {
             await fs.ensureDir(path.join(projectDir, 'Assets', 'Audio'));
             await fs.ensureDir(path.join(projectDir, 'Scenes'));
             await fs.ensureDir(path.join(projectDir, 'UI'));
+            await fs.ensureDir(path.join(projectDir, 'Scripts'));
             await fs.ensureDir(path.join(projectDir, 'Build'));
             const arSettings = this.createARSettings(options.template);
             const normalizedTarget = (options.targetDevice || '').toLowerCase();
@@ -145,6 +146,12 @@ class ProjectManager {
             delete project.logicGraphs;
             delete project.uiAuthoring;
             delete project.uiCode;
+            // 後方互換: scripts フィールドが無ければ空配列で初期化
+            if (!project.scripts) {
+                project.scripts = [];
+            }
+            // Scripts ディレクトリが存在しない場合は作成
+            await fs.ensureDir(path.join(projectPath, 'Scripts'));
             // シーン、UIの詳細を読み込み
             project.scenes = await this.loadScenes(projectPath, project.scenes);
             project.uiLayouts = await this.loadUILayouts(projectPath, project.uiLayouts);
@@ -206,6 +213,14 @@ class ProjectManager {
             await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), this.currentProject.uiLayouts, { spaces: 2 });
             // DataFlow 定義出力
             await fs.writeJSON(path.join(exportDir, 'dataflow.json'), this.currentProject.dataFlow, { spaces: 2 });
+            // スクリプトバンドル出力 (Jint用 JSON IR)
+            const scriptBundle = {
+                version: '1.0',
+                scripts: (this.currentProject.scripts ?? [])
+                    .filter((sc) => sc.enabled)
+                    .map((sc) => ({ id: sc.id, trigger: sc.trigger, code: sc.code, enabled: sc.enabled })),
+            };
+            await fs.writeJSON(path.join(exportDir, 'scripts.json'), scriptBundle, { spaces: 2 });
             // アセットをコピー
             if (options.includeAssets) {
                 await fs.copy(path.join(this.projectPath, 'Assets'), path.join(exportDir, 'Assets'));

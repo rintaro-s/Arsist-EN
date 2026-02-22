@@ -243,7 +243,8 @@ function createMenu(): void {
       submenu: [
         { label: '3Dビュー', accelerator: 'F1', click: () => mainWindow?.webContents.send('menu:view', '3d') },
         { label: '2D Canvasビュー', accelerator: 'F2', click: () => mainWindow?.webContents.send('menu:view', '2d') },
-        { label: 'ロジックエディタ', accelerator: 'F3', click: () => mainWindow?.webContents.send('menu:view', 'logic') },
+        { label: 'DataFlowエディタ', accelerator: 'F3', click: () => mainWindow?.webContents.send('menu:view', 'dataflow') },
+        { label: 'スクリプトエディタ', accelerator: 'F4', click: () => mainWindow?.webContents.send('menu:view', 'script') },
         { type: 'separator' },
         { label: '開発者ツール', accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
       ],

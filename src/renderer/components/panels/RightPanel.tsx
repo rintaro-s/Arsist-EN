@@ -8,6 +8,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { Vector3, UIElement, UIStyle, DataSourceDefinition, TransformDefinition } from '../../../shared/types';
 import { Box, Compass, Layout, Database, Activity } from 'lucide-react';
+import { ScriptInspector } from '../viewport/ScriptEditor';
 
 export function RightPanel() {
   const { currentView } = useUIStore();
@@ -16,6 +17,7 @@ export function RightPanel() {
       {currentView === 'scene' && <ObjectInspector />}
       {currentView === 'ui' && <UIInspector />}
       {currentView === 'dataflow' && <DataFlowInspector />}
+      {currentView === 'script' && <ScriptInspector />}
     </div>
   );
 }
@@ -157,6 +159,27 @@ function UIInspector() {
             <input className="input text-xs" value={element.content || ''} onChange={(e) => update({ content: e.target.value })} />
           </Field>
         )}
+
+        {/* Binding ID (for scripting) */}
+        <div className="p-3 rounded-lg border border-[#FF9800]/30 bg-[#E65100]/10 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <Layout size={14} className="text-[#FF9800]" />
+            <label className="text-xs font-semibold text-[#FF9800]">Binding ID (スクリプト用)</label>
+          </div>
+          <p className="text-[9px] text-[#9e9e9e] leading-tight">
+            スクリプトからこのUI要素を操作するためのIDです
+          </p>
+          <Field label="ID">
+            <input className="input text-xs font-mono" placeholder="例: welcomeText"
+              value={element.bindingId || ''}
+              onChange={(e) => update({ bindingId: e.target.value || undefined })} />
+          </Field>
+          {element.bindingId && (
+            <p className="text-[9px] text-[#4CAF50] mt-1">
+              スクリプトで <span className="font-mono bg-[#2d2d2d] px-1 rounded">ui.setText('{element.bindingId}', '...')</span> のように使用できます
+            </p>
+          )}
+        </div>
 
         {/* Bind (DataStore) */}
         <div className="p-3 rounded-lg border border-[#2196F3]/30 bg-[#0D47A1]/10 space-y-2">

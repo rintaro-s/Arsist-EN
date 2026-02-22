@@ -14,6 +14,7 @@ namespace Arsist.Runtime.UI
 
         private TMP_Text _tmpText;
         private Text _uiText;
+        private bool _subscribed;
 
         private void Awake()
         {
@@ -26,13 +27,42 @@ namespace Arsist.Runtime.UI
 
         private void OnEnable()
         {
-            ArsistDataStore.Instance.OnValueChanged += OnValueChanged;
-            UpdateFromStore();
+            TrySubscribe();
         }
 
         private void OnDisable()
         {
-            ArsistDataStore.Instance.OnValueChanged -= OnValueChanged;
+            Unsubscribe();
+        }
+
+        private void Update()
+        {
+            if (!_subscribed)
+            {
+                TrySubscribe();
+            }
+        }
+
+        private void TrySubscribe()
+        {
+            if (_subscribed) return;
+            var store = ArsistDataStore.Instance;
+            if (store == null) return;
+
+            store.OnValueChanged += OnValueChanged;
+            _subscribed = true;
+            UpdateFromStore();
+        }
+
+        private void Unsubscribe()
+        {
+            if (!_subscribed) return;
+            var store = ArsistDataStore.Instance;
+            if (store != null)
+            {
+                store.OnValueChanged -= OnValueChanged;
+            }
+            _subscribed = false;
         }
 
         private void OnValueChanged(string changedKey, object value)
@@ -47,7 +77,9 @@ namespace Arsist.Runtime.UI
         private void UpdateFromStore()
         {
             if (string.IsNullOrWhiteSpace(key)) return;
-            if (!ArsistDataStore.Instance.TryGetValueByPath(key, out var value)) return;
+            var store = ArsistDataStore.Instance;
+            if (store == null) return;
+            if (!store.TryGetValueByPath(key, out var value)) return;
 
             var text = FormatValue(value);
             if (_tmpText != null) _tmpText.text = text;

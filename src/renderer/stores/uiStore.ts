@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 
-export type ViewType = 'scene' | 'ui' | 'dataflow';
+export type ViewType = 'scene' | 'ui' | 'dataflow' | 'script';
 
 export interface ConsoleLog {
   type: 'info' | 'warning' | 'error';

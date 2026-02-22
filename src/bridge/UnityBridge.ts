@@ -8,7 +8,8 @@ import type {
   SceneObject, 
   UILayoutData, 
   UIElement,
-  Vector3
+  Vector3,
+  ScriptBundle,
 } from '../shared/types';
 
 /**
@@ -321,6 +322,18 @@ function mapTextAlignment(align?: string): string {
  * プロジェクト全体をUnityマニフェストに変換
  */
 export function generateUnityManifest(project: ArsistProject): object {
+  const scriptBundle: ScriptBundle = {
+    version: '1.0',
+    scripts: (project.scripts ?? [])
+      .filter((sc) => sc.enabled)
+      .map((sc) => ({
+        id: sc.id,
+        trigger: sc.trigger,
+        code: sc.code,
+        enabled: sc.enabled,
+      })),
+  };
+
   return {
     arsistVersion: '1.0.0',
     projectId: project.id,
@@ -357,6 +370,8 @@ export function generateUnityManifest(project: ArsistProject): object {
       name: l.name,
       scope: l.scope,
     })),
+
+    scriptBundle,
     
     generatedAt: new Date().toISOString(),
   };

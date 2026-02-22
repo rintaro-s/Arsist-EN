@@ -227,7 +227,7 @@ namespace Arsist.Runtime
     {
         [SerializeField] private string _panelId;
         [SerializeField] private bool _isHeadLocked = false;
-        [SerializeField] private bool _startVisible = false;
+        [SerializeField] private bool _startVisible = true;
         
         private CanvasGroup _canvasGroup;
         private Canvas _canvas;
@@ -262,6 +262,11 @@ namespace Arsist.Runtime
             {
                 _canvasGroup = gameObject.AddComponent<CanvasGroup>();
             }
+
+            _isVisible = true;
+            _canvasGroup.alpha = 1f;
+            _canvasGroup.interactable = true;
+            _canvasGroup.blocksRaycasts = true;
         }
 
         public void Show(float duration = 0.3f)

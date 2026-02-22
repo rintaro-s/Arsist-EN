@@ -134,6 +134,7 @@ export default function App() {
         if (view === '3d') setCurrentView('scene');
         else if (view === '2d') setCurrentView('ui');
         else if (view === 'dataflow') setCurrentView('dataflow');
+        else if (view === 'script') setCurrentView('script');
       });
 
       window.electronAPI.menu.onProjectOpen(async (path) => {

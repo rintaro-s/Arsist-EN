@@ -221,6 +221,17 @@ function mapTextAlignment(align) {
  * プロジェクト全体をUnityマニフェストに変換
  */
 function generateUnityManifest(project) {
+    const scriptBundle = {
+        version: '1.0',
+        scripts: (project.scripts ?? [])
+            .filter((sc) => sc.enabled)
+            .map((sc) => ({
+            id: sc.id,
+            trigger: sc.trigger,
+            code: sc.code,
+            enabled: sc.enabled,
+        })),
+    };
     return {
         arsistVersion: '1.0.0',
         projectId: project.id,
@@ -253,6 +264,7 @@ function generateUnityManifest(project) {
             name: l.name,
             scope: l.scope,
         })),
+        scriptBundle,
         generatedAt: new Date().toISOString(),
     };
 }

@@ -1,0 +1,176 @@
+{
+  "$schema": "https://arsist.dev/schemas/adapter.v1.json",
+  "id": "meta-quest",
+  "name": "Meta Quest (2 / 3 / 3S / Pro)",
+  "version": "1.0.0",
+  "description": "Meta Quest シリーズ用アダプター（Meta XR SDK v67+ 対応、Passthrough / MR 対応）",
+  "author": "Arsist Team",
+  "license": "MIT",
+
+  "device": {
+    "manufacturer": "Meta",
+    "models": ["Quest 2", "Quest 3", "Quest 3S", "Quest Pro"],
+    "displayName": "Meta Quest シリーズ",
+    "category": "standalone_vr_mr"
+  },
+
+  "display": {
+    "quest3": {
+      "resolution": { "width": 2064, "height": 2208, "perEye": true },
+      "fieldOfView": { "horizontal": 110, "vertical": 96 },
+      "refreshRate": [72, 90, 120]
+    },
+    "quest2": {
+      "resolution": { "width": 1832, "height": 1920, "perEye": true },
+      "fieldOfView": { "horizontal": 89, "vertical": 93 },
+      "refreshRate": [72, 90, 120]
+    }
+  },
+
+  "capabilities": {
+    "sixDofTracking": true,
+    "handTracking": true,
+    "spatialMapping": true,
+    "planeDetection": true,
+    "imageTracking": true,
+    "faceTracking": true,
+    "voiceInput": false,
+    "gestureRecognition": true,
+    "passthrough": true,
+    "mixedReality": true
+  },
+
+  "input": {
+    "controllers": {
+      "type": "touch_plus",
+      "buttons": ["trigger", "grip", "thumbstick", "a", "b", "x", "y", "menu"],
+      "has6DoF": true,
+      "haptics": true
+    },
+    "handTracking": {
+      "supported": true,
+      "gestures": ["pinch", "point", "open_hand", "fist"]
+    }
+  },
+
+  "sdk": {
+    "name": "Meta XR SDK",
+    "version": "67.0.0",
+    "minVersion": "60.0.0",
+    "platform": "OpenXR",
+    "unityPlugin": {
+      "packageId": "com.meta.xr.sdk.all",
+      "downloadUrl": "https://developer.oculus.com/downloads/package/unity-integration/",
+      "setupInstructions": "https://developer.oculus.com/documentation/unity/unity-gs-overview/"
+    },
+    "dependencies": [
+      { "name": "Meta XR Core SDK", "version": "67.0.0" },
+      { "name": "Meta XR Interaction SDK", "version": "67.0.0" },
+      { "name": "AR Foundation", "version": "5.0.0" },
+      { "name": "XR Interaction Toolkit", "version": "2.5.0" },
+      { "name": "OpenXR Plugin", "version": "1.9.0" }
+    ]
+  },
+
+  "build": {
+    "platform": "Android",
+    "minApiLevel": 32,
+    "targetApiLevel": 32,
+    "architecture": ["arm64-v8a"],
+    "graphicsApi": ["Vulkan", "OpenGLES3"],
+    "scriptingBackend": "IL2CPP",
+    "playerSettings": {
+      "colorSpace": "Linear",
+      "renderingPath": "Forward",
+      "multithreadedRendering": true,
+      "graphicsJobs": true,
+      "gpuSkinning": true,
+      "stereoRenderingMode": "SinglePassInstanced"
+    }
+  },
+
+  "manifest": {
+    "package": "com.oculus.intent.category.VR",
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "com.oculus.permission.HAND_TRACKING",
+      "com.oculus.permission.USE_SCENE"
+    ],
+    "features": [
+      { "name": "android.hardware.vr.headtracking", "required": true, "version": 1 }
+    ],
+    "metadata": [
+      { "name": "com.samsung.android.vr.application.mode", "value": "vr_only" },
+      { "name": "com.oculus.handtracking.version", "value": "V2.0" },
+      { "name": "com.oculus.ossplash", "value": "false" }
+    ],
+    "intentFilters": [
+      {
+        "action": "android.intent.action.MAIN",
+        "category": [
+          "android.intent.category.LAUNCHER",
+          "com.oculus.intent.category.VR"
+        ]
+      }
+    ]
+  },
+
+  "patches": [
+    {
+      "id": "player-settings",
+      "description": "Quest 用 PlayerSettings (シングルパスステレオ、IL2CPP 等)",
+      "script": "QuestBuildPatcher.cs",
+      "method": "ApplyPlayerSettings"
+    },
+    {
+      "id": "android-manifest",
+      "description": "Quest 用 AndroidManifest.xml パッチ",
+      "script": "QuestBuildPatcher.cs",
+      "method": "PatchAndroidManifest"
+    },
+    {
+      "id": "passthrough",
+      "description": "MR Passthrough 設定",
+      "script": "QuestBuildPatcher.cs",
+      "method": "ConfigurePassthrough"
+    }
+  ],
+
+  "scripting": {
+    "engine": "Jint",
+    "version": "3.x",
+    "il2cppCompatible": true,
+    "notes": "Jint は AST インタープリタ方式のため IL2CPP (AOT) 環境で動作します。Emit ベースの動的コード生成は使用しません。",
+    "sandboxLimits": {
+      "memoryMb": 16,
+      "recursionDepth": 20,
+      "timeoutSeconds": 3
+    },
+    "requiredNuGet": [
+      { "id": "Jint", "version": "3.0.0" },
+      { "id": "Esprima", "version": "3.0.0" }
+    ],
+    "streamingAssetsFile": "scripts.json",
+    "link_xml": "Assets/link.xml"
+  },
+
+  "optimizations": {
+    "recommendedSettings": {
+      "textureCompression": "ASTC",
+      "maxTextureSize": 2048,
+      "fixedFoveatedRendering": "HighTop",
+      "antiAliasing": 4,
+      "shadowDistance": 10,
+      "dynamicResolution": true
+    },
+    "performanceTips": [
+      "Single Pass Instanced Stereo Rendering を有効にする",
+      "Fixed Foveated Rendering (FFR) を HighTop 以上に設定する",
+      "CPU/GPU レベルを適切に設定する (Quest 3: CPU 4, GPU 5 推奨)",
+      "ドローコールを 100 以下に維持する",
+      "シャドウを無効化するか距離を短くする",
+      "Vulkan グラフィックス API を優先する"
+    ]
+  }
+}

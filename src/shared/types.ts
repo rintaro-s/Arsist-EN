@@ -220,6 +220,8 @@ export interface UIElement {
   type: UIElementType;
   content?: string;
   assetPath?: string;
+  /** スクリプトからこの要素を操作するためのID */
+  bindingId?: string;
   bind?: UIBinding;
   layout?: 'FlexRow' | 'FlexColumn' | 'Absolute';
   style: UIStyle;
@@ -283,6 +285,50 @@ export interface ShadowStyle {
 }
 
 // ========================================
+// スクリプトシステム
+// ========================================
+
+/** スクリプトトリガーの種別 */
+export type ScriptTriggerType = 'onStart' | 'onUpdate' | 'interval' | 'event';
+
+/** スクリプトトリガー設定 */
+export interface ScriptTrigger {
+  /** トリガー種別 */
+  type: ScriptTriggerType;
+  /**
+   * interval の場合: ミリ秒 (例: 5000 = 5秒ごと)
+   * event の場合: イベント名 (例: "btn_refresh")
+   * onStart / onUpdate の場合: 未使用
+   */
+  value?: number | string;
+}
+
+/** 一つのスクリプト定義 */
+export interface ScriptData {
+  id: string;
+  name: string;
+  trigger: ScriptTrigger;
+  /** JavaScriptコード本体 */
+  code: string;
+  /** スクリプトが有効かどうか */
+  enabled: boolean;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Unity に書き出すスクリプトバンドル (JSON IR) */
+export interface ScriptBundle {
+  version: '1.0';
+  scripts: Array<{
+    id: string;
+    trigger: ScriptTrigger;
+    code: string;
+    enabled: boolean;
+  }>;
+}
+
+// ========================================
 // プロジェクトルート
 // ========================================
 
@@ -300,6 +346,8 @@ export interface ArsistProject {
   scenes: SceneData[];
   uiLayouts: UILayoutData[];
   buildSettings: BuildSettings;
+  /** 動的スクリプト定義リスト (省略可・後方互換) */
+  scripts?: ScriptData[];
 }
 
 // ========================================

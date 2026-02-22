@@ -184,5 +184,23 @@
       "ドローコールを100以下に維持",
       "ポリゴン数は10万以下を推奨"
     ]
+  },
+
+  "scripting": {
+    "engine": "Jint",
+    "version": "3.x",
+    "il2cppCompatible": true,
+    "notes": "Jint は AST インタープリタ方式のため IL2CPP (AOT) 環境で動作します。Emit ベースの動的コード生成は使用しません。",
+    "sandboxLimits": {
+      "memoryMb": 8,
+      "recursionDepth": 20,
+      "timeoutSeconds": 3
+    },
+    "requiredNuGet": [
+      { "id": "Jint", "version": "3.0.0" },
+      { "id": "Esprima", "version": "3.0.0" }
+    ],
+    "streamingAssetsFile": "scripts.json",
+    "link_xml": "Assets/link.xml"
   }
 }
