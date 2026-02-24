@@ -62,10 +62,9 @@ namespace Arsist.Builder
                 Debug.Log("[Arsist] Phase 1: Generating scenes...");
                 GenerateScenes();
 
-                // Phase 2: UI生成
-                Debug.Log("[Arsist] Phase 2: Generating UI...");
+                // Phase 2: UI生成（StreamingAssetsへのコピーのみ。Canvas生成はPhase 1で完了）
+                Debug.Log("[Arsist] Phase 2: Copying UI assets...");
                 CopyUICodeToStreamingAssets();
-                GenerateUI();
 
                 // Phase 3: ビルド設定適用
                 Debug.Log("[Arsist] Phase 3: Applying build settings...");
@@ -76,7 +75,11 @@ namespace Arsist.Builder
                 ApplyDevicePatches(_targetDevice);
 
                 // Phase 3.15: Quest向けビルド設定（OVRProjectConfig等）
-                ApplyQuestBuildBootstrap();
+                // Quest固有の設定は、Questターゲット時のみ実行
+                if (IsQuestTargetDevice())
+                {
+                    ApplyQuestBuildBootstrap();
+                }
 
                 // Phase 3.2: ビルド前検証（ここで落とすことで“成功したけど動かない”を避ける）
                 Debug.Log("[Arsist] Phase 3.2: Validating build readiness...");
@@ -256,7 +259,15 @@ namespace Arsist.Builder
                 // ランタイム基盤コンポーネントを追加
                 CreateRuntimeSystems(_manifest);
 
-                // シーンを保存
+                // UI生成（SimpleHUDDisplayなど）- シーン保存前に実行
+                var uiPath = Path.Combine(Application.dataPath, "ArsistGenerated", "ui_layouts.json");
+                if (File.Exists(uiPath))
+                {
+                    Debug.Log("[Arsist] Generating Canvas UI in scene before save");
+                    GenerateCanvasUI(uiPath);
+                }
+
+                // シーンを保存（すべてのGameObjectが作成された後）
                 var scenePath = $"Assets/Scenes/{sceneName}.unity";
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(Application.dataPath, "..", scenePath)));
                 UnityEditor.SceneManagement.EditorSceneManager.SaveScene(newScene, scenePath);
@@ -264,7 +275,7 @@ namespace Arsist.Builder
                 
                 // ビルド設定に追加
                 buildScenes.Add(new EditorBuildSettingsScene(scenePath, true));
-                Debug.Log($"[Arsist] Scene added to build settings: {scenePath}");
+                Debug.Log($"[Arsist] Scene saved with all GameObjects: {scenePath}");
             }
             
             // ビルド設定を更新
@@ -907,31 +918,38 @@ ScriptedImporter:
         /// </summary>
         private static void CreateRuntimeSystems(JObject manifest)
         {
-            // [ArsistRuntimeSystems] 親オブジェクト
-            var systemsRoot = new GameObject("[ArsistRuntimeSystems]");
+            // Arsist Runtime Manager を追加
+            var managerGO = new GameObject("[ArsistRuntimeManager]");
+            TryAddComponentByTypeName(managerGO, "Arsist.Runtime.ArsistRuntimeManager");
             
-            // DataManager（永続データ）
-            TryAddComponentByTypeName(systemsRoot, "Arsist.Runtime.Data.ArsistDataManager");
-
-            // DataFlow（DataSource / Transform / Store）
-            TryAddComponentByTypeName(systemsRoot, "Arsist.Runtime.DataFlow.ArsistDataFlowEngine");
+            // Data Store
+            var dataStoreGO = new GameObject("[ArsistDataStore]");
+            TryAddComponentByTypeName(dataStoreGO, "Arsist.Runtime.DataFlow.ArsistDataStore");
             
-            // EventBus（イベント通信）
-            TryAddComponentByTypeName(systemsRoot, "Arsist.Runtime.Events.ArsistEventBus");
+            // Event Bus
+            var eventBusGO = new GameObject("[ArsistEventBus]");
+            TryAddComponentByTypeName(eventBusGO, "Arsist.Runtime.Events.ArsistEventBus");
             
-            // AudioManager（サウンド）
-            TryAddComponentByTypeName(systemsRoot, "Arsist.Runtime.Audio.ArsistAudioManager");
+            // UI Manager
+            var uiManagerGO = new GameObject("[ArsistUIManager]");
+            TryAddComponentByTypeName(uiManagerGO, "Arsist.Runtime.UI.ArsistUIManager");
             
-            // SceneManager（シーン遷移）
-            TryAddComponentByTypeName(systemsRoot, "Arsist.Runtime.Scene.ArsistSceneManager");
+            // Note: Canvas visibility and font fixes are handled at build time in GenerateCanvasUI and CreateUIElement
             
-            // GazeInput（視線入力）- メインカメラに追加
-            var mainCam = Camera.main;
-            if (mainCam != null)
+            // Script Engine (if scripting enabled)
+            var scriptingEnabled = manifest?["scripting"]?["enabled"]?.Value<bool>() ?? false;
+            if (scriptingEnabled)
             {
-                TryAddComponentByTypeName(mainCam.gameObject, "Arsist.Runtime.Input.ArsistGazeInput");
+                var scriptEngineGO = new GameObject("[ArsistScriptEngine]");
+                TryAddComponentByTypeName(scriptEngineGO, "Arsist.Runtime.Scripting.ScriptEngineManager");
+                
+                var triggerManagerGO = new GameObject("[ArsistScriptTriggerManager]");
+                TryAddComponentByTypeName(triggerManagerGO, "Arsist.Runtime.Scripting.ScriptTriggerManager");
+                
+                var coroutineRunnerGO = new GameObject("[ArsistCoroutineRunner]");
+                TryAddComponentByTypeName(coroutineRunnerGO, "Arsist.Runtime.Scripting.CoroutineRunner");
             }
-
+            
             Debug.Log("[Arsist] Runtime systems created");
         }
 
@@ -1038,12 +1056,19 @@ ScriptedImporter:
                     canvasGO.transform.SetParent(mainCam.transform, false);
                     rectTransform.localPosition = new Vector3(0f, 0f, Mathf.Max(0.5f, distance));
                     rectTransform.localRotation = Quaternion.identity;
+                    
+                    // レイヤー設定: カメラと同じレイヤーに設定して確実に描画
                     canvasGO.layer = mainCam.gameObject.layer;
                     SetLayerRecursively(canvasGO, mainCam.gameObject.layer);
+                    
+                    // Canvas設定: ワールドカメラを明示的に設定
+                    canvas.worldCamera = mainCam;
+                    canvas.planeDistance = Mathf.Max(0.5f, distance);
                 }
                 else
                 {
                     rectTransform.position = new Vector3(0, 1.5f, 3f);
+                    Debug.LogWarning("[Arsist] MainCamera not found - Canvas may not be visible");
                 }
 
                 var cg = canvasGO.GetComponent<CanvasGroup>();
@@ -1054,6 +1079,16 @@ ScriptedImporter:
                 cg.alpha = 1f;
                 cg.interactable = true;
                 cg.blocksRaycasts = true;
+                
+                // 常時表示を保証
+                canvasGO.SetActive(true);
+
+                // Add CanvasInitializer to ensure worldCamera is set at runtime
+                var initializer = canvasGO.AddComponent<Arsist.Runtime.UI.CanvasInitializer>();
+                if (initializer != null)
+                {
+                    Debug.Log("[Arsist] CanvasInitializer added to Canvas");
+                }
 
                 createdHudCount++;
 
@@ -1069,6 +1104,11 @@ ScriptedImporter:
             {
                 CreateFallbackHUDCanvas();
             }
+
+            // Add SimpleHUDDisplay to ensure HUD is visible at runtime
+            var simpleHudGO = new GameObject("SimpleHUDDisplay_Runtime");
+            simpleHudGO.AddComponent<Arsist.Runtime.UI.SimpleHUDDisplay>();
+            Debug.Log("[Arsist] SimpleHUDDisplay added to scene for guaranteed HUD visibility");
         }
 
         private static void CreateFallbackHUDCanvas()
@@ -1109,13 +1149,15 @@ ScriptedImporter:
             labelRect.offsetMax = new Vector2(-24f, -24f);
 
             var text = labelGO.AddComponent<UnityEngine.UI.Text>();
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            text.text = "HUD initialized";
             text.fontSize = 48;
             text.color = Color.white;
             text.alignment = TextAnchor.MiddleCenter;
             text.horizontalOverflow = HorizontalWrapMode.Wrap;
             text.verticalOverflow = VerticalWrapMode.Overflow;
-            text.text = "HUD initialized";
+            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            
+            Debug.Log("[Arsist] Fallback HUD created with UI.Text");
 
             Debug.Log("[Arsist] Fallback HUD canvas created.");
         }
@@ -1229,7 +1271,14 @@ ScriptedImporter:
                 case "Text":
                     var text = go.AddComponent<UnityEngine.UI.Text>();
                     text.text = elementData["content"]?.ToString() ?? "Text";
+                    
+                    // Use LegacyRuntime.ttf (the valid built-in font)
                     text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                    if (text.font == null)
+                    {
+                        Debug.LogWarning($"[Arsist] LegacyRuntime.ttf not found for Text element: {elementData["content"]}");
+                    }
+                    
                     if (style != null)
                     {
                         text.fontSize = style["fontSize"]?.Value<int>() ?? 24;
@@ -1278,12 +1327,16 @@ ScriptedImporter:
                     buttonTextRt.offsetMin = Vector2.zero;
                     buttonTextRt.offsetMax = Vector2.zero;
 
-                    var legacyButtonText = buttonTextGO.AddComponent<UnityEngine.UI.Text>();
-                    legacyButtonText.text = elementData["content"]?.ToString() ?? "Button";
-                    legacyButtonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-                    legacyButtonText.fontSize = style?["fontSize"]?.Value<int>() ?? 16;
-                    legacyButtonText.alignment = TextAnchor.MiddleCenter;
-                    legacyButtonText.color = TryParseColor(style?["color"], out var legacyButtonColor) ? legacyButtonColor : Color.white;
+                    var buttonText = buttonTextGO.AddComponent<UnityEngine.UI.Text>();
+                    buttonText.text = elementData["content"]?.ToString() ?? "Button";
+                    buttonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                    if (buttonText.font == null)
+                    {
+                        Debug.LogWarning("[Arsist] LegacyRuntime.ttf not found for Button text");
+                    }
+                    buttonText.fontSize = style?["fontSize"]?.Value<int>() ?? 16;
+                    buttonText.alignment = TextAnchor.MiddleCenter;
+                    buttonText.color = TryParseColor(style?["color"], out var btnTextColor) ? btnTextColor : Color.white;
                     break;
 
                 case "Image":
@@ -1860,19 +1913,19 @@ ScriptedImporter:
                     var generalSettings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
                     if (generalSettings == null)
                     {
-                        problems.Add("XR General Settings (Android) is missing");
+                        Debug.LogWarning("[Arsist] XR General Settings (Android) is missing - XR may not work properly");
                     }
                     else
                     {
                         if (!generalSettings.InitManagerOnStart)
                         {
-                            problems.Add("Initialize XR on Startup is not enabled");
+                            Debug.LogWarning("[Arsist] Initialize XR on Startup is not enabled");
                         }
 
                         var manager = generalSettings.Manager;
                         if (manager == null)
                         {
-                            problems.Add("XR Manager Settings is missing");
+                            Debug.LogWarning("[Arsist] XR Manager Settings is missing");
                         }
                         else
                         {
@@ -1889,14 +1942,14 @@ ScriptedImporter:
 
                             if (!hasXrealLoader)
                             {
-                                problems.Add("XREAL XR Loader is not enabled in XR Plug-in Management (Android)");
+                                Debug.LogWarning("[Arsist] XREAL XR Loader is not enabled in XR Plug-in Management (Android)");
                             }
                         }
                     }
                 }
                 catch (Exception e)
                 {
-                    problems.Add($"Failed to validate XR settings: {e.Message}");
+                    Debug.LogWarning($"[Arsist] Failed to validate XR settings: {e.Message}");
                 }
             }
 

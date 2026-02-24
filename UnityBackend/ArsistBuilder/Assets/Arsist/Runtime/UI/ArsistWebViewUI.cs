@@ -72,9 +72,23 @@ namespace Arsist.Runtime.UI
         /// </summary>
         private IEnumerator InitializeWithRetry()
         {
-            Debug.Log("[ArsistWebViewUI] Waiting for XR camera...");
+            Debug.Log("[ArsistWebViewUI] Initializing HUD...");
 
-            // 最大10秒待機してカメラを探す（5秒→10秒に延長）
+            // First, try to find existing Canvas from build-time
+            var existingCanvas = FindExistingCanvas();
+            if (existingCanvas != null)
+            {
+                Debug.Log($"[ArsistWebViewUI] ✅ Found existing Canvas from build-time: {existingCanvas.name}");
+                _canvas = existingCanvas;
+                _initialized = true;
+                TrySubscribeDataStore();
+                Debug.Log("[ArsistWebViewUI] ✅ Using existing Canvas - HUD ready");
+                yield break;
+            }
+
+            Debug.Log("[ArsistWebViewUI] No existing Canvas found. Creating new one...");
+
+            // Fallback: Wait for XR camera and create new Canvas
             float elapsed = 0f;
             float maxWaitTime = 10f;
             while (elapsed < maxWaitTime)
@@ -84,51 +98,60 @@ namespace Arsist.Runtime.UI
                 yield return new WaitForSeconds(0.5f);
                 elapsed += 0.5f;
                 
-                // 進捗ログ（2秒ごと）
                 if ((int)elapsed % 2 == 0)
                 {
-                    Debug.Log($"[ArsistWebViewUI] Still waiting for camera... ({elapsed:F1}s / {maxWaitTime}s)");
+                    Debug.Log($"[ArsistWebViewUI] Waiting for camera... ({elapsed:F1}s / {maxWaitTime}s)");
                 }
             }
 
             if (_xrCamera == null)
             {
                 Debug.LogError("[ArsistWebViewUI] ❌ No camera found after 10s. HUD will not be created.");
-                Debug.LogError("[ArsistWebViewUI] Available GameObjects in scene:");
-                
-                // デバッグ: シーン内の全GameObjectをリスト
-                var allObjects = FindObjectsOfType<GameObject>();
-                foreach (var obj in allObjects)
-                {
-                    if (obj.name.ToLower().Contains("camera") || obj.name.ToLower().Contains("xr") || obj.name.ToLower().Contains("origin"))
-                    {
-                        Debug.LogError($"  - {obj.name} (tag: {obj.tag})");
-                    }
-                }
-                
                 yield break;
             }
 
-            Debug.Log($"[ArsistWebViewUI] ✅ Camera found: {_xrCamera.name} (tag={_xrCamera.tag})");
+            Debug.Log($"[ArsistWebViewUI] ✅ Camera found: {_xrCamera.name}");
 
-            // HTMLコンテンツを読み込み（Androidはコルーチン経由）
+            // HTMLコンテンツを読み込み
             string htmlContent = null;
             yield return StartCoroutine(LoadHTMLContentCoroutine(result => htmlContent = result));
 
             if (string.IsNullOrEmpty(htmlContent))
             {
-                Debug.LogError("[ArsistWebViewUI] ❌ Failed to load HTML content. Using default.");
                 htmlContent = GetDefaultHTML();
-            }
-            else
-            {
-                Debug.Log($"[ArsistWebViewUI] ✅ HTML content loaded ({htmlContent.Length} bytes)");
             }
 
             CreateXRHUD(htmlContent);
             _initialized = true;
             TrySubscribeDataStore();
             Debug.Log("[ArsistWebViewUI] ✅ HUD initialized successfully");
+        }
+
+        /// <summary>
+        /// Find Canvas created at build-time
+        /// </summary>
+        private GameObject FindExistingCanvas()
+        {
+            // Look for Canvas with CanvasInitializer (created at build-time)
+            var canvases = FindObjectsOfType<Canvas>();
+            foreach (var canvas in canvases)
+            {
+                if (canvas.renderMode == RenderMode.WorldSpace && canvas.GetComponent<CanvasInitializer>() != null)
+                {
+                    return canvas.gameObject;
+                }
+            }
+
+            // Fallback: Look for any WorldSpace Canvas
+            foreach (var canvas in canvases)
+            {
+                if (canvas.renderMode == RenderMode.WorldSpace && canvas.gameObject.name.Contains("HUD"))
+                {
+                    return canvas.gameObject;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -376,7 +399,7 @@ namespace Arsist.Runtime.UI
             textRect.offsetMin = new Vector2(40, 40);
             textRect.offsetMax = new Vector2(-40, -40);
 
-            // Unity標準のUI.Textを使用（TextMeshPro Resources不要）
+            // Unity標準のUI.Textを使用
             var text = textObj.AddComponent<UnityEngine.UI.Text>();
             text.text = ExtractTextFromHTML(htmlContent);
             text.fontSize = 42;
@@ -384,7 +407,13 @@ namespace Arsist.Runtime.UI
             text.alignment = TextAnchor.MiddleCenter;
             text.horizontalOverflow = HorizontalWrapMode.Wrap;
             text.verticalOverflow = VerticalWrapMode.Truncate;
+            
+            // Use LegacyRuntime.ttf (the valid built-in font)
             text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (text.font == null)
+            {
+                Debug.LogWarning("[ArsistWebViewUI] LegacyRuntime.ttf not found, text may not render");
+            }
 
             Debug.Log($"[ArsistWebViewUI] XR HUD created (headLocked={headLocked}, distance={distance}m, camera={_xrCamera.name})");
         }
