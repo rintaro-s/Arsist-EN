@@ -99,38 +99,27 @@ namespace Arsist.Runtime.UI
             canvasGroup.interactable = true;
             Debug.Log("[CanvasInitializer] CanvasGroup configured");
 
-            // === CRITICAL: Ensure all Text components have fonts ===
-            var texts = GetComponentsInChildren<Text>();
-            Debug.Log($"[CanvasInitializer] Found {texts.Length} Text components");
+            // === CRITICAL: Ensure all 3D TextMesh components are visible ===
+            var textMeshes = GetComponentsInChildren<TextMesh>(true);
+            Debug.Log($"[CanvasInitializer] Found {textMeshes.Length} TextMesh components");
             
-            foreach (var text in texts)
+            foreach (var tm in textMeshes)
             {
-                if (text.font == null)
+                if (tm.color.a < 0.5f)
                 {
-                    text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-                    if (text.font != null)
-                    {
-                        Debug.Log($"[CanvasInitializer] Set font for: {text.gameObject.name}");
-                    }
-                    else
-                    {
-                        Debug.LogError($"[CanvasInitializer] Failed to load font for: {text.gameObject.name}");
-                    }
+                    tm.color = Color.white;
                 }
                 
-                // Ensure text is visible and properly configured
-                text.color = text.color.a < 0.5f ? Color.white : text.color;
-                text.enabled = true;
-                
-                // Ensure text has proper rendering settings
-                if (text.fontSize < 32)
+                // Ensure MeshRenderer is present and enabled
+                var meshRenderer = tm.GetComponent<MeshRenderer>();
+                if (meshRenderer != null)
                 {
-                    text.fontSize = 64; // Increase small font sizes
+                    meshRenderer.enabled = true;
                 }
-                text.resizeTextForBestFit = true;
-                text.resizeTextMinSize = 10;
-                text.resizeTextMaxSize = 300;
-                text.supportRichText = true;
+                
+                tm.gameObject.SetActive(true);
+                
+                Debug.Log($"[CanvasInitializer] ✅ Configured TextMesh: {tm.gameObject.name} (text='{tm.text}')");
             }
 
             // === CRITICAL: Set to UI layer for UI camera rendering ===

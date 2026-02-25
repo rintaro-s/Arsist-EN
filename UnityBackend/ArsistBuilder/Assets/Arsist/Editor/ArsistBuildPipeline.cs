@@ -88,6 +88,10 @@ namespace Arsist.Builder
                 // Phase 3.3: glTFast に必要なシェーダーを確実にビルドに含める
                 Debug.Log("[Arsist] Phase 3.3: Ensuring required shaders...");
                 EnsureGltfastShaders();
+                
+                // Phase 3.4: TextMeshPro リソースを確保
+                Debug.Log("[Arsist] Phase 3.4: Ensuring TextMeshPro resources...");
+                EnsureTextMeshProResources();
 
                 // OpenXR は初回ロード直後だと Settings が未ロード扱いになり、BuildPlayer が失敗することがある。
                 // Build 前に明示的にロードしておく。
@@ -350,15 +354,32 @@ namespace Arsist.Builder
 
                 if (rot != null)
                 {
-                    // **修正: eulerAngles（ワールド座標）ではなく localEulerAngles を使用**
-                    // これにより、親がいても正しく回転が適用される
-                    var rotation = new Vector3(
-                        rot["x"]?.Value<float>() ?? 0,
-                        rot["y"]?.Value<float>() ?? 0,
-                        rot["z"]?.Value<float>() ?? 0
-                    );
-                    go.transform.localEulerAngles = rotation;
-                    Debug.Log($"[Arsist] Applied rotation to {name}: {rotation}");
+                    var rotX = rot["x"]?.Value<float>() ?? 0;
+                    var rotY = rot["y"]?.Value<float>() ?? 0;
+                    var rotZ = rot["z"]?.Value<float>() ?? 0;
+                    
+                    // CRITICAL: GLB rotation compensation
+                    // glTFast imports GLB models with coordinate conversion that affects rotation
+                    // The engine shows rotation in Unity coordinate system, but GLB import adds implicit rotation
+                    // For GLB models specifically, we need to compensate
+                    bool isGLBModel = go.name.Contains("_Model") || go.GetComponentInChildren<MeshFilter>() != null;
+                    
+                    if (isGLBModel)
+                    {
+                        // GLB models: Apply rotation with X-axis compensation
+                        // glTFast imports with implicit -90 X rotation (Z-up to Y-up conversion)
+                        // Engine shows rotation in Unity space, so we need +90 X compensation
+                        var rotation = new Vector3(rotX + 90f, rotY, rotZ);
+                        go.transform.localEulerAngles = rotation;
+                        Debug.Log($"[Arsist] Applied GLB rotation compensation to {name}: engine({rotX},{rotY},{rotZ}) -> unity({rotation.x},{rotation.y},{rotation.z})");
+                    }
+                    else
+                    {
+                        // Non-GLB objects: Apply rotation directly
+                        var rotation = new Vector3(rotX, rotY, rotZ);
+                        go.transform.localEulerAngles = rotation;
+                        Debug.Log($"[Arsist] Applied rotation to {name}: {rotation}");
+                    }
                 }
 
                 if (scale != null)
@@ -417,6 +438,78 @@ namespace Arsist.Builder
         }
 
         /// <summary>
+        /// TextMeshPro のデフォルトフォントアセットを確保。
+        /// TMP は Resources/Fonts & Materials/ にデフォルトフォントが必要。
+        /// </summary>
+        private static void EnsureTextMeshProResources()
+        {
+            try
+            {
+                // Resources フォルダを作成
+                var resourcesPath = "Assets/Resources";
+                if (!AssetDatabase.IsValidFolder(resourcesPath))
+                {
+                    AssetDatabase.CreateFolder("Assets", "Resources");
+                }
+
+                // TMP Essential Resources をインポート
+                // Unity の TMP パッケージから LiberationSans SDF をコピー
+                var tmpFontPath = "Packages/com.unity.textmeshpro/Resources/Fonts & Materials/LiberationSans SDF.asset";
+                var tmpFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(tmpFontPath);
+                
+                if (tmpFont != null)
+                {
+                    Debug.Log("[Arsist] ✅ TextMeshPro default font found in package");
+                    
+                    // フォントのマテリアルをResourcesにコピー（これによりシェーダーも含まれる）
+                    if (tmpFont.material != null)
+                    {
+                        var matPath = "Assets/Resources/LiberationSans SDF - Material.mat";
+                        var existingMat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+                        if (existingMat == null)
+                        {
+                            AssetDatabase.CopyAsset(
+                                AssetDatabase.GetAssetPath(tmpFont.material),
+                                matPath
+                            );
+                            Debug.Log("[Arsist] Copied TMP material to Resources");
+                        }
+                    }
+                    
+                    // TMP Settings を確認/作成
+                    var tmpSettings = Resources.Load<TMPro.TMP_Settings>("TMP Settings");
+                    if (tmpSettings == null)
+                    {
+                        tmpSettings = ScriptableObject.CreateInstance<TMPro.TMP_Settings>();
+                        AssetDatabase.CreateAsset(tmpSettings, "Assets/Resources/TMP Settings.asset");
+                        Debug.Log("[Arsist] Created TMP Settings");
+                    }
+                    
+                    // デフォルトフォントを設定（リフレクション使用）
+                    var defaultFontField = typeof(TMPro.TMP_Settings).GetField("m_defaultFontAsset", 
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (defaultFontField != null)
+                    {
+                        defaultFontField.SetValue(tmpSettings, tmpFont);
+                        UnityEditor.EditorUtility.SetDirty(tmpSettings);
+                        Debug.Log("[Arsist] Set TMP default font via reflection");
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning("[Arsist] ⚠️ TextMeshPro package font not found - text may not render");
+                }
+
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Arsist] Failed to setup TextMeshPro resources: {e.Message}");
+            }
+        }
+
+        /// <summary>
         /// glTFast がランタイムで使用するシェーダーを Always Included Shaders に追加。
         /// Built-in RP では Standard / Unlit 系が必要。これがないと IL2CPP ストリップで
         /// Shader.Find("Standard") が null を返し、マテリアル生成で NullRef になる。
@@ -441,7 +534,6 @@ namespace Arsist.Builder
                     "Unlit/Texture",
                     "Unlit/Transparent",
                     "UI/Default",
-                    "TextMeshPro/Mobile/Distance Field",
                     "Sprites/Default",
                 };
 
@@ -454,22 +546,42 @@ namespace Arsist.Builder
                     if (shader != null) existingGuids.Add(shader.name);
                 }
 
+                // 必要なシェーダーを追加
                 int added = 0;
                 foreach (var shaderName in requiredShaders)
                 {
                     if (existingGuids.Contains(shaderName)) continue;
 
                     var shader = Shader.Find(shaderName);
-                    if (shader == null)
+                    if (shader != null)
+                    {
+                        arrayProp.InsertArrayElementAtIndex(arrayProp.arraySize);
+                        var newElem = arrayProp.GetArrayElementAtIndex(arrayProp.arraySize - 1);
+                        newElem.objectReferenceValue = shader;
+                        added++;
+                        Debug.Log($"[Arsist] Added shader: {shaderName}");
+                    }
+                    else
                     {
                         Debug.LogWarning($"[Arsist] Shader not found: {shaderName}");
-                        continue;
                     }
-
-                    int idx = arrayProp.arraySize;
-                    arrayProp.InsertArrayElementAtIndex(idx);
-                    arrayProp.GetArrayElementAtIndex(idx).objectReferenceValue = shader;
-                    added++;
+                }
+                
+                // TextMeshPro シェーダーを AssetDatabase から検索して追加
+                var tmpShaderGuids = AssetDatabase.FindAssets("t:Shader", new[] { "Packages/com.unity.textmeshpro" });
+                foreach (var guid in tmpShaderGuids)
+                {
+                    var path = AssetDatabase.GUIDToAssetPath(guid);
+                    var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
+                    if (shader != null && !existingGuids.Contains(shader.name))
+                    {
+                        arrayProp.InsertArrayElementAtIndex(arrayProp.arraySize);
+                        var newElem = arrayProp.GetArrayElementAtIndex(arrayProp.arraySize - 1);
+                        newElem.objectReferenceValue = shader;
+                        existingGuids.Add(shader.name);
+                        added++;
+                        Debug.Log($"[Arsist] Added TMP shader: {shader.name}");
+                    }
                 }
 
                 if (added > 0)
@@ -697,20 +809,15 @@ namespace Arsist.Builder
                 var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(importedPath);
                 if (prefab != null)
                 {
-                    // **FIX: GLBモデルをラップする空の親オブジェクトを作成**
-                    // これにより、外部から設定する回転が確実に適用される
-                    var wrapper = new GameObject(name);
+                    // **CRITICAL: GLB coordinate system fix**
+                    // glTFast imports GLB with automatic coordinate conversion
+                    // This causes rotation mismatch with engine
+                    // Solution: Don't wrap, use the prefab directly and apply rotation compensation
                     var instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-                    instance.name = name + "_Model";
-                    instance.transform.SetParent(wrapper.transform, false);
+                    instance.name = name;
                     
-                    // GLBの初期位置/回転/スケールをリセット（親で制御するため）
-                    instance.transform.localPosition = Vector3.zero;
-                    instance.transform.localRotation = Quaternion.identity;
-                    instance.transform.localScale = Vector3.one;
-                    
-                    Debug.Log($"[Arsist] Model imported and wrapped: {importedPath}");
-                    return wrapper;
+                    Debug.Log($"[Arsist] Model imported: {importedPath}");
+                    return instance;
                 }
             }
 
@@ -1181,18 +1288,15 @@ ScriptedImporter:
             labelRect.offsetMin = new Vector2(24f, 24f);
             labelRect.offsetMax = new Vector2(-24f, -24f);
 
-            var text = labelGO.AddComponent<UnityEngine.UI.Text>();
+            var text = labelGO.AddComponent<TextMesh>();
             text.text = "HUD initialized";
-            text.fontSize = 96; // Increased from 48
+            text.fontSize = 96;
+            text.characterSize = 0.01f;
             text.color = Color.white;
-            text.alignment = TextAnchor.MiddleCenter;
-            text.horizontalOverflow = HorizontalWrapMode.Wrap;
-            text.verticalOverflow = VerticalWrapMode.Overflow;
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            text.resizeTextForBestFit = true;
-            text.resizeTextMinSize = 20;
-            text.resizeTextMaxSize = 300;
-            text.supportRichText = true;
+            text.anchor = TextAnchor.MiddleCenter;
+            text.alignment = TextAlignment.Center;
+            text.richText = true;
+            labelGO.AddComponent<MeshRenderer>();
             
             Debug.Log("[Arsist] Fallback HUD created with UI.Text");
 
@@ -1306,49 +1410,57 @@ ScriptedImporter:
                     break;
                     
                 case "Text":
-                    var text = go.AddComponent<UnityEngine.UI.Text>();
-                    text.text = elementData["content"]?.ToString() ?? "Text";
+                    // Use 3D TextMesh instead of TMP - it's built into Unity and always works
+                    var textMesh = go.AddComponent<TextMesh>();
+                    textMesh.text = elementData["content"]?.ToString() ?? "Text";
                     
-                    // Use LegacyRuntime.ttf (the valid built-in font)
-                    text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-                    if (text.font == null)
+                    // Add MeshRenderer for visibility
+                    var meshRenderer = go.GetComponent<MeshRenderer>();
+                    if (meshRenderer == null)
                     {
-                        Debug.LogWarning($"[Arsist] LegacyRuntime.ttf not found for Text element: {elementData["content"]}");
+                        meshRenderer = go.AddComponent<MeshRenderer>();
                     }
                     
                     if (style != null)
                     {
-                        // Increased default fontSize from 24 to 64 for better visibility
-                        text.fontSize = style["fontSize"]?.Value<int>() ?? 64;
+                        textMesh.fontSize = style["fontSize"]?.Value<int>() ?? 64;
+                        textMesh.characterSize = 0.01f; // Scale down for UI
+                        
                         if (TryParseColor(style["color"], out var textColor))
                         {
-                            text.color = textColor;
+                            textMesh.color = textColor;
                         }
                         else
                         {
-                            text.color = Color.white; // Ensure text is visible
+                            textMesh.color = Color.white;
                         }
 
                         var align = style["textAlign"]?.ToString();
-                        text.alignment = align switch
+                        textMesh.anchor = align switch
                         {
                             "center" => TextAnchor.MiddleCenter,
                             "right" => TextAnchor.MiddleRight,
                             _ => TextAnchor.MiddleLeft,
                         };
+                        textMesh.alignment = align switch
+                        {
+                            "center" => TextAlignment.Center,
+                            "right" => TextAlignment.Right,
+                            _ => TextAlignment.Left,
+                        };
                     }
                     else
                     {
-                        text.fontSize = 64;
-                        text.color = Color.white;
-                        text.alignment = TextAnchor.MiddleCenter;
+                        textMesh.fontSize = 64;
+                        textMesh.characterSize = 0.01f;
+                        textMesh.color = Color.white;
+                        textMesh.anchor = TextAnchor.MiddleCenter;
+                        textMesh.alignment = TextAlignment.Center;
                     }
                     
-                    // Enable best fit for better text rendering
-                    text.resizeTextForBestFit = true;
-                    text.resizeTextMinSize = 10;
-                    text.resizeTextMaxSize = 300;
-                    text.supportRichText = true;
+                    textMesh.richText = true;
+                    
+                    Debug.Log($"[Arsist] Created 3D TextMesh element: '{textMesh.text}'");
 
                     if (IsAutoValue(style?["width"]) || IsAutoValue(style?["height"]))
                     {
@@ -1381,20 +1493,15 @@ ScriptedImporter:
                     buttonTextRt.offsetMin = Vector2.zero;
                     buttonTextRt.offsetMax = Vector2.zero;
 
-                    var buttonText = buttonTextGO.AddComponent<UnityEngine.UI.Text>();
+                    var buttonText = buttonTextGO.AddComponent<TextMesh>();
                     buttonText.text = elementData["content"]?.ToString() ?? "Button";
-                    buttonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-                    if (buttonText.font == null)
-                    {
-                        Debug.LogWarning("[Arsist] LegacyRuntime.ttf not found for Button text");
-                    }
-                    buttonText.fontSize = style?["fontSize"]?.Value<int>() ?? 48; // Increased from 16 to 48
-                    buttonText.alignment = TextAnchor.MiddleCenter;
+                    buttonText.fontSize = style?["fontSize"]?.Value<int>() ?? 48;
+                    buttonText.characterSize = 0.01f;
+                    buttonText.anchor = TextAnchor.MiddleCenter;
+                    buttonText.alignment = TextAlignment.Center;
                     buttonText.color = TryParseColor(style?["color"], out var btnTextColor) ? btnTextColor : Color.white;
-                    buttonText.resizeTextForBestFit = true;
-                    buttonText.resizeTextMinSize = 10;
-                    buttonText.resizeTextMaxSize = 200;
-                    buttonText.supportRichText = true;
+                    buttonText.richText = true;
+                    buttonTextGO.AddComponent<MeshRenderer>();
                     break;
 
                 case "Image":
