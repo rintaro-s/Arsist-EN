@@ -18,6 +18,7 @@ using Arsist.Runtime.RemoteInput;
 using UnityEditor.XR.Management;
 using UnityEngine.XR.Management;
 using UnityEngine.Rendering;
+using TMPro;
 
 namespace Arsist.Builder
 {
@@ -32,6 +33,8 @@ namespace Arsist.Builder
         private static BuildTarget _buildTarget = BuildTarget.Android;
         private static JObject _manifest;
         private static Dictionary<string, JObject> _uiLayoutCache;
+        private static TMP_FontAsset _defaultTmpFont;
+        private static Material _defaultTmpMaterial;
 
         /// <summary>
         /// CLI経由でビルドを実行（Arsistエンジンから呼び出される）
@@ -60,6 +63,7 @@ namespace Arsist.Builder
             {
                 // Phase 1: シーン生成
                 Debug.Log("[Arsist] Phase 1: Generating scenes...");
+                EnsureUILayerExists();
                 GenerateScenes();
 
                 // Phase 2: UI生成（StreamingAssetsへのコピーのみ。Canvas生成はPhase 1で完了）
@@ -92,6 +96,11 @@ namespace Arsist.Builder
                 // Phase 3.4: TextMeshPro リソースを確保
                 Debug.Log("[Arsist] Phase 3.4: Ensuring TextMeshPro resources...");
                 EnsureTextMeshProResources();
+                LoadDefaultTmpAssets();
+                
+                // Phase 3.5: TMPフォントをStreamingAssetsにコピー（ランタイム読み込み用）
+                Debug.Log("[Arsist] Phase 3.5: Copying TMP font to StreamingAssets...");
+                CopyTmpFontToStreamingAssets();
 
                 // OpenXR は初回ロード直後だと Settings が未ロード扱いになり、BuildPlayer が失敗することがある。
                 // Build 前に明示的にロードしておく。
@@ -109,6 +118,54 @@ namespace Arsist.Builder
             {
                 Debug.LogError($"[Arsist] Build failed: {e.Message}\n{e.StackTrace}");
                 EditorApplication.Exit(1);
+            }
+        }
+
+        private static void EnsureUILayerExists()
+        {
+            try
+            {
+                if (LayerMask.NameToLayer("UI") != -1)
+                {
+                    return;
+                }
+
+                var tagManager = new SerializedObject(
+                    AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
+                var layersProp = tagManager.FindProperty("layers");
+
+                int targetIndex = -1;
+                // Prefer slot 5 if empty, otherwise first empty user layer
+                if (layersProp.GetArrayElementAtIndex(5).stringValue == string.Empty)
+                {
+                    targetIndex = 5;
+                }
+                else
+                {
+                    for (int i = 8; i < layersProp.arraySize; i++)
+                    {
+                        if (layersProp.GetArrayElementAtIndex(i).stringValue == string.Empty)
+                        {
+                            targetIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (targetIndex >= 0)
+                {
+                    layersProp.GetArrayElementAtIndex(targetIndex).stringValue = "UI";
+                    tagManager.ApplyModifiedPropertiesWithoutUndo();
+                    Debug.Log($"[Arsist] Added UI layer at index {targetIndex}");
+                }
+                else
+                {
+                    Debug.LogWarning("[Arsist] No available layer slot for UI. UI camera will fallback to render all layers.");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to ensure UI layer exists: {e.Message}");
             }
         }
 
@@ -158,7 +215,12 @@ namespace Arsist.Builder
             try
             {
                 var uiPath = Path.Combine(Application.dataPath, "ArsistGenerated", "ui_layouts.json");
-                if (!File.Exists(uiPath)) return;
+                if (!File.Exists(uiPath))
+                {
+                    Debug.LogWarning("[Arsist] ui_layouts.json missing. Creating default layout with diagnostic text.");
+                    _uiLayoutCache["default_layout"] = CreateDefaultLayout("DefaultLayout");
+                    return;
+                }
 
                 var uiJson = File.ReadAllText(uiPath);
                 var layouts = JArray.Parse(uiJson);
@@ -168,11 +230,54 @@ namespace Arsist.Builder
                     if (string.IsNullOrEmpty(id)) continue;
                     _uiLayoutCache[id] = layout;
                 }
+
+                if (_uiLayoutCache.Count == 0)
+                {
+                    Debug.LogWarning("[Arsist] No layouts found in ui_layouts.json. Creating default layout with diagnostic text.");
+                    _uiLayoutCache["default_layout"] = CreateDefaultLayout("DefaultLayout");
+                }
+                else
+                {
+                    Debug.Log($"[Arsist] UILayout cache loaded: {_uiLayoutCache.Count} entries");
+                }
             }
             catch (Exception e)
             {
                 Debug.LogWarning($"[Arsist] Failed to load UI layout cache: {e.Message}");
+                _uiLayoutCache["default_layout"] = CreateDefaultLayout("DefaultLayout_Exception");
             }
+        }
+
+        // Creates a minimal layout with a diagnostic Text element to guarantee something renders.
+        private static JObject CreateDefaultLayout(string name)
+        {
+            var root = new JObject
+            {
+                ["id"] = Guid.NewGuid().ToString(),
+                ["type"] = "Text",
+                ["content"] = "UI layout missing",
+                ["layout"] = "Absolute",
+                ["style"] = new JObject
+                {
+                    ["width"] = 800,
+                    ["height"] = 200,
+                    ["top"] = 100,
+                    ["left"] = 100,
+                    ["fontSize"] = 96,
+                    ["color"] = "#FFFFFFFF",
+                    ["textAlign"] = "center",
+                },
+                ["children"] = new JArray()
+            };
+
+            return new JObject
+            {
+                ["id"] = "default_layout",
+                ["name"] = name,
+                ["scope"] = "uhd",
+                ["resolution"] = new JObject { ["width"] = 1920, ["height"] = 1080 },
+                ["root"] = root,
+            };
         }
 
         private static void GenerateScenes()
@@ -438,6 +543,38 @@ namespace Arsist.Builder
         }
 
         /// <summary>
+        /// Import TMP Essential Resources using reflection to call internal TMP method
+        /// </summary>
+        [MenuItem("Arsist/Import TMP Essential Resources")]
+        public static void ImportTMPEssentialResources()
+        {
+            try
+            {
+                Debug.Log("[Arsist] Attempting to import TMP Essential Resources...");
+                
+                // Use reflection to call TMP's internal import method
+                var tmpSettingsType = typeof(TMPro.TMP_Settings);
+                var importMethod = tmpSettingsType.GetMethod("ImportProjectResourcesMenu", 
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                
+                if (importMethod != null)
+                {
+                    importMethod.Invoke(null, null);
+                    Debug.Log("[Arsist] ✅ TMP Essential Resources import triggered");
+                    AssetDatabase.Refresh();
+                }
+                else
+                {
+                    Debug.LogWarning("[Arsist] Could not find TMP import method via reflection");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Arsist] Failed to import TMP resources: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// TextMeshPro のデフォルトフォントアセットを確保。
         /// TMP は Resources/Fonts & Materials/ にデフォルトフォントが必要。
         /// </summary>
@@ -445,68 +582,487 @@ namespace Arsist.Builder
         {
             try
             {
+                Debug.Log("[Arsist] ========== TMP RESOURCE SETUP START ==========");
+                
+                // Import JKG-M3.unitypackage if it exists
+                // Try multiple possible locations for the package
+                string packagePath = null;
+                var possiblePaths = new[]
+                {
+                    Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "..", "..", "sdk", "JKG-M3.unitypackage")),
+                    Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "..", "sdk", "JKG-M3.unitypackage")),
+                    @"E:\GITS\Arsist\sdk\JKG-M3.unitypackage"
+                };
+                
+                foreach (var path in possiblePaths)
+                {
+                    Debug.Log($"[Arsist] Checking for package at: {path}");
+                    if (File.Exists(path))
+                    {
+                        packagePath = path;
+                        break;
+                    }
+                }
+                
+                if (File.Exists(packagePath))
+                {
+                    Debug.Log($"[Arsist] Found TMP font package at: {packagePath}");
+                    Debug.Log("[Arsist] Importing JKG-M3.unitypackage...");
+                    
+                    try
+                    {
+                        AssetDatabase.ImportPackage(packagePath, false);
+                        Debug.Log("[Arsist] ✅ Successfully imported JKG-M3.unitypackage");
+                        
+                        // Force multiple refreshes to ensure assets are fully imported
+                        AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                        AssetDatabase.SaveAssets();
+                        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                        
+                        Debug.Log("[Arsist] Asset database refreshed after package import");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[Arsist] Failed to import package: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning($"[Arsist] JKG-M3.unitypackage not found");
+                    // Try to import TMP Essential Resources as fallback
+                    ImportTMPEssentialResources();
+                }
+                
+                // Final refresh before searching for fonts
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                
                 // Resources フォルダを作成
                 var resourcesPath = "Assets/Resources";
                 if (!AssetDatabase.IsValidFolder(resourcesPath))
                 {
                     AssetDatabase.CreateFolder("Assets", "Resources");
+                    Debug.Log("[Arsist] Created Resources folder");
                 }
 
-                // TMP Essential Resources をインポート
-                // Unity の TMP パッケージから LiberationSans SDF をコピー
-                var tmpFontPath = "Packages/com.unity.textmeshpro/Resources/Fonts & Materials/LiberationSans SDF.asset";
-                var tmpFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(tmpFontPath);
+                // 既に Resources にフォントがあるかチェック
+                var tmpFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>("Assets/Resources/LiberationSans SDF.asset");
                 
-                if (tmpFont != null)
+                if (tmpFont == null)
                 {
-                    Debug.Log("[Arsist] ✅ TextMeshPro default font found in package");
-                    
-                    // フォントのマテリアルをResourcesにコピー（これによりシェーダーも含まれる）
-                    if (tmpFont.material != null)
+                    Debug.Log("[Arsist] Font not in Resources, searching for it...");
+
+                    // Prefer explicitly provided font asset from sdk package extraction
+                    var providedFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>("Assets/JKG-M_3 SDF.asset");
+                    if (providedFont != null)
                     {
-                        var matPath = "Assets/Resources/LiberationSans SDF - Material.mat";
-                        var existingMat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
-                        if (existingMat == null)
+                        Debug.Log("[Arsist] Found provided TMP font at Assets/JKG-M_3 SDF.asset");
+                        var targetPath = "Assets/Resources/LiberationSans SDF.asset";
+                        try
                         {
-                            AssetDatabase.CopyAsset(
-                                AssetDatabase.GetAssetPath(tmpFont.material),
-                                matPath
-                            );
-                            Debug.Log("[Arsist] Copied TMP material to Resources");
+                            if (!AssetDatabase.CopyAsset("Assets/JKG-M_3 SDF.asset", targetPath))
+                            {
+                                Debug.LogWarning("[Arsist] CopyAsset returned false for provided font, trying direct load fallback");
+                            }
+
+                            AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                            tmpFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(targetPath) ?? providedFont;
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[Arsist] Failed to copy provided font: {ex.Message}");
+                            tmpFont = providedFont;
                         }
                     }
-                    
-                    // TMP Settings を確認/作成
-                    var tmpSettings = Resources.Load<TMPro.TMP_Settings>("TMP Settings");
-                    if (tmpSettings == null)
+
+                    if (tmpFont != null)
                     {
-                        tmpSettings = ScriptableObject.CreateInstance<TMPro.TMP_Settings>();
-                        AssetDatabase.CreateAsset(tmpSettings, "Assets/Resources/TMP Settings.asset");
-                        Debug.Log("[Arsist] Created TMP Settings");
+                        Debug.Log($"[Arsist] ✅ Using provided TMP font: {tmpFont.name}");
+                    }
+                    else
+                    {
+                    
+                    // First, search for JKG-M_3 SDF font (from imported package)
+                    var fontGuids = AssetDatabase.FindAssets("JKG t:TMP_FontAsset");
+                    
+                    if (fontGuids.Length == 0)
+                    {
+                        Debug.Log("[Arsist] JKG-M_3 SDF not found, searching for LiberationSans SDF...");
+                        fontGuids = AssetDatabase.FindAssets("LiberationSans SDF t:TMP_FontAsset", new[] { "Packages/com.unity.textmeshpro" });
                     }
                     
-                    // デフォルトフォントを設定（リフレクション使用）
-                    var defaultFontField = typeof(TMPro.TMP_Settings).GetField("m_defaultFontAsset", 
-                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    if (defaultFontField != null)
+                    if (fontGuids.Length == 0)
                     {
-                        defaultFontField.SetValue(tmpSettings, tmpFont);
-                        UnityEditor.EditorUtility.SetDirty(tmpSettings);
-                        Debug.Log("[Arsist] Set TMP default font via reflection");
+                        Debug.Log("[Arsist] Not found in Packages/com.unity.textmeshpro, searching Packages/com.unity.ugui/Runtime/TMP...");
+                        fontGuids = AssetDatabase.FindAssets("LiberationSans SDF t:TMP_FontAsset", new[] { "Packages/com.unity.ugui/Runtime/TMP" });
                     }
+                    
+                    if (fontGuids.Length == 0)
+                    {
+                        Debug.Log("[Arsist] Not found in packages, searching entire project for ANY TMP font...");
+                        fontGuids = AssetDatabase.FindAssets("t:TMP_FontAsset", new[] { "Assets" });
+                    }
+                    
+                    if (fontGuids.Length > 0)
+                    {
+                        var existingFontPath = AssetDatabase.GUIDToAssetPath(fontGuids[0]);
+                        Debug.Log($"[Arsist] Found font at: {existingFontPath}");
+                        
+                        var targetPath = "Assets/Resources/LiberationSans SDF.asset";
+                        try
+                        {
+                            AssetDatabase.CopyAsset(existingFontPath, targetPath);
+                            Debug.Log($"[Arsist] Copied font to {targetPath}");
+                            
+                            AssetDatabase.Refresh();
+                            tmpFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(targetPath);
+                            
+                            if (tmpFont != null)
+                            {
+                                Debug.Log($"[Arsist] ✅ Successfully loaded TMP font: {tmpFont.name}");
+                            }
+                            else
+                            {
+                                Debug.LogError("[Arsist] ❌ Failed to load copied font");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"[Arsist] Failed to copy font: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[Arsist] ⚠️ LiberationSans SDF font not found. Searching for any available TMP font asset...");
+                        
+                        // Search for ANY TMP font asset in the entire project
+                        var allFontGuids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+                        if (allFontGuids.Length > 0)
+                        {
+                            var firstFontPath = AssetDatabase.GUIDToAssetPath(allFontGuids[0]);
+                            Debug.Log($"[Arsist] Found TMP font at: {firstFontPath}");
+                            
+                            var targetPath = "Assets/Resources/LiberationSans SDF.asset";
+                            try
+                            {
+                                AssetDatabase.CopyAsset(firstFontPath, targetPath);
+                                Debug.Log($"[Arsist] Copied available TMP font to {targetPath}");
+                                
+                                AssetDatabase.Refresh();
+                                tmpFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(targetPath);
+                                
+                                if (tmpFont != null)
+                                {
+                                    Debug.Log($"[Arsist] ✅ Successfully loaded fallback TMP font: {tmpFont.name}");
+                                }
+                                else
+                                {
+                                    Debug.LogError("[Arsist] ❌ Failed to load copied font");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogError($"[Arsist] Failed to copy available font: {ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            Debug.LogWarning("[Arsist] ⚠️ No TMP font asset found in project.");
+                            Debug.LogWarning("[Arsist] Searching for TTF fonts in Assets/Fonts...");
+                            
+                            // Search for TTF fonts in the project
+                            var ttfFontGuids = AssetDatabase.FindAssets("t:Font", new[] { "Assets/Fonts" });
+                            if (ttfFontGuids.Length > 0)
+                            {
+                                var fontPath = AssetDatabase.GUIDToAssetPath(ttfFontGuids[0]);
+                                Debug.Log($"[Arsist] Found TTF font at: {fontPath}");
+                                
+                                // Force reimport to ensure "Include Font Data" is enabled
+                                var importer = AssetImporter.GetAtPath(fontPath) as TrueTypeFontImporter;
+                                if (importer != null)
+                                {
+                                    importer.fontReferences = new Font[0];
+                                    importer.SaveAndReimport();
+                                    AssetDatabase.Refresh();
+                                }
+                                
+                                var arialFont = AssetDatabase.LoadAssetAtPath<Font>(fontPath);
+                                
+                                if (arialFont != null)
+                                {
+                                    Debug.Log($"[Arsist] Loaded font: {arialFont.name}");
+                                    Debug.Log("[Arsist] Creating TMP font asset...");
+                                    
+                                    try
+                                    {
+                                        // Create TMP font asset
+                                        var tmpFontAsset = TMPro.TMP_FontAsset.CreateFontAsset(arialFont, 90, 9, UnityEngine.TextCore.LowLevel.GlyphRenderMode.SDFAA, 1024, 1024);
+                                        
+                                        if (tmpFontAsset != null)
+                                        {
+                                            var targetPath = "Assets/Resources/LiberationSans SDF.asset";
+                                            AssetDatabase.CreateAsset(tmpFontAsset, targetPath);
+                                            AssetDatabase.SaveAssets();
+                                            AssetDatabase.Refresh();
+                                            
+                                            tmpFont = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(targetPath);
+                                            Debug.Log("[Arsist] ✅ Created TMP font from TTF and saved to Resources");
+                                        }
+                                        else
+                                        {
+                                            Debug.LogError("[Arsist] ❌ Failed to create TMP font from TTF");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Debug.LogError($"[Arsist] Exception creating TMP font: {ex.Message}");
+                                    }
+                                }
+                                else
+                                {
+                                    Debug.LogError("[Arsist] ❌ Failed to load TTF font asset");
+                                }
+                            }
+                            else
+                            {
+                                Debug.LogError("[Arsist] ❌ No TTF fonts found in Assets/Fonts");
+                                Debug.LogError("[Arsist] Please add a TTF font file to Assets/Fonts folder");
+                            }
+                        }
+                    }
+                    }
+                }
+                
+                if (tmpFont == null)
+                {
+                    Debug.LogError("[Arsist] ❌ CRITICAL: No TMP font could be copied to Resources!");
+                    Debug.LogError("[Arsist] Text rendering will fail. Please install TextMeshPro Essential Resources.");
                 }
                 else
                 {
-                    Debug.LogWarning("[Arsist] ⚠️ TextMeshPro package font not found - text may not render");
+                    Debug.Log($"[Arsist] ✅ Font already in Resources: {tmpFont.name}");
+
+                    // Root fix: ensure TMP Settings has a default font so TextMeshProUGUI.Awake won't null-reference
+                    EnsureTmpSettingsDefaultFont(tmpFont);
+                }
+
+                // マテリアルもコピー
+                if (tmpFont != null && tmpFont.material != null)
+                {
+                    var matPath = "Assets/Resources/LiberationSans SDF - Material.mat";
+                    var existingMat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+                    if (existingMat == null)
+                    {
+                        var sourceMaterialPath = AssetDatabase.GetAssetPath(tmpFont.material);
+                        if (!string.IsNullOrEmpty(sourceMaterialPath))
+                        {
+                            try
+                            {
+                                AssetDatabase.CopyAsset(sourceMaterialPath, matPath);
+                                Debug.Log($"[Arsist] Copied TMP material to Resources");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogWarning($"[Arsist] Failed to copy material: {ex.Message}");
+                            }
+                        }
+                    }
                 }
 
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
+                Debug.Log("[Arsist] ========== TMP RESOURCE SETUP COMPLETE ==========");
+                
+                // Verify the font is actually loadable
+                var verifyFont = Resources.Load<TMP_FontAsset>("LiberationSans SDF");
+                if (verifyFont != null)
+                {
+                    Debug.Log($"[Arsist] ✅ VERIFIED: Font is loadable from Resources: {verifyFont.name}");
+                }
+                else
+                {
+                    Debug.LogError("[Arsist] ❌ VERIFICATION FAILED: Font not loadable from Resources!");
+                }
+
+                try
+                {
+                    var verifySettings = Resources.Load<TMP_Settings>("TMP Settings");
+                    TMP_FontAsset verifyDefaultFont = null;
+                    if (verifySettings != null)
+                    {
+                        var verifySo = new SerializedObject(verifySettings);
+                        var verifyFontProp = verifySo.FindProperty("m_defaultFontAsset");
+                        verifyDefaultFont = verifyFontProp?.objectReferenceValue as TMP_FontAsset;
+                    }
+
+                    if (verifySettings != null && verifyDefaultFont != null)
+                    {
+                        Debug.Log($"[Arsist] ✅ VERIFIED: TMP Settings default font = {verifyDefaultFont.name}");
+                    }
+                    else
+                    {
+                        Debug.LogError("[Arsist] ❌ VERIFICATION FAILED: TMP Settings default font is null");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[Arsist] Failed to verify TMP Settings: {ex.Message}");
+                }
             }
             catch (Exception e)
             {
-                Debug.LogError($"[Arsist] Failed to setup TextMeshPro resources: {e.Message}");
+                Debug.LogError($"[Arsist] Failed to setup TextMeshPro resources: {e.Message}\n{e.StackTrace}");
             }
+        }
+
+        private static void EnsureTmpSettingsDefaultFont(TMP_FontAsset defaultFont)
+        {
+            if (defaultFont == null) return;
+
+            try
+            {
+                const string settingsPath = "Assets/Resources/TMP Settings.asset";
+                var settings = AssetDatabase.LoadAssetAtPath<TMP_Settings>(settingsPath);
+
+                if (settings == null)
+                {
+                    settings = ScriptableObject.CreateInstance<TMP_Settings>();
+                    AssetDatabase.CreateAsset(settings, settingsPath);
+                    Debug.Log("[Arsist] Created TMP Settings.asset in Resources");
+                }
+
+                var so = new SerializedObject(settings);
+                var defaultFontProp = so.FindProperty("m_defaultFontAsset");
+                if (defaultFontProp == null)
+                {
+                    Debug.LogError("[Arsist] TMP Settings property m_defaultFontAsset not found");
+                    return;
+                }
+
+                defaultFontProp.objectReferenceValue = defaultFont;
+                so.ApplyModifiedPropertiesWithoutUndo();
+
+                EditorUtility.SetDirty(settings);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+
+                Debug.Log($"[Arsist] TMP Settings default font set to: {defaultFont.name}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Arsist] Failed to configure TMP Settings default font: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// TMPフォントアセットをStreamingAssetsにコピーしてランタイムで読み込めるようにする
+        /// </summary>
+        private static void CopyTmpFontToStreamingAssets()
+        {
+            try
+            {
+                Debug.Log("[Arsist] ========== COPYING TMP FONT TO STREAMING ASSETS ==========");
+                
+                // StreamingAssets/Fonts フォルダを作成
+                var streamingAssetsPath = "Assets/StreamingAssets";
+                var fontsPath = Path.Combine(streamingAssetsPath, "Fonts");
+                
+                if (!Directory.Exists(streamingAssetsPath))
+                {
+                    Directory.CreateDirectory(streamingAssetsPath);
+                    AssetDatabase.Refresh();
+                }
+                
+                if (!Directory.Exists(fontsPath))
+                {
+                    Directory.CreateDirectory(fontsPath);
+                    AssetDatabase.Refresh();
+                }
+                
+                // Resources フォルダからフォントを探す
+                var resourceFont = Resources.Load<TMP_FontAsset>("LiberationSans SDF");
+                
+                if (resourceFont != null)
+                {
+                    var sourcePath = AssetDatabase.GetAssetPath(resourceFont);
+                    var targetPath = Path.Combine(fontsPath, "LiberationSans SDF.asset");
+                    
+                    Debug.Log($"[Arsist] Copying font from: {sourcePath}");
+                    Debug.Log($"[Arsist] Copying font to: {targetPath}");
+                    
+                    // アセットをコピー
+                    AssetDatabase.CopyAsset(sourcePath, targetPath);
+                    
+                    // マテリアルもコピー
+                    if (resourceFont.material != null)
+                    {
+                        var matSourcePath = AssetDatabase.GetAssetPath(resourceFont.material);
+                        var matTargetPath = Path.Combine(fontsPath, "LiberationSans SDF - Material.mat");
+                        AssetDatabase.CopyAsset(matSourcePath, matTargetPath);
+                        Debug.Log($"[Arsist] Copied material to: {matTargetPath}");
+                    }
+                    
+                    // アトラステクスチャもコピー
+                    if (resourceFont.atlasTexture != null)
+                    {
+                        var texSourcePath = AssetDatabase.GetAssetPath(resourceFont.atlasTexture);
+                        var texTargetPath = Path.Combine(fontsPath, "LiberationSans SDF Atlas.png");
+                        AssetDatabase.CopyAsset(texSourcePath, texTargetPath);
+                        Debug.Log($"[Arsist] Copied atlas texture to: {texTargetPath}");
+                    }
+                    
+                    AssetDatabase.Refresh();
+                    Debug.Log("[Arsist] ✅ TMP font copied to StreamingAssets successfully");
+                }
+                else
+                {
+                    Debug.LogError("[Arsist] ❌ No TMP font found in Resources! Cannot copy to StreamingAssets.");
+                }
+                
+                Debug.Log("[Arsist] ========== STREAMING ASSETS COPY COMPLETE ==========");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Arsist] Failed to copy TMP font to StreamingAssets: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private static void LoadDefaultTmpAssets()
+        {
+            // Cache to avoid repeated loads
+            if (_defaultTmpFont != null && _defaultTmpMaterial != null) return;
+
+            Debug.Log("[Arsist] ========== LOADING TMP FONT ASSETS ==========");
+            Debug.Log("[Arsist] NOTE: Unity 6 does not include TMP fonts in packages by default.");
+            Debug.Log("[Arsist] Font assignment will be handled by CanvasInitializer at runtime.");
+            
+            // Try to find ANY TMP font in the project
+            var allFontGuids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+            Debug.Log($"[Arsist] Found {allFontGuids.Length} TMP fonts in entire project");
+            
+            if (allFontGuids.Length > 0)
+            {
+                var fontPath = AssetDatabase.GUIDToAssetPath(allFontGuids[0]);
+                _defaultTmpFont = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(fontPath);
+                if (_defaultTmpFont != null)
+                {
+                    _defaultTmpMaterial = _defaultTmpFont.material;
+                    Debug.Log($"[Arsist] ✅ Found TMP font at build time: {_defaultTmpFont.name}");
+                    Debug.Log($"[Arsist] ✅ Font path: {fontPath}");
+                    Debug.Log($"[Arsist] ========== TMP FONT LOAD SUCCESS ==========");
+                    return;
+                }
+            }
+
+            // No font found at build time - this is EXPECTED in Unity 6
+            Debug.LogWarning("[Arsist] ========== NO TMP FONT AT BUILD TIME ==========");
+            Debug.LogWarning("[Arsist] ⚠️ No TMP font found during build (expected in Unity 6).");
+            Debug.LogWarning("[Arsist] ✅ Font will be assigned at RUNTIME by CanvasInitializer.");
+            Debug.LogWarning("[Arsist] ✅ CanvasInitializer will load from StreamingAssets.");
+            Debug.LogWarning("[Arsist] ========================================");
+            
+            // Set to null explicitly - CanvasInitializer will handle it
+            _defaultTmpFont = null;
+            _defaultTmpMaterial = null;
         }
 
         /// <summary>
@@ -526,15 +1082,21 @@ namespace Arsist.Builder
                     AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset")[0]);
                 var arrayProp = so.FindProperty("m_AlwaysIncludedShaders");
 
-                // 必要なシェーダー名リスト
+                // 必要なシェーダー名リスト (Standard removed to prevent timeout)
+                // TextMeshPro shaders are explicitly listed to avoid stripping
                 var requiredShaders = new[]
                 {
-                    "Standard",
                     "Unlit/Color",
                     "Unlit/Texture",
                     "Unlit/Transparent",
                     "UI/Default",
                     "Sprites/Default",
+                    "TextMeshPro/Distance Field",
+                    "TextMeshPro/Distance Field Overlay",
+                    "TextMeshPro/Mobile/Distance Field",
+                    "TextMeshPro/Mobile/Distance Field - Overlay",
+                    "TextMeshPro/Sprite",
+                    "TextMeshPro/Mobile/Bitmap",
                 };
 
                 // 既に含まれているシェーダーを収集
@@ -567,20 +1129,29 @@ namespace Arsist.Builder
                     }
                 }
                 
-                // TextMeshPro シェーダーを AssetDatabase から検索して追加
-                var tmpShaderGuids = AssetDatabase.FindAssets("t:Shader", new[] { "Packages/com.unity.textmeshpro" });
-                foreach (var guid in tmpShaderGuids)
+                // TextMeshPro シェーダーを AssetDatabase から検索して追加（パッケージとSDKフォールバック両方）
+                var tmpShaderSearchRoots = new[]
                 {
-                    var path = AssetDatabase.GUIDToAssetPath(guid);
-                    var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
-                    if (shader != null && !existingGuids.Contains(shader.name))
+                    "Packages/com.unity.textmeshpro",
+                    "Assets/ArsistProjectAssets/sdk/quest/Unity-InteractionSDK-Samples/Assets/TextMesh Pro"
+                };
+
+                foreach (var root in tmpShaderSearchRoots)
+                {
+                    var tmpShaderGuids = AssetDatabase.FindAssets("t:Shader", new[] { root });
+                    foreach (var guid in tmpShaderGuids)
                     {
-                        arrayProp.InsertArrayElementAtIndex(arrayProp.arraySize);
-                        var newElem = arrayProp.GetArrayElementAtIndex(arrayProp.arraySize - 1);
-                        newElem.objectReferenceValue = shader;
-                        existingGuids.Add(shader.name);
-                        added++;
-                        Debug.Log($"[Arsist] Added TMP shader: {shader.name}");
+                        var path = AssetDatabase.GUIDToAssetPath(guid);
+                        var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
+                        if (shader != null && !existingGuids.Contains(shader.name))
+                        {
+                            arrayProp.InsertArrayElementAtIndex(arrayProp.arraySize);
+                            var newElem = arrayProp.GetArrayElementAtIndex(arrayProp.arraySize - 1);
+                            newElem.objectReferenceValue = shader;
+                            existingGuids.Add(shader.name);
+                            added++;
+                            Debug.Log($"[Arsist] Added TMP shader: {shader.name}");
+                        }
                     }
                 }
 
@@ -862,9 +1433,18 @@ namespace Arsist.Builder
             // World-space Canvas
             var canvasGO = new GameObject("UISurfaceCanvas");
             canvasGO.transform.SetParent(root.transform, false);
+            
+            // FIX 10: Force UI layer assignment
+            int uiLayer = LayerMask.NameToLayer("UI");
+            if (uiLayer < 0) uiLayer = 5; // Default UI layer
+            canvasGO.layer = uiLayer;
+            
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             canvas.sortingOrder = 200;
+            
+            // FIX 11: Add CanvasInitializer to ensure runtime setup (including worldCamera assignment)
+            TryAddComponentByTypeName(canvasGO, "Arsist.Runtime.UI.CanvasInitializer");
 
             var canvasScaler = canvasGO.AddComponent<UnityEngine.UI.CanvasScaler>();
             canvasScaler.dynamicPixelsPerUnit = pixelsPerUnit;
@@ -884,26 +1464,81 @@ namespace Arsist.Builder
             canvasGroup.alpha = 1f;
             canvasGroup.interactable = true;
             canvasGroup.blocksRaycasts = true;
+            
+            // FIX 12: Ensure Canvas is active
+            canvasGO.SetActive(true);
+            root.SetActive(true);
 
             EnsureUILayoutCache();
+            Debug.Log($"[Arsist] ========== CANVAS TEXT DEBUG START ==========");
+            Debug.Log($"[Arsist] Canvas '{name}' layoutId: '{layoutId}'");
+            Debug.Log($"[Arsist] Available layouts in cache: [{string.Join(", ", _uiLayoutCache?.Keys.ToList() ?? new List<string>())}]");
+            Debug.Log($"[Arsist] _uiLayoutCache is null: {_uiLayoutCache == null}");
+            Debug.Log($"[Arsist] layoutId is empty: {string.IsNullOrEmpty(layoutId)}");
+            
             if (!string.IsNullOrEmpty(layoutId) && _uiLayoutCache != null && _uiLayoutCache.TryGetValue(layoutId, out var layout))
             {
                 var rootEl = layout["root"] as JObject;
                 if (rootEl != null)
                 {
+                    Debug.Log($"[Arsist] ✅ Found layout root for '{layoutId}'");
+                    Debug.Log($"[Arsist] Root element type: {rootEl["type"]}");
+                    Debug.Log($"[Arsist] Root element JSON: {rootEl.ToString()}");
+                    Debug.Log($"[Arsist] Calling CreateUIElement for root...");
                     CreateUIElement(rootEl, canvasGO.transform);
+                    Debug.Log($"[Arsist] ✅ CreateUIElement completed for layout '{layoutId}'");
                 }
                 else
                 {
-                    Debug.LogWarning($"[Arsist] UI layout root not found for layoutId: {layoutId}");
+                    Debug.LogError($"[Arsist] ❌ UI layout root is NULL for layoutId: {layoutId}");
+                    Debug.LogError($"[Arsist] Layout JSON: {layout.ToString()}");
+                    // Create fallback UI
+                    CreateFallbackUI(canvasGO.transform, layoutId);
                 }
             }
             else
             {
-                Debug.LogWarning($"[Arsist] UI layout not found for layoutId: {layoutId}");
+                Debug.LogError($"[Arsist] ❌ UI layout NOT FOUND in cache for layoutId: '{layoutId}'");
+                Debug.LogError($"[Arsist] Cache has {_uiLayoutCache?.Count ?? 0} layouts");
+                if (_uiLayoutCache != null)
+                {
+                    foreach (var key in _uiLayoutCache.Keys)
+                    {
+                        Debug.LogError($"[Arsist]   - Cache key: '{key}'");
+                    }
+                }
+                // Create fallback UI
+                CreateFallbackUI(canvasGO.transform, layoutId ?? "missing");
             }
-
+            Debug.Log($"[Arsist] ========== CANVAS TEXT DEBUG END ==========");
+            
             return root;
+        }
+
+        private static void CreateFallbackUI(Transform parent, string reason)
+        {
+            Debug.Log($"[Arsist] Creating fallback UI for reason: {reason}");
+            
+            var fallbackRoot = new JObject
+            {
+                ["id"] = Guid.NewGuid().ToString(),
+                ["type"] = "Text",
+                ["content"] = $"Fallback UI ({reason})",
+                ["layout"] = "Absolute",
+                ["style"] = new JObject
+                {
+                    ["width"] = 800,
+                    ["height"] = 200,
+                    ["top"] = 100,
+                    ["left"] = 100,
+                    ["fontSize"] = 96,
+                    ["color"] = "#FFFF00",
+                    ["textAlign"] = "center",
+                },
+                ["children"] = new JArray()
+            };
+            
+            CreateUIElement(fallbackRoot, parent);
         }
 
         private static string ImportModelAsAsset(string sourceAssetPath, string modelName)
@@ -1115,11 +1750,88 @@ ScriptedImporter:
             {
                 Debug.Log("[Arsist] Generating Canvas UI from IR (ui_layouts.json)");
                 GenerateCanvasUI(uiPath);
+                
+                // Also generate UHD (head-locked) UI that's not tied to canvas objects
+                GenerateUHDUI(uiPath);
             }
             else
             {
                 Debug.LogWarning("[Arsist] No UI layout IR found: ui_layouts.json");
             }
+        }
+        
+        private static void GenerateUHDUI(string uiPath)
+        {
+            EnsureUILayoutCache();
+            
+            foreach (var kvp in _uiLayoutCache)
+            {
+                var layout = kvp.Value;
+                var scope = layout["scope"]?.ToString();
+                
+                if (scope == "uhd")
+                {
+                    var layoutId = layout["id"]?.ToString();
+                    var layoutName = layout["name"]?.ToString();
+                    Debug.Log($"[Arsist] Generating UHD UI: {layoutName} (id: {layoutId})");
+                    
+                    // Find or create UHD Canvas
+                    var uhdCanvasGO = GameObject.Find("UHD_Canvas");
+                    if (uhdCanvasGO == null)
+                    {
+                        uhdCanvasGO = CreateUHDCanvas();
+                    }
+                    
+                    var rootEl = layout["root"] as JObject;
+                    if (rootEl != null)
+                    {
+                        CreateUIElement(rootEl, uhdCanvasGO.transform);
+                    }
+                }
+            }
+        }
+        
+        private static GameObject CreateUHDCanvas()
+        {
+            var canvasGO = new GameObject("UHD_Canvas");
+            
+            // Find main camera
+            var mainCam = Camera.main;
+            if (mainCam == null)
+            {
+                mainCam = UnityEngine.Object.FindObjectOfType<Camera>();
+            }
+            
+            var canvas = canvasGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.sortingOrder = 9999;
+            canvas.overrideSorting = true;
+            
+            if (mainCam != null)
+            {
+                canvas.worldCamera = mainCam;
+                canvasGO.transform.SetParent(mainCam.transform, false);
+                canvasGO.transform.localPosition = new Vector3(0, 0, 1.5f);
+            }
+            
+            var canvasScaler = canvasGO.AddComponent<UnityEngine.UI.CanvasScaler>();
+            canvasScaler.dynamicPixelsPerUnit = 1000f;
+            canvasGO.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+            
+            var rect = canvasGO.GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(1920, 1080);
+            rect.localScale = Vector3.one * 0.001f;
+            
+            var canvasGroup = canvasGO.AddComponent<CanvasGroup>();
+            canvasGroup.alpha = 1f;
+            canvasGroup.interactable = true;
+            canvasGroup.blocksRaycasts = true;
+            
+            // Add CanvasInitializer
+            TryAddComponentByTypeName(canvasGO, "Arsist.Runtime.UI.CanvasInitializer");
+            
+            canvasGO.SetActive(true);
+            return canvasGO;
         }
 
         /// <summary>
@@ -1228,6 +1940,30 @@ ScriptedImporter:
                 {
                     CreateUIElement(root, canvasGO.transform);
                 }
+
+                // === DIAGNOSTIC: Add hardcoded TMP text to verify font/material rendering ===
+                var diagnosticGO = new GameObject("[DIAGNOSTIC_TEXT]");
+                diagnosticGO.transform.SetParent(canvasGO.transform, false);
+                var diagnosticRT = diagnosticGO.AddComponent<RectTransform>();
+                diagnosticRT.anchorMin = new Vector2(0.5f, 0.5f);
+                diagnosticRT.anchorMax = new Vector2(0.5f, 0.5f);
+                diagnosticRT.sizeDelta = new Vector2(800, 200);
+                diagnosticRT.anchoredPosition = Vector2.zero;
+                
+                var diagnosticTMP = diagnosticGO.AddComponent<TextMeshProUGUI>();
+                diagnosticTMP.text = "DIAGNOSTIC: TMP RENDERING TEST";
+                diagnosticTMP.fontSize = 48;
+                diagnosticTMP.color = Color.yellow;
+                diagnosticTMP.alignment = TextAlignmentOptions.Center;
+                diagnosticTMP.enableAutoSizing = false;
+                
+                if (_defaultTmpFont != null) diagnosticTMP.font = _defaultTmpFont;
+                if (_defaultTmpMaterial != null) diagnosticTMP.fontSharedMaterial = _defaultTmpMaterial;
+                
+                diagnosticGO.layer = LayerMask.NameToLayer("UI");
+                diagnosticGO.SetActive(true);
+                
+                Debug.Log($"[Arsist] ✅ DIAGNOSTIC TEXT CREATED: font={diagnosticTMP.font?.name ?? "(null)"}, mat={diagnosticTMP.fontSharedMaterial?.name ?? "(null)"}");
             }
 
             if (createdHudCount == 0)
@@ -1386,8 +2122,15 @@ ScriptedImporter:
         private static void CreateUIElement(JObject elementData, Transform parent)
         {
             var type = elementData["type"]?.ToString() ?? "Panel";
+            var elementId = elementData["id"]?.ToString() ?? "unknown";
+            Debug.Log($"[Arsist] >> CreateUIElement: type={type}, id={elementId}");
             var go = new GameObject(type);
             go.transform.SetParent(parent, false);
+            
+            // FIX 13: Set UI layer on all elements
+            int uiLayer = LayerMask.NameToLayer("UI");
+            if (uiLayer < 0) uiLayer = 5;
+            go.layer = uiLayer;
 
             TryAttachUiBindingRegistry(go, elementData);
 
@@ -1410,57 +2153,93 @@ ScriptedImporter:
                     break;
                     
                 case "Text":
-                    // Use 3D TextMesh instead of TMP - it's built into Unity and always works
-                    var textMesh = go.AddComponent<TextMesh>();
-                    textMesh.text = elementData["content"]?.ToString() ?? "Text";
+                    Debug.Log($"[Arsist] >>> Creating Text element: '{elementData["content"]?.ToString() ?? "(no content)"}'" );
+                    // FIX 1-10: Critical text rendering fixes
+                    var tmp = go.AddComponent<TextMeshProUGUI>();
+                    var textContent = elementData["content"]?.ToString() ?? "Text";
+                    tmp.text = textContent;
+                    Debug.Log($"[Arsist] >>> TextMeshProUGUI component added, text set to: '{textContent}'");
+
+                    // FIX 1: Force enable component
+                    tmp.enabled = true;
+                    go.SetActive(true);
+                    Debug.Log($"[Arsist] >>> Text GameObject enabled and active");
+
+                    // FIX 2: Assign font and material BEFORE setting properties
+                    Debug.Log($"[Arsist] >>> _defaultTmpFont is null: {_defaultTmpFont == null}");
+                    Debug.Log($"[Arsist] >>> _defaultTmpMaterial is null: {_defaultTmpMaterial == null}");
+                    if (_defaultTmpFont != null) tmp.font = _defaultTmpFont;
+                    if (_defaultTmpMaterial != null) tmp.fontSharedMaterial = _defaultTmpMaterial;
                     
-                    // Add MeshRenderer for visibility
-                    var meshRenderer = go.GetComponent<MeshRenderer>();
-                    if (meshRenderer == null)
+                    // FIX 3: If no font, use TMP_Settings default (with null check)
+                    if (tmp.font == null)
                     {
-                        meshRenderer = go.AddComponent<MeshRenderer>();
+                        try
+                        {
+                            if (TMP_Settings.instance != null && TMP_Settings.defaultFontAsset != null)
+                            {
+                                tmp.font = TMP_Settings.defaultFontAsset;
+                            }
+                        }
+                        catch
+                        {
+                            // TMP_Settings not initialized in build mode, ignore
+                        }
                     }
                     
+                    Debug.Log($"[Arsist] Creating Text element: '{textContent}' | font={tmp.font?.name ?? "(null)"} | mat={tmp.fontSharedMaterial?.name ?? "(null)"}");
+
+                    // FIX 4: Set font size BEFORE enabling auto-sizing
                     if (style != null)
                     {
-                        textMesh.fontSize = style["fontSize"]?.Value<int>() ?? 64;
-                        textMesh.characterSize = 0.01f; // Scale down for UI
-                        
+                        tmp.fontSize = style["fontSize"]?.Value<int>() ?? 100;
                         if (TryParseColor(style["color"], out var textColor))
                         {
-                            textMesh.color = textColor;
+                            tmp.color = textColor;
                         }
                         else
                         {
-                            textMesh.color = Color.white;
+                            tmp.color = Color.white;
                         }
 
                         var align = style["textAlign"]?.ToString();
-                        textMesh.anchor = align switch
+                        tmp.alignment = align switch
                         {
-                            "center" => TextAnchor.MiddleCenter,
-                            "right" => TextAnchor.MiddleRight,
-                            _ => TextAnchor.MiddleLeft,
-                        };
-                        textMesh.alignment = align switch
-                        {
-                            "center" => TextAlignment.Center,
-                            "right" => TextAlignment.Right,
-                            _ => TextAlignment.Left,
+                            "center" => TextAlignmentOptions.Center,
+                            "right" => TextAlignmentOptions.Right,
+                            _ => TextAlignmentOptions.Left,
                         };
                     }
                     else
                     {
-                        textMesh.fontSize = 64;
-                        textMesh.characterSize = 0.01f;
-                        textMesh.color = Color.white;
-                        textMesh.anchor = TextAnchor.MiddleCenter;
-                        textMesh.alignment = TextAlignment.Center;
+                        tmp.fontSize = 100;
+                        tmp.color = Color.white;
+                        tmp.alignment = TextAlignmentOptions.Center;
                     }
+
+                    // FIX 5: Disable auto-sizing - it can cause text to shrink to 0
+                    tmp.enableAutoSizing = false;
                     
-                    textMesh.richText = true;
+                    // FIX 6: Set vertex color to ensure visibility
+                    tmp.enableVertexGradient = false;
                     
-                    Debug.Log($"[Arsist] Created 3D TextMesh element: '{textMesh.text}'");
+                    // FIX 7: Disable raycast target to prevent blocking
+                    tmp.raycastTarget = false;
+                    
+                    tmp.richText = true;
+                    
+                    // FIX 8: Force update mesh immediately
+                    tmp.ForceMeshUpdate(true, true);
+
+                    Debug.Log($"[Arsist] ✅✅✅ Text element FULLY configured: '{tmp.text}'");
+                    Debug.Log($"[Arsist]     - GameObject: {go.name}, active: {go.activeSelf}");
+                    Debug.Log($"[Arsist]     - TMP enabled: {tmp.enabled}");
+                    Debug.Log($"[Arsist]     - Font: {(tmp.font != null ? tmp.font.name : "NULL")}");
+                    Debug.Log($"[Arsist]     - Material: {(tmp.fontSharedMaterial != null ? tmp.fontSharedMaterial.name : "NULL")}");
+                    Debug.Log($"[Arsist]     - FontSize: {tmp.fontSize}");
+                    Debug.Log($"[Arsist]     - Color: {tmp.color}");
+                    Debug.Log($"[Arsist]     - Parent: {parent.name}");
+                    Debug.Log($"[Arsist]     - Layer: {go.layer} (UI layer: {LayerMask.NameToLayer("UI")})");
 
                     if (IsAutoValue(style?["width"]) || IsAutoValue(style?["height"]))
                     {
@@ -1493,15 +2272,37 @@ ScriptedImporter:
                     buttonTextRt.offsetMin = Vector2.zero;
                     buttonTextRt.offsetMax = Vector2.zero;
 
-                    var buttonText = buttonTextGO.AddComponent<TextMesh>();
+                    var buttonText = buttonTextGO.AddComponent<TextMeshProUGUI>();
                     buttonText.text = elementData["content"]?.ToString() ?? "Button";
-                    buttonText.fontSize = style?["fontSize"]?.Value<int>() ?? 48;
-                    buttonText.characterSize = 0.01f;
-                    buttonText.anchor = TextAnchor.MiddleCenter;
-                    buttonText.alignment = TextAlignment.Center;
+                    
+                    // Apply same fixes as Text element
+                    buttonText.enabled = true;
+                    buttonTextGO.SetActive(true);
+                    
+                    if (_defaultTmpFont != null) buttonText.font = _defaultTmpFont;
+                    if (_defaultTmpMaterial != null) buttonText.fontSharedMaterial = _defaultTmpMaterial;
+                    if (buttonText.font == null)
+                    {
+                        try
+                        {
+                            if (TMP_Settings.instance != null && TMP_Settings.defaultFontAsset != null)
+                            {
+                                buttonText.font = TMP_Settings.defaultFontAsset;
+                            }
+                        }
+                        catch
+                        {
+                            // TMP_Settings not initialized in build mode, ignore
+                        }
+                    }
+                    
+                    buttonText.fontSize = style?["fontSize"]?.Value<int>() ?? 80;
+                    buttonText.alignment = TextAlignmentOptions.Center;
                     buttonText.color = TryParseColor(style?["color"], out var btnTextColor) ? btnTextColor : Color.white;
+                    buttonText.enableAutoSizing = false;
+                    buttonText.raycastTarget = false;
                     buttonText.richText = true;
-                    buttonTextGO.AddComponent<MeshRenderer>();
+                    buttonText.ForceMeshUpdate(true, true);
                     break;
 
                 case "Image":
@@ -1602,12 +2403,17 @@ ScriptedImporter:
             }
 
             var children = elementData["children"] as JArray;
-            if (children != null)
+            if (children != null && children.Count > 0)
             {
+                Debug.Log($"[Arsist] >> Element has {children.Count} children, creating recursively...");
                 foreach (JObject child in children)
                 {
                     CreateUIElement(child, go.transform);
                 }
+            }
+            else
+            {
+                Debug.Log($"[Arsist] >> Element has no children");
             }
         }
 
@@ -1643,13 +2449,18 @@ ScriptedImporter:
 
         private static void ApplyRectTransformStyle(RectTransform rectTransform, JObject style)
         {
+            // FIX 9: Ensure minimum size for text elements
+            const float MIN_SIZE = 50f;
+            const float DEFAULT_WIDTH = 400f;
+            const float DEFAULT_HEIGHT = 200f;
+            
             if (style == null)
             {
                 rectTransform.anchorMin = new Vector2(0f, 1f);
                 rectTransform.anchorMax = new Vector2(0f, 1f);
                 rectTransform.pivot = new Vector2(0f, 1f);
                 rectTransform.anchoredPosition = Vector2.zero;
-                rectTransform.sizeDelta = new Vector2(200f, 120f);
+                rectTransform.sizeDelta = new Vector2(DEFAULT_WIDTH, DEFAULT_HEIGHT);
                 return;
             }
 
@@ -1665,9 +2476,11 @@ ScriptedImporter:
                 var top = style["top"]?.Value<float>() ?? 0f;
                 rectTransform.anchoredPosition = new Vector2(left, -top);
 
-                var width = ParseSizeValue(style["width"], 200f);
-                var height = ParseSizeValue(style["height"], 120f);
+                var width = Mathf.Max(MIN_SIZE, ParseSizeValue(style["width"], DEFAULT_WIDTH));
+                var height = Mathf.Max(MIN_SIZE, ParseSizeValue(style["height"], DEFAULT_HEIGHT));
                 rectTransform.sizeDelta = new Vector2(width, height);
+                
+                Debug.Log($"[Arsist] RectTransform absolute: pos=({left},{-top}) size=({width},{height})");
                 return;
             }
 
@@ -1684,8 +2497,8 @@ ScriptedImporter:
 
                 if (!stretchWidth || !stretchHeight)
                 {
-                    var width = stretchWidth ? 0f : ParseSizeValue(style["width"], 200f);
-                    var height = stretchHeight ? 0f : ParseSizeValue(style["height"], 120f);
+                    var width = stretchWidth ? 0f : Mathf.Max(MIN_SIZE, ParseSizeValue(style["width"], DEFAULT_WIDTH));
+                    var height = stretchHeight ? 0f : Mathf.Max(MIN_SIZE, ParseSizeValue(style["height"], DEFAULT_HEIGHT));
                     rectTransform.sizeDelta = new Vector2(width, height);
                 }
 
@@ -1696,10 +2509,12 @@ ScriptedImporter:
             rectTransform.anchorMax = new Vector2(0f, 1f);
             rectTransform.pivot = new Vector2(0f, 1f);
             rectTransform.anchoredPosition = Vector2.zero;
-            rectTransform.sizeDelta = new Vector2(
-                ParseSizeValue(style["width"], 200f),
-                ParseSizeValue(style["height"], 120f)
-            );
+            
+            var finalWidth = Mathf.Max(MIN_SIZE, ParseSizeValue(style["width"], DEFAULT_WIDTH));
+            var finalHeight = Mathf.Max(MIN_SIZE, ParseSizeValue(style["height"], DEFAULT_HEIGHT));
+            rectTransform.sizeDelta = new Vector2(finalWidth, finalHeight);
+            
+            Debug.Log($"[Arsist] RectTransform default: size=({finalWidth},{finalHeight})");
         }
 
         private static float ParseSizeValue(JToken token, float fallback)
@@ -1892,7 +2707,22 @@ ScriptedImporter:
             defines.Remove("ARSIST_XREAL");
             defines.Remove("ARSIST_META_QUEST");
 
-            if (isXreal) defines.Add("ARSIST_XREAL");
+            // XREAL SDKがインストールされているか確認
+            if (isXreal)
+            {
+                var xrealSdkExists = System.Type.GetType("Unity.XR.XREAL.XREALPlugin, Unity.XR.XREAL") != null;
+                if (xrealSdkExists)
+                {
+                    defines.Add("ARSIST_XREAL");
+                    Debug.Log("[Arsist] XREAL SDK detected, adding ARSIST_XREAL define");
+                }
+                else
+                {
+                    Debug.LogWarning("[Arsist] XREAL SDK not installed. ARSIST_XREAL define will NOT be added.");
+                    Debug.LogWarning("[Arsist] XREAL-specific features will be disabled.");
+                }
+            }
+            
             if (isQuest) defines.Add("ARSIST_META_QUEST");
 
             var joined = string.Join(";", defines.OrderBy(x => x));
@@ -2013,38 +2843,47 @@ ScriptedImporter:
             // Graphics API（XrealOne: Vulkan削除 & OpenGLES3のみ）
             if (isXreal)
             {
-                try
+                var xrealSdkExists = System.Type.GetType("Unity.XR.XREAL.XREALPlugin, Unity.XR.XREAL") != null;
+                
+                if (xrealSdkExists)
                 {
-                    if (_buildTarget == BuildTarget.Android && PlayerSettings.GetUseDefaultGraphicsAPIs(BuildTarget.Android))
+                    try
                     {
-                        problems.Add("Auto Graphics API is enabled (must be disabled)");
-                    }
-
-                    var apis = _buildTarget == BuildTarget.Android ? PlayerSettings.GetGraphicsAPIs(BuildTarget.Android) : null;
-                    if (apis == null || apis.Length == 0)
-                    {
-                        problems.Add("Graphics APIs list is empty");
-                    }
-                    else
-                    {
-                        if (apis[0] != GraphicsDeviceType.OpenGLES3)
+                        if (_buildTarget == BuildTarget.Android && PlayerSettings.GetUseDefaultGraphicsAPIs(BuildTarget.Android))
                         {
-                            problems.Add($"Graphics API[0] is not OpenGLES3 (actual: {apis[0]})");
+                            problems.Add("Auto Graphics API is enabled (must be disabled)");
                         }
 
-                        foreach (var api in apis)
+                        var apis = _buildTarget == BuildTarget.Android ? PlayerSettings.GetGraphicsAPIs(BuildTarget.Android) : null;
+                        if (apis == null || apis.Length == 0)
                         {
-                            if (api == GraphicsDeviceType.Vulkan)
+                            problems.Add("Graphics APIs list is empty");
+                        }
+                        else
+                        {
+                            if (apis[0] != GraphicsDeviceType.OpenGLES3)
                             {
-                                problems.Add("Vulkan is present in Graphics APIs (must be removed for XREAL transparency stability)");
-                                break;
+                                problems.Add($"Graphics API[0] is not OpenGLES3 (actual: {apis[0]})");
+                            }
+
+                            foreach (var api in apis)
+                            {
+                                if (api == GraphicsDeviceType.Vulkan)
+                                {
+                                    problems.Add("Vulkan is present in Graphics APIs (must be removed for XREAL transparency stability)");
+                                    break;
+                                }
                             }
                         }
                     }
+                    catch (Exception e)
+                    {
+                        problems.Add($"Failed to validate Graphics APIs: {e.Message}");
+                    }
                 }
-                catch (Exception e)
+                else
                 {
-                    problems.Add($"Failed to validate Graphics APIs: {e.Message}");
+                    Debug.LogWarning("[Arsist] XREAL SDK not installed. Skipping Graphics API validation.");
                 }
             }
 
@@ -2121,29 +2960,49 @@ ScriptedImporter:
             // ==== XREAL Settings（XREAL SDK 3.x が内部参照するため必須）====
             if (isXreal)
             {
-                try
+                // XREAL SDKがインストールされているか確認
+                var xrealSdkExists = System.Type.GetType("Unity.XR.XREAL.XREALPlugin, Unity.XR.XREAL") != null;
+                
+                if (xrealSdkExists)
                 {
-                    if (!TryHasXrealSettingsConfigObject(out var key, out var existing))
+                    try
                     {
-                        problems.Add($"XREALSettings config object is missing (key: {key}). Ensure XREALSettings is registered in EditorBuildSettings.");
+                        if (!TryHasXrealSettingsConfigObject(out var key, out var existing))
+                        {
+                            problems.Add($"XREALSettings config object is missing (key: {key}). Ensure XREALSettings is registered in EditorBuildSettings.");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        problems.Add($"Failed to validate XREALSettings config: {e.Message}");
                     }
                 }
-                catch (Exception e)
+                else
                 {
-                    problems.Add($"Failed to validate XREALSettings config: {e.Message}");
+                    Debug.LogWarning("[Arsist] XREAL SDK not installed. Skipping XREAL-specific validation.");
+                    Debug.LogWarning("[Arsist] Build will proceed without XREAL SDK features.");
                 }
             }
 
             // ==== カメラ透過要件（XrealOne: 黒=透明 / ARCameraBackground除去）====
             if (isXreal)
             {
-                try
+                var xrealSdkExists = System.Type.GetType("Unity.XR.XREAL.XREALPlugin, Unity.XR.XREAL") != null;
+                
+                if (xrealSdkExists)
                 {
-                    ValidateTransparentCameraScenes(ref problems);
+                    try
+                    {
+                        ValidateTransparentCameraScenes(ref problems);
+                    }
+                    catch (Exception e)
+                    {
+                        problems.Add($"Failed to validate transparent camera settings: {e.Message}");
+                    }
                 }
-                catch (Exception e)
+                else
                 {
-                    problems.Add($"Failed to validate transparent camera settings: {e.Message}");
+                    Debug.LogWarning("[Arsist] XREAL SDK not installed. Skipping camera transparency validation.");
                 }
             }
 

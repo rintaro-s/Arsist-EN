@@ -1,0 +1,64 @@
+{
+  "projectName": "TextTest",
+  "targetDevice": "XREAL_One",
+  "build": {
+    "packageName": "com.arsist.texttest",
+    "version": "1.0.0",
+    "versionCode": 1,
+    "minSdkVersion": 29,
+    "targetSdkVersion": 34
+  },
+  "scenes": [
+    {
+      "name": "MainScene",
+      "objects": [],
+      "ui": {
+        "canvases": [
+          {
+            "id": "canvas1",
+            "name": "TestCanvas",
+            "renderMode": "WorldSpace",
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 2
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 0.001,
+              "y": 0.001,
+              "z": 0.001
+            },
+            "width": 1920,
+            "height": 1080,
+            "elements": [
+              {
+                "id": "text1",
+                "type": "Text",
+                "text": "Hello World",
+                "fontSize": 48,
+                "color": {
+                  "r": 1,
+                  "g": 1,
+                  "b": 1,
+                  "a": 1
+                },
+                "alignment": "MiddleCenter",
+                "position": {
+                  "x": 0,
+                  "y": 0
+                },
+                "width": 800,
+                "height": 200
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -564,6 +564,18 @@ class UnityBuilder extends events_1.EventEmitter {
         await fs.ensureDir(workingDir);
         await fs.emptyDir(workingDir);
         await fs.copy(this.unityTemplatePath, workingDir);
+        // Ensure TextMeshPro package is in manifest
+        const manifestPath = path.join(workingDir, 'Packages', 'manifest.json');
+        if (await fs.pathExists(manifestPath)) {
+            const manifest = await fs.readJSON(manifestPath);
+            const dependencies = (manifest.dependencies ?? {});
+            if (!dependencies['com.unity.textmeshpro']) {
+                dependencies['com.unity.textmeshpro'] = '3.0.9';
+                manifest.dependencies = dependencies;
+                await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
+                this.emit('log', '[Arsist] Added TextMeshPro package to Unity manifest');
+            }
+        }
         return workingDir;
     }
     /**
