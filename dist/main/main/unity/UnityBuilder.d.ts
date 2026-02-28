@@ -21,6 +21,8 @@ export interface UnityBuildConfig {
     cleanOutput?: boolean;
     /** Unityのライセンスファイル(.ulf)を明示したい場合に指定 */
     manualLicenseFile?: string;
+    /** スクリプトデータ (scripts.json 相当の内容) */
+    scriptsData?: object;
 }
 export interface BuildProgress {
     phase: string;
@@ -71,9 +73,10 @@ export declare class UnityBuilder extends EventEmitter {
     private compareVersions;
     private prepareUnityProject;
     /**
-     * Jint 3.x と Esprima の DLL を NuGet から取得して
-     * Assets/Plugins/Jint/ へ配置する。
-     * DLL がすでに存在する場合はスキップ。
+     * Jint 4.x と Acornima の DLL を Assets/Plugins/ へ配置する。
+     * - ローカルの sdk/nupkg/ を優先（オフライン対応）。
+     * - なければ NuGet から自動ダウンロード。
+     * - Jint.dll / Acornima.dll が両方とも存在する場合はスキップ。
      */
     private ensureJintDlls;
     /** ファイルを HTTP/HTTPS でダウンロードする（リダイレクト追跡） */

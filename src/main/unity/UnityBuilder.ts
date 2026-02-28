@@ -30,6 +30,9 @@ export interface UnityBuildConfig {
 
   /** Unityのライセンスファイル(.ulf)を明示したい場合に指定 */
   manualLicenseFile?: string;
+
+  /** スクリプトデータ (scripts.json 相当の内容) */
+  scriptsData?: object;
 }
 
 export interface BuildProgress {
@@ -635,43 +638,71 @@ export class UnityBuilder extends EventEmitter {
   }
 
   /**
-   * Jint 3.x と Esprima の DLL を NuGet から取得して
-   * Assets/Plugins/Jint/ へ配置する。
-   * DLL がすでに存在する場合はスキップ。
+   * Jint 4.x と Acornima の DLL を Assets/Plugins/ へ配置する。
+   * - ローカルの sdk/nupkg/ を優先（オフライン対応）。
+   * - なければ NuGet から自動ダウンロード。
+   * - Jint.dll / Acornima.dll が両方とも存在する場合はスキップ。
    */
   private async ensureJintDlls(unityProjectPath: string): Promise<void> {
-    const pluginsDir = path.join(unityProjectPath, 'Assets', 'Plugins', 'Jint');
-    const jintDll    = path.join(pluginsDir, 'Jint.dll');
-    const esprimaDll = path.join(pluginsDir, 'Esprima.dll');
+    // DLL 配置先は Assets/Plugins/ （サブフォルダなし）
+    const pluginsDir  = path.join(unityProjectPath, 'Assets', 'Plugins');
+    const jintDll     = path.join(pluginsDir, 'Jint.dll');
+    const acornimaDll = path.join(pluginsDir, 'Acornima.dll');
 
-    if (await fs.pathExists(jintDll) && await fs.pathExists(esprimaDll)) {
-      this.emit('log', '[Arsist] Jint/Esprima DLLs already present, skipping download');
+    if (await fs.pathExists(jintDll) && await fs.pathExists(acornimaDll)) {
+      this.emit('log', '[Arsist] Jint/Acornima DLLs already present, skipping');
       return;
     }
 
-    this.emit('log', '[Arsist] Downloading Jint 3.x / Esprima DLLs from NuGet...');
     await fs.ensureDir(pluginsDir);
 
+    // 古い Esprima.dll が残っていれば削除（Jint 4.x では不要）
+    const oldEsprima = path.join(pluginsDir, 'Esprima.dll');
+    if (await fs.pathExists(oldEsprima)) {
+      await fs.remove(oldEsprima);
+      const oldEsprimaMeta = oldEsprima + '.meta';
+      if (await fs.pathExists(oldEsprimaMeta)) await fs.remove(oldEsprimaMeta);
+      this.emit('log', '[Arsist] Removed legacy Esprima.dll');
+    }
+
     const packages: Array<{ id: string; version: string; dll: string }> = [
-      { id: 'jint',    version: '3.1.6', dll: 'Jint.dll'    },
-      { id: 'esprima', version: '3.0.5', dll: 'Esprima.dll' },
+      { id: 'jint',                                    version: '4.6.0', dll: 'Jint.dll'                                    },
+      { id: 'acornima',                                version: '1.2.0', dll: 'Acornima.dll'                                },
+      // Jint 4.x が依存する .NET BCL ヘルパー (Unity IL2CPP リンカーが解決できないため明示配置)
+      { id: 'system.runtime.compilerservices.unsafe',  version: '6.0.0', dll: 'System.Runtime.CompilerServices.Unsafe.dll' },
     ];
+
+    // ローカル nupkg の探索ルート（resolveRepoRoot でリポジトリルートを取得）
+    const resolvedRepo   = this.resolveRepoRoot();
+    const localNupkgDir  = resolvedRepo.path
+      ? path.join(resolvedRepo.path, 'sdk', 'nupkg')
+      : path.join(process.cwd(), 'sdk', 'nupkg');
 
     const tmpDir = path.join(pluginsDir, '_dl_tmp');
     await fs.ensureDir(tmpDir);
 
     try {
       for (const pkg of packages) {
-        const url      = `https://api.nuget.org/v3-flatcontainer/${pkg.id}/${pkg.version}/${pkg.id}.${pkg.version}.nupkg`;
-        const nupkg    = path.join(tmpDir, `${pkg.id}.nupkg`);
-        const extract  = path.join(tmpDir, pkg.id);
-        const dllEntry = `lib/netstandard2.0/${pkg.dll}`; // netstandard2.0 が最も互換性が高い
+        const destDll = path.join(pluginsDir, pkg.dll);
+        if (await fs.pathExists(destDll)) {
+          this.emit('log', `[Arsist] ${pkg.dll} already present, skipping`);
+          continue;
+        }
 
-        this.emit('log', `[Arsist] Downloading ${pkg.id} ${pkg.version}...`);
-        await this.downloadFile(url, nupkg);
-
+        const localNupkg = path.join(localNupkgDir, `${pkg.id}.${pkg.version}.nupkg`);
+        const extract    = path.join(tmpDir, pkg.id);
         await fs.ensureDir(extract);
-        await this.extractFromZip(nupkg, extract);
+
+        if (await fs.pathExists(localNupkg)) {
+          this.emit('log', `[Arsist] Using local nupkg for ${pkg.id} ${pkg.version}...`);
+          await this.extractFromZip(localNupkg, extract);
+        } else {
+          const url   = `https://api.nuget.org/v3-flatcontainer/${pkg.id}/${pkg.version}/${pkg.id}.${pkg.version}.nupkg`;
+          const nupkg = path.join(tmpDir, `${pkg.id}.nupkg`);
+          this.emit('log', `[Arsist] Downloading ${pkg.id} ${pkg.version} from NuGet...`);
+          await this.downloadFile(url, nupkg);
+          await this.extractFromZip(nupkg, extract);
+        }
 
         // netstandard2.1 > netstandard2.0 > net6.0 の優先順で DLL を探す
         const candidates = [
@@ -682,20 +713,19 @@ export class UnityBuilder extends EventEmitter {
         let found = false;
         for (const candidate of candidates) {
           if (await fs.pathExists(candidate)) {
-            await fs.copy(candidate, path.join(pluginsDir, pkg.dll), { overwrite: true });
-            this.emit('log', `[Arsist] Installed ${pkg.dll} from ${path.relative(extract, candidate)}`);
+            await fs.copy(candidate, destDll, { overwrite: true });
+            this.emit('log', `[Arsist] Installed ${pkg.dll}`);
             found = true;
             break;
           }
         }
         if (!found) {
-          // フォールバック: lib 以下を再帰検索
           const fallback = await this.findFileRecursive(extract, pkg.dll);
           if (fallback) {
-            await fs.copy(fallback, path.join(pluginsDir, pkg.dll), { overwrite: true });
+            await fs.copy(fallback, destDll, { overwrite: true });
             this.emit('log', `[Arsist] Installed ${pkg.dll} (fallback search)`);
           } else {
-            throw new Error(`${pkg.dll} が NuGet パッケージ内に見つかりませんでした`);
+            throw new Error(`${pkg.dll} が nupkg 内に見つかりませんでした`);
           }
         }
       }
@@ -703,7 +733,7 @@ export class UnityBuilder extends EventEmitter {
       await fs.remove(tmpDir).catch(() => {});
     }
 
-    this.emit('log', '[Arsist] Jint/Esprima DLLs installed to Assets/Plugins/Jint/');
+    this.emit('log', '[Arsist] Jint 4.x / Acornima DLLs ready in Assets/Plugins/');
   }
 
   /** ファイルを HTTP/HTTPS でダウンロードする（リダイレクト追跡） */
@@ -823,6 +853,16 @@ export class UnityBuilder extends EventEmitter {
         { spaces: 2 }
       );
       this.emit('log', '[Arsist] DataFlow definition exported');
+    }
+
+    // スクリプトデータを出力 (ScriptEngineManager が読み込む)
+    if (config.scriptsData) {
+      await fs.writeJSON(
+        path.join(dataDir, 'scripts.json'),
+        config.scriptsData,
+        { spaces: 2 }
+      );
+      this.emit('log', '[Arsist] scripts.json exported');
     }
 
     // Arsistプロジェクト内AssetsをUnityプロジェクトにコピー（実アセットとしてUnityに取り込ませる）

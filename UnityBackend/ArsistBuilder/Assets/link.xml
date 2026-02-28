@@ -2,8 +2,14 @@
   <!-- Jint: JavaScript インタープリタ (IL2CPP ストリッピング防止) -->
   <assembly fullname="Jint" preserve="all" />
 
-  <!-- Esprima: Jint の依存パーサー (AST ビルダー) -->
-  <assembly fullname="Esprima" preserve="all" />
+  <!-- Esprima: 旧依存パーサー (Jint 2.x 用、削除済み) -->
+  <!-- <assembly fullname="Esprima" preserve="all" /> -->
+
+  <!-- Acornima: Jint 4.x の依存パーサー (AST ビルダー) -->
+  <assembly fullname="Acornima" preserve="all" />
+
+  <!-- System.Runtime.CompilerServices.Unsafe: Jint 4.x の依存 BCL (IL2CPP linker 対策) -->
+  <assembly fullname="System.Runtime.CompilerServices.Unsafe" preserve="all" />
 
   <!-- Newtonsoft.Json: スクリプトバンドル JSON パース -->
   <assembly fullname="Newtonsoft.Json" preserve="all" />
@@ -16,6 +22,8 @@
     <type fullname="Arsist.Runtime.Scripting.ApiWrapper" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.UiWrapper" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.UiBindingRegistry" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.UiBindingLookup" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.ArsistScriptEvent" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.EventWrapper" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.StoreWrapper" preserve="all" />
   </assembly>

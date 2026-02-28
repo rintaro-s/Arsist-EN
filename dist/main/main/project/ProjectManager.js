@@ -455,6 +455,8 @@ class ProjectManager {
         if (!this.currentProject)
             return {};
         const { remoteInput, ...androidBuild } = this.currentProject.buildSettings;
+        const scripts = this.currentProject.scripts ?? [];
+        const hasActiveScripts = scripts.some((sc) => sc.enabled);
         return {
             projectId: this.currentProject.id,
             projectName: this.currentProject.name,
@@ -467,6 +469,9 @@ class ProjectManager {
             build: androidBuild,
             buildSettings: this.currentProject.buildSettings,
             remoteInput,
+            scripting: {
+                enabled: hasActiveScripts,
+            },
             exportedAt: new Date().toISOString(),
         };
     }

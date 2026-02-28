@@ -51,6 +51,8 @@ function pickFirstExisting(paths) {
 
   const { remoteInput, ...androidBuild } = project.buildSettings || {};
   const selectedTargetDevice = process.env.ARSIST_TARGET_DEVICE || project.targetDevice || 'XREAL_One';
+  const scripts = project.scripts || [];
+  const hasActiveScripts = scripts.some((sc) => sc.enabled);
   const manifestData = {
     projectId: project.id,
     projectName: project.name,
@@ -64,7 +66,14 @@ function pickFirstExisting(paths) {
     build: androidBuild,
     buildSettings: project.buildSettings,
     remoteInput,
+    scripting: { enabled: hasActiveScripts },
     exportedAt: new Date().toISOString(),
+  };
+  const scriptsData = {
+    version: '1.0',
+    scripts: scripts
+      .filter((sc) => sc.enabled)
+      .map((sc) => ({ id: sc.id, name: sc.name, trigger: sc.trigger, code: sc.code, enabled: sc.enabled })),
   };
 
   const logFilePath = pickFirstExisting([
@@ -88,6 +97,7 @@ function pickFirstExisting(paths) {
     manifestData,
     scenesData: project.scenes || [],
     uiData: project.uiLayouts || [],
+    scriptsData,
     logicCode: '',
     buildTimeoutMinutes: 60,
     logFilePath,

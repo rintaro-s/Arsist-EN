@@ -69,6 +69,7 @@ namespace Arsist.Builder
                 // Phase 2: UI生成（StreamingAssetsへのコピーのみ。Canvas生成はPhase 1で完了）
                 Debug.Log("[Arsist] Phase 2: Copying UI assets...");
                 CopyUICodeToStreamingAssets();
+                CopyScriptsToStreamingAssets();
 
                 // Phase 3: ビルド設定適用
                 Debug.Log("[Arsist] Phase 3: Applying build settings...");
@@ -1687,8 +1688,19 @@ ScriptedImporter:
             
             // Note: Canvas visibility and font fixes are handled at build time in GenerateCanvasUI and CreateUIElement
             
-            // Script Engine (if scripting enabled)
+            // Script Engine: manifest フラグまたは scripts.json が存在すれば有効化
             var scriptingEnabled = manifest?["scripting"]?["enabled"]?.Value<bool>() ?? false;
+            if (!scriptingEnabled)
+            {
+                var scriptsPath = Path.Combine(Application.dataPath, "ArsistGenerated", "scripts.json");
+                if (File.Exists(scriptsPath))
+                {
+                    var scriptsJson = File.ReadAllText(scriptsPath);
+                    var scriptsObj = JObject.Parse(scriptsJson);
+                    var scripts = scriptsObj["scripts"] as JArray;
+                    scriptingEnabled = scripts != null && scripts.Count > 0;
+                }
+            }
             if (scriptingEnabled)
             {
                 var scriptEngineGO = new GameObject("[ArsistScriptEngine]");
@@ -1740,6 +1752,33 @@ ScriptedImporter:
             catch (Exception e)
             {
                 Debug.LogWarning($"[Arsist] Failed to copy UI code to StreamingAssets: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// scripts.json を StreamingAssets/ArsistScripts/ にコピーしてランタイムで読み込めるようにする
+        /// </summary>
+        private static void CopyScriptsToStreamingAssets()
+        {
+            var srcPath = Path.Combine(Application.dataPath, "ArsistGenerated", "scripts.json");
+            if (!File.Exists(srcPath))
+            {
+                Debug.Log("[Arsist] scripts.json not found in ArsistGenerated, skipping script copy.");
+                return;
+            }
+
+            try
+            {
+                var dstDir = Path.Combine(Application.dataPath, "StreamingAssets", "ArsistScripts");
+                Directory.CreateDirectory(dstDir);
+                var dstPath = Path.Combine(dstDir, "scripts.json");
+                File.Copy(srcPath, dstPath, overwrite: true);
+                AssetDatabase.Refresh();
+                Debug.Log($"[Arsist] ✅ scripts.json copied to StreamingAssets/ArsistScripts/");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to copy scripts.json to StreamingAssets: {e.Message}");
             }
         }
 
@@ -1940,30 +1979,6 @@ ScriptedImporter:
                 {
                     CreateUIElement(root, canvasGO.transform);
                 }
-
-                // === DIAGNOSTIC: Add hardcoded TMP text to verify font/material rendering ===
-                var diagnosticGO = new GameObject("[DIAGNOSTIC_TEXT]");
-                diagnosticGO.transform.SetParent(canvasGO.transform, false);
-                var diagnosticRT = diagnosticGO.AddComponent<RectTransform>();
-                diagnosticRT.anchorMin = new Vector2(0.5f, 0.5f);
-                diagnosticRT.anchorMax = new Vector2(0.5f, 0.5f);
-                diagnosticRT.sizeDelta = new Vector2(800, 200);
-                diagnosticRT.anchoredPosition = Vector2.zero;
-                
-                var diagnosticTMP = diagnosticGO.AddComponent<TextMeshProUGUI>();
-                diagnosticTMP.text = "DIAGNOSTIC: TMP RENDERING TEST";
-                diagnosticTMP.fontSize = 48;
-                diagnosticTMP.color = Color.yellow;
-                diagnosticTMP.alignment = TextAlignmentOptions.Center;
-                diagnosticTMP.enableAutoSizing = false;
-                
-                if (_defaultTmpFont != null) diagnosticTMP.font = _defaultTmpFont;
-                if (_defaultTmpMaterial != null) diagnosticTMP.fontSharedMaterial = _defaultTmpMaterial;
-                
-                diagnosticGO.layer = LayerMask.NameToLayer("UI");
-                diagnosticGO.SetActive(true);
-                
-                Debug.Log($"[Arsist] ✅ DIAGNOSTIC TEXT CREATED: font={diagnosticTMP.font?.name ?? "(null)"}, mat={diagnosticTMP.fontSharedMaterial?.name ?? "(null)"}");
             }
 
             if (createdHudCount == 0)
