@@ -3,6 +3,8 @@
 // Assets/Arsist/Runtime/Scripting/ScriptEngineManager.cs
 // ==============================================
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using Jint;
 using Jint.Native;
@@ -10,6 +12,7 @@ using Jint.Runtime;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using UnityEngine.Networking;
 
 namespace Arsist.Runtime.Scripting
 {
@@ -36,6 +39,12 @@ namespace Arsist.Runtime.Scripting
         private Engine _engine;
         private ApiWrapper _apiWrapper;
         private UiWrapper _uiWrapper;
+
+        /// <summary>
+        /// 非同期ロード結果を保持するフィールド
+        /// </summary>
+        private ScriptEntry[] _loadedScripts;
+        private bool _scriptsLoaded;
 
         public Engine Engine => _engine;
 
@@ -110,46 +119,91 @@ namespace Arsist.Runtime.Scripting
         }
 
         /// <summary>
-        /// StreamingAssets から scripts.json を読み込んで配列で返す
+        /// StreamingAssets から scripts.json を非同期で読み込むコルーチン。
+        /// Android では UnityWebRequest を使う必要がある（APK 内の jar ファイル）。
+        /// 結果は _loadedScripts に格納される。
         /// </summary>
-        public ScriptEntry[] LoadScripts()
+        public IEnumerator LoadScriptsAsync()
         {
-            var path = Path.Combine(Application.streamingAssetsPath, "ArsistScripts", "scripts.json");
-            if (!File.Exists(path))
+            _scriptsLoaded = false;
+            _loadedScripts = Array.Empty<ScriptEntry>();
+
+            // Android / WebGL は UnityWebRequest 必須。他プラットフォームも統一して使う。
+            var filePath = Path.Combine(Application.streamingAssetsPath, "ArsistScripts", "scripts.json");
+
+            // Android の streamingAssetsPath は jar:file:// で始まるのでそのまま使える
+            // 他プラットフォームでは file:// プレフィックスが必要
+            var url = filePath;
+            if (!url.StartsWith("jar:") && !url.StartsWith("http"))
             {
-                Debug.Log("[Arsist] scripts.json not found in StreamingAssets.");
-                return Array.Empty<ScriptEntry>();
+                url = "file://" + url;
             }
 
-            try
-            {
-                var json = File.ReadAllText(path);
-                var bundle = JObject.Parse(json);
-                var arr = bundle["scripts"] as JArray;
-                if (arr == null) return Array.Empty<ScriptEntry>();
+            Debug.Log($"[Arsist] LoadScriptsAsync: loading from {url}");
 
-                var list = new System.Collections.Generic.List<ScriptEntry>();
-                foreach (JObject item in arr)
+            using (var req = UnityWebRequest.Get(url))
+            {
+                req.timeout = 10;
+                yield return req.SendWebRequest();
+
+                if (req.result != UnityWebRequest.Result.Success)
                 {
-                    var entry = new ScriptEntry
-                    {
-                        id = item["id"]?.ToString() ?? "(unnamed)",
-                        trigger = item["trigger"] as JObject,
-                        code = item["code"]?.ToString() ?? "",
-                        enabled = item["enabled"]?.Value<bool>() ?? true,
-                    };
-                    if (entry.enabled && !string.IsNullOrEmpty(entry.code))
-                        list.Add(entry);
+                    Debug.LogError($"[Arsist] scripts.json load failed: {req.error} (url: {url})");
+                    _scriptsLoaded = true;
+                    yield break;
                 }
 
-                Debug.Log($"[Arsist] Loaded {list.Count} script(s) from StreamingAssets.");
-                return list.ToArray();
+                var json = req.downloadHandler.text;
+                Debug.Log($"[Arsist] scripts.json loaded, size={json.Length} bytes");
+
+                try
+                {
+                    var bundle = JObject.Parse(json);
+                    var arr = bundle["scripts"] as JArray;
+                    if (arr == null)
+                    {
+                        Debug.LogWarning("[Arsist] scripts.json has no 'scripts' array.");
+                        _scriptsLoaded = true;
+                        yield break;
+                    }
+
+                    var list = new List<ScriptEntry>();
+                    foreach (JObject item in arr)
+                    {
+                        var entry = new ScriptEntry
+                        {
+                            id = item["id"]?.ToString() ?? "(unnamed)",
+                            trigger = item["trigger"] as JObject,
+                            code = item["code"]?.ToString() ?? "",
+                            enabled = item["enabled"]?.Value<bool>() ?? true,
+                        };
+                        if (entry.enabled && !string.IsNullOrEmpty(entry.code))
+                            list.Add(entry);
+                    }
+
+                    _loadedScripts = list.ToArray();
+                    Debug.Log($"[Arsist] Loaded {_loadedScripts.Length} script(s) from StreamingAssets.");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[Arsist] Failed to parse scripts.json: {ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[Arsist] Failed to load scripts.json: {ex.Message}");
-                return Array.Empty<ScriptEntry>();
-            }
+
+            _scriptsLoaded = true;
         }
+
+        /// <summary>
+        /// 非同期ロード結果を取得する
+        /// </summary>
+        public ScriptEntry[] GetLoadedScripts()
+        {
+            return _loadedScripts ?? Array.Empty<ScriptEntry>();
+        }
+
+        /// <summary>
+        /// スクリプトのロードが完了したかどうか
+        /// </summary>
+        public bool ScriptsLoaded => _scriptsLoaded;
     }
 }

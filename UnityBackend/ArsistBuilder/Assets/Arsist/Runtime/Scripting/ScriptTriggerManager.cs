@@ -44,7 +44,13 @@ namespace Arsist.Runtime.Scripting
                 yield break;
             }
 
-            var scripts = engine.LoadScripts();
+            // Android 対応: UnityWebRequest で非同期にscripts.jsonを読み込む
+            Debug.Log("[Arsist] ScriptTriggerManager: starting async script load...");
+            yield return engine.StartCoroutine(engine.LoadScriptsAsync());
+
+            var scripts = engine.GetLoadedScripts();
+            Debug.Log($"[Arsist] ScriptTriggerManager: {scripts.Length} script(s) to register.");
+
             foreach (var script in scripts)
             {
                 var triggerType = script.trigger?["type"]?.ToString() ?? "awake";

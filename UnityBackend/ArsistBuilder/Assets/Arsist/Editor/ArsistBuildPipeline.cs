@@ -14,6 +14,7 @@ using System.Reflection;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Arsist.Runtime.Scripting;
 using Arsist.Runtime.RemoteInput;
 using UnityEditor.XR.Management;
 using UnityEngine.XR.Management;
@@ -1704,13 +1705,16 @@ ScriptedImporter:
             if (scriptingEnabled)
             {
                 var scriptEngineGO = new GameObject("[ArsistScriptEngine]");
-                TryAddComponentByTypeName(scriptEngineGO, "Arsist.Runtime.Scripting.ScriptEngineManager");
+                scriptEngineGO.AddComponent<ScriptEngineManager>();
+                Debug.Log("[Arsist] ScriptEngineManager component attached.");
                 
                 var triggerManagerGO = new GameObject("[ArsistScriptTriggerManager]");
-                TryAddComponentByTypeName(triggerManagerGO, "Arsist.Runtime.Scripting.ScriptTriggerManager");
+                triggerManagerGO.AddComponent<ScriptTriggerManager>();
+                Debug.Log("[Arsist] ScriptTriggerManager component attached.");
                 
                 var coroutineRunnerGO = new GameObject("[ArsistCoroutineRunner]");
-                TryAddComponentByTypeName(coroutineRunnerGO, "Arsist.Runtime.Scripting.CoroutineRunner");
+                coroutineRunnerGO.AddComponent<CoroutineRunner>();
+                Debug.Log("[Arsist] CoroutineRunner component attached.");
             }
             
             Debug.Log("[Arsist] Runtime systems created");
@@ -2442,11 +2446,12 @@ ScriptedImporter:
 
             if (string.IsNullOrWhiteSpace(bindingId)) return;
 
-            var registryComp = TryAddComponentByTypeName(go, "Arsist.Runtime.Scripting.UiBindingRegistry");
-            if (registryComp == null) return;
-
-            var field = registryComp.GetType().GetField("bindingId", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            field?.SetValue(registryComp, bindingId);
+            var registryComp = go.GetComponent<UiBindingRegistry>();
+            if (registryComp == null)
+            {
+                registryComp = go.AddComponent<UiBindingRegistry>();
+            }
+            registryComp.bindingId = bindingId;
         }
 
         private static void SetLayerRecursively(GameObject root, int layer)
