@@ -93,6 +93,18 @@ namespace Arsist.Runtime.Scripting
             _engine.SetValue("error", new Action<object>(msg =>
                 Debug.LogError($"[ArsistJS] {msg}")));
 
+            // 互換グローバルを提供（window / globalThis / console）
+            // 既存サンプルやユーザースクリプトが browser-like API を使っても落ちないようにする
+            _engine.Execute(@"
+                var globalThis = this;
+                var window = this;
+                var console = {
+                  log: function(m){ log(m); },
+                  warn: function(m){ log('[warn] ' + m); },
+                  error: function(m){ error(m); }
+                };
+            ");
+
             Debug.Log("[Arsist] ScriptEngineManager: Jint engine initialized.");
         }
 
@@ -113,7 +125,10 @@ namespace Arsist.Runtime.Scripting
             }
             catch (JavaScriptException ex)
             {
-                Debug.LogError($"[ArsistJS] Runtime error in '{scriptId}': {ex.Message}");
+                var location = ex.Location.Start.Line > 0
+                    ? $" line={ex.Location.Start.Line}, col={ex.Location.Start.Column}"
+                    : string.Empty;
+                Debug.LogError($"[ArsistJS] Runtime error in '{scriptId}': {ex.Message}{location}");
             }
             catch (RecursionDepthOverflowException ex)
             {

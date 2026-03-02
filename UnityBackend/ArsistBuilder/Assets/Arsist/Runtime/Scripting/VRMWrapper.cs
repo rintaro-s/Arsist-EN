@@ -180,17 +180,21 @@ namespace Arsist.Runtime.Scripting
             var vrmObj = GetVRM(id);
             if (vrmObj == null) return;
 
+            // VRMExpressionController 経由でリセット（UniVRM Proxy に通知される）
+            var expressionController = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMExpressionController>();
+            if (expressionController != null)
+            {
+                expressionController.ResetAllExpressions();
+                return;
+            }
+
+            // Fallback: 直接 BlendShape リセット（VRMBlendShapeProxy なし環境のみ）
             var skinnedMeshes = vrmObj.GetComponentsInChildren<SkinnedMeshRenderer>();
             foreach (var smr in skinnedMeshes)
             {
-                var mesh = smr.sharedMesh;
-                if (mesh == null) continue;
-
-                int blendShapeCount = mesh.blendShapeCount;
-                for (int i = 0; i < blendShapeCount; i++)
-                {
+                if (smr?.sharedMesh == null) continue;
+                for (int i = 0; i < smr.sharedMesh.blendShapeCount; i++)
                     smr.SetBlendShapeWeight(i, 0f);
-                }
             }
         }
 

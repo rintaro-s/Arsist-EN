@@ -71,39 +71,33 @@ log('表情を変更: ' + expr);
 
 #### スクリプト4: まばたきアニメーション
 
-**トリガー:** `interval` (5000ms = 5秒ごと)
+**トリガー:** `onUpdate`
 
 ```javascript
-// まばたき
-vrm.setExpression('avatar', 'Blink', 100);
-
-// 200ms後に目を開ける（次のフレームで実行）
-setTimeout(function() {
-  vrm.setExpression('avatar', 'Blink', 0);
-}, 200);
-```
-
-**注意:** Jintは `setTimeout` をサポートしていないため、代わりに以下のようにします：
-
-```javascript
-// まばたきフラグをstoreに保存
-var isBlinking = store.get('isBlinking');
-if (isBlinking === null) {
-  isBlinking = false;
+// Jint で動く実装（setTimeout/store を使わない）
+if (!window._blinkState) {
+  window._blinkState = {
+    isClosing: false,
+    lastBlinkAt: 0,
+    closeAt: 0,
+    intervalMs: 5000,
+    closeMs: 200
+  };
 }
 
-if (!isBlinking) {
-  // まばたき開始
+var now = Date.now();
+var s = window._blinkState;
+
+if (!s.isClosing && (now - s.lastBlinkAt) >= s.intervalMs) {
   vrm.setExpression('avatar', 'Blink', 100);
-  store.set('isBlinking', true);
-  store.set('blinkStartTime', Date.now());
-} else {
-  // 200ms経過したら目を開ける
-  var startTime = store.get('blinkStartTime');
-  if (Date.now() - startTime > 200) {
-    vrm.setExpression('avatar', 'Blink', 0);
-    store.set('isBlinking', false);
-  }
+  s.isClosing = true;
+  s.closeAt = now;
+}
+
+if (s.isClosing && (now - s.closeAt) >= s.closeMs) {
+  vrm.setExpression('avatar', 'Blink', 0);
+  s.isClosing = false;
+  s.lastBlinkAt = now;
 }
 ```
 
@@ -166,8 +160,8 @@ vrm.setBoneRotation('avatar', 'Spine', 0, spineAngle, 0);
 ### 感情に応じた表情とポーズ
 
 ```javascript
-// storeから感情状態を取得
-var emotion = store.get('emotion') || 'neutral';
+// 外部イベントなどで window._emotion = 'happy' のように設定しておく
+var emotion = window._emotion || 'neutral';
 
 if (emotion === 'happy') {
   vrm.setExpression('avatar', 'Joy', 100);

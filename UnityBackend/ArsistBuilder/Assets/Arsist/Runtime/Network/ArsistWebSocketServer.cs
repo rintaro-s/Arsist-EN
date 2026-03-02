@@ -502,27 +502,26 @@ namespace Arsist.Runtime.Network
         private void ExecuteVRMCommand(Scripting.VRMWrapper vrm, Scripting.SceneWrapper scene, RemoteCommand cmd)
         {
             var p = cmd.parameters ?? new CommandParameters();
-            
-            // VRMコマンド → 汎用SceneWrapper経由で処理
-            // PropertyControllerが有効な場合は自動的にそちらを使用
+
+            // VRMコマンドは VRMWrapper を第一経路として処理する。
+            // （UniVRM runtime との互換性を維持するため SceneWrapper への迂回を避ける）
             switch (cmd.method)
             {
                 case "setBoneRotation":
                 case "setbonerotation":
-                    // scene経由でPropertyControllerを使用
-                    scene.setBoneRotation(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
+                    vrm.setBoneRotation(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
                     break;
                 case "rotateBone":
                 case "rotatebone":
-                    scene.rotateBone(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
+                    vrm.rotateBone(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
                     break;
                 case "setExpression":
                 case "setexpression":
-                    scene.setBlendShapeWeight(p.id, p.expressionName ?? p.name, p.value ?? 0);
+                    vrm.setExpression(p.id, p.expressionName ?? p.name, p.value ?? 0);
                     break;
                 case "resetExpressions":
                 case "resetexpressions":
-                    scene.resetAllBlendShapes(p.id);
+                    vrm.resetExpressions(p.id);
                     break;
                 case "lookAt":
                 case "lookat":
@@ -530,11 +529,11 @@ namespace Arsist.Runtime.Network
                     break;
                 case "playAnimation":
                 case "playanimation":
-                    scene.playAnimation(p.id, p.animName);
+                    vrm.playAnimation(p.id, p.animName);
                     break;
                 case "setAnimationSpeed":
                 case "setanimationspeed":
-                    scene.setAnimationSpeed(p.id, p.speed ?? 1);
+                    vrm.setAnimationSpeed(p.id, p.speed ?? 1);
                     break;
                 default:
                     Debug.LogWarning($"[ArsistWebSocket] Unknown vrm method: {cmd.method}");

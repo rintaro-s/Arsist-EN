@@ -9,10 +9,11 @@ using UnityEngine;
 namespace Arsist.Runtime.VRM
 {
     /// <summary>
-    /// VRM のボーン回転を確実に制御する（確実な実装）
-    /// PropertyController に依存しない独立した実装
+    /// LateUpdate で Animator 更新後にスクリプト指定のボーン回転を適用する。
+    /// DefaultExecutionOrder(10000) により UniVRM の LateUpdate より確実に後に実行される。
     /// </summary>
     [UnityEngine.Scripting.Preserve]
+    [DefaultExecutionOrder(10000)]
     public class VRMBoneController : MonoBehaviour
     {
         private Animator _animator;
