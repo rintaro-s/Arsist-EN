@@ -1,130 +1,57 @@
 # サンプル 08: Pythonリモートコントロール
 
-このサンプルでは、Python スクリプトからデバイス上の VRM アバターや 3D オブジェクトをリモート制御する方法を示します。
+Pythonスクリプトからデバイス上のVRMアバターや3Dオブジェクトをリモート制御する方法。
 
 ## 概要
 
-- デバイス上で WebSocket サーバーを起動
-- Python クライアントから WebSocket 経由で制御コマンドを送信
-- VRM の表情・ポーズ・位置をリアルタイム制御
-- センサーデータや AI の出力を VRM に反映
+Arsistエンジンは、WebSocket経由でスクリプト制御と同じ汎用APIを外部クライアント（Python等）に公開します。
 
----
-
-## 使用例
-
-### ユースケース
-
-1. **モーションキャプチャ**: PC のカメラでポーズを認識 → デバイスの VRM に反映
-2. **AI アシスタント**: ChatGPT の感情分析 → VRM の表情に反映
-3. **センサー連携**: IoT センサーの値 → 3D オブジェクトの位置・色に反映
-4. **リモートデバッグ**: PC から VRM の動作をテスト
+- **汎用制御**: VRM、3Dオブジェクト、UIなど、すべてのアセットを統一されたAPIで制御
+- **PropertySystem**: ボーン回転、表情その他のプロパティを一元管理
+- **リアルタイム制御**: カメラ入力、AI分析、IoTセンサー等の外部データをシーンに反映
 
 ---
 
 ## セットアップ
 
-### 1. Unity 側の設定
+### 1. Arsistエンジンの設定
 
-Arsist エディタの **Scene タブ → 右パネル（オブジェクト未選択時）→「Python リモートコントロール」** から有効にします。
+Arsistエディタで以下の設定を行います：
 
-> この項目は **VRM オブジェクトが 1 つ以上ある場合のみ**表示されます。
-
-> **デフォルトは無効**です。有効化するとビルド成果物に WebSocket サーバーが組み込まれます。  
-> 不要な場合は必ず無効のままにしてください（セキュリティ上の理由）。
+**シーン右パネル（オブジェクト未選択時）→「プロジェクト設定」**
 
 | 項目 | 値 |
 |---|---|
-| リモートコントロールを有効にする | ✅ チェック |
-| WebSocket ポート | `8765`（デフォルト） |
-| 認証パスワード (任意) | 例: `myStrongPass123` |
+| **リモートコントロール有効化** | ✅ チェック |
+| **WebSocketポート** | `8765`（デフォルト） |
+| **認証パスワード** | 例: `myPass123` |
 
-> `認証パスワード` を設定した場合、Python 側の各コマンドに `authToken` を含める必要があります。
+> パスワードを設定した場合、Python側のすべてのコマンドに `authToken` を含める必要があります。
 
-#### エンジン側スクリプト（任意）
+### 2. VRMの準備
 
-Script タブで以下のスクリプトを追加すると、起動ログや UI ステータス表示を行えます。
+VRMをシーンに配置し、**Asset ID**を設定します。
 
-| 項目 | 値 |
-|---|---|
-| トリガー | `onStart` |
-| スクリプト名 | `RemoteControlInit` |
+例：
+- Asset ID: `avatar_main`
+- Asset ID: `avatar_sub`
 
-```javascript
-// リモートコントロール初期化スクリプト
-// ※ WebSocket サーバーはビルド時に自動組み込み済み（Project Settings で有効化が必要）
+> 複数のVRMを制御する場合は、各VRMのAsset IDを一意に設定してください。
 
-log('[RemoteControl] サーバーが起動しています');
-log('[RemoteControl] デバイスの IP アドレスを確認して Python クライアントから接続してください');
+### 3. 能力検出
 
-// UI に接続待ち状態を表示（statusText 要素がある場合）
-try {
-  ui.setText('statusText', '待機中... (port: 8765)');
-  ui.setColor('statusText', '#FFC300');
-} catch (e) {
-  // UI 要素が存在しない場合は無視
-}
-```
+シーン内でVRMを選択すると、エディタの右パネルに以下が表示されます：
 
-#### 手動でサーバーを起動する場合（エンジン設定を使わない）
+- **利用可能な表情** (BlendShape一覧)
+- **Humanoidボーン** (制御可能なボーン一覧)
 
-`remote` API を使うと、スクリプトから任意のタイミングでサーバーを起動できます。
-
-| 項目 | 値 |
-|---|---|
-| トリガー | `onStart` または `onClick` |
-| スクリプト名 | `ManualRemoteServer` |
-
-```javascript
-// 手動で WebSocket サーバーを起動
-// remote.startServer(port, password)
-// password を空文字にすると認証なし
-
-const port = 8765;
-const password = 'myStrongPass123';
-
-if (!remote.isRunning()) {
-    remote.startServer(port, password);
-    log(`[RemoteControl] Manual server started on ${port}`);
-}
-
-// 複数VRMを初期化（Asset IDを個別に設定しておく）
-const vrmIds = ['avatar_main', 'avatar_sub'];
-for (const id of vrmIds) {
-    vrm.setExpression(id, 'Joy', 30);
-}
-```
-
-### 2. VRM モデルの配置
-
-1. VRM ファイルをインポート
-2. シーンに配置
-3. **Asset ID** を設定（例: `avatar_main`, `avatar_sub`）
-
-> 複数VRMを制御する場合は、**Asset ID を必ずユニーク**にしてください。
-
-### 3. ネットワーク設定
-
-デバイスと PC を同じネットワークに接続します。
-
-- **Quest**: Wi-Fi 経由で PC と同じネットワークに接続
-- **XREAL**: Beam Pro または接続デバイスと PC を同じネットワークに接続
-
-デバイスの IP アドレスを確認：
-- Quest: 設定 > Wi-Fi > 接続中のネットワーク > IP アドレス
-- XREAL: 接続デバイスの設定から確認
+「🔍 Detect Capabilities」ボタンで自動検出できます。
 
 ---
 
-## Python クライアント
+## Pythonクライアント実装
 
-### 必要なライブラリ
-
-```bash
-pip install websocket-client
-```
-
-### 基本的な制御スクリプト
+### 基本的な使用例
 
 ```python
 #!/usr/bin/env python3

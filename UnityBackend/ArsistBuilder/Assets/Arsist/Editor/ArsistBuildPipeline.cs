@@ -339,7 +339,7 @@ namespace Arsist.Builder
 
                                 if (pos != null)
                                 {
-                                    go.transform.localPosition = new Vector3(
+                                    go.transform.position = new Vector3(
                                         pos["x"]?.Value<float>() ?? 0,
                                         pos["y"]?.Value<float>() ?? 0,
                                         pos["z"]?.Value<float>() ?? 0
@@ -348,7 +348,7 @@ namespace Arsist.Builder
 
                                 if (rot != null)
                                 {
-                                    go.transform.localEulerAngles = new Vector3(
+                                    go.transform.eulerAngles = new Vector3(
                                         rot["x"]?.Value<float>() ?? 0,
                                         rot["y"]?.Value<float>() ?? 0,
                                         rot["z"]?.Value<float>() ?? 0
@@ -541,6 +541,27 @@ namespace Arsist.Builder
                 mat.SetFloat("_Glossiness", 1 - (material["roughness"]?.Value<float>() ?? 0.5f));
                 
                 renderer.material = mat;
+            }
+
+            // VRM 以外のオブジェクトに ArsistObjectRegistrar を追加
+            // VRM は ArsistVRMLoaderTask が登録を担うため不要
+            if (type != "vrm")
+            {
+                var registrarType = System.Type.GetType("Arsist.Runtime.Scene.ArsistObjectRegistrar, Assembly-CSharp");
+                if (registrarType != null)
+                {
+                    var registrar = go.AddComponent(registrarType);
+                    var assetIdField = registrarType.GetField("assetId", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    if (assetIdField != null)
+                    {
+                        assetIdField.SetValue(registrar, assetId);
+                        Debug.Log($"[Arsist] ArsistObjectRegistrar added to '{name}' with assetId='{assetId}'");
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning($"[Arsist] ArsistObjectRegistrar type not found. Object '{name}' will not be registered at runtime.");
+                }
             }
 
             return go;
@@ -1968,8 +1989,15 @@ ScriptedImporter:
                 Directory.CreateDirectory(dstDir);
                 var dstPath = Path.Combine(dstDir, "scripts.json");
                 File.Copy(srcPath, dstPath, overwrite: true);
+
+                // フォールバック用: Resources にもコピー
+                var resourcesDir = Path.Combine(Application.dataPath, "Resources");
+                Directory.CreateDirectory(resourcesDir);
+                var resourcesPath = Path.Combine(resourcesDir, "ArsistScripts.json");
+                File.Copy(srcPath, resourcesPath, overwrite: true);
+
                 AssetDatabase.Refresh();
-                Debug.Log($"[Arsist] ✅ scripts.json copied to StreamingAssets/ArsistScripts/");
+                Debug.Log($"[Arsist] ✅ scripts.json copied to StreamingAssets/ArsistScripts/ and Resources/ArsistScripts.json");
             }
             catch (Exception e)
             {

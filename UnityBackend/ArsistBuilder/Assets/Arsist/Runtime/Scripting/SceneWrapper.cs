@@ -288,6 +288,200 @@ namespace Arsist.Runtime.Scripting
         }
 
         // ========================================
+        // PropertySystem (汎用BlendShape・ボーン制御)
+        // ========================================
+
+        /// <summary>
+        /// BlendShape（表情）の値を設定（VRM等の表情制御）
+        /// VRMExpressionController → PropertyController → BlendShape直接検索 の優先順で処理
+        /// </summary>
+        public void setBlendShapeWeight(string id, string blendShapeName, float value)
+        {
+            var obj = GetObject(id);
+            if (obj == null) return;
+
+            // 1. VRMExpressionController を試す（最優先）
+            var expressionController = obj.GetComponent<Arsist.Runtime.VRM.VRMExpressionController>();
+            if (expressionController != null && expressionController.enabled)
+            {
+                if (expressionController.SetExpression(blendShapeName, value))
+                {
+                    return;  // 成功したら終了
+                }
+            }
+
+            // 2. PropertyController を試す
+            var propertyController = obj.GetComponent<Arsist.Runtime.Scene.PropertyController>();
+            if (propertyController != null)
+            {
+                propertyController.SetBlendShapeWeight(blendShapeName, value);
+                return;  // 成功したら終了
+            }
+
+            // 3. Fallback: BlendShape 直接検索
+            var skinnedMeshes = obj.GetComponentsInChildren<SkinnedMeshRenderer>();
+            foreach (var smr in skinnedMeshes)
+            {
+                if (smr == null || smr.sharedMesh == null) continue;
+                int index = smr.sharedMesh.GetBlendShapeIndex(blendShapeName);
+                if (index >= 0)
+                {
+                    smr.SetBlendShapeWeight(index, Mathf.Clamp(value, 0f, 100f));
+                    return;  // 成功したら終了
+                }
+            }
+
+            Debug.LogWarning($"[SceneWrapper] BlendShape '{blendShapeName}' not found on object '{id}'");
+        }
+
+        /// <summary>
+        /// すべてのBlendShapeをリセット
+        /// VRMExpressionController → PropertyController → BlendShape直接処理 の優先順
+        /// </summary>
+        public void resetAllBlendShapes(string id)
+        {
+            var obj = GetObject(id);
+            if (obj == null) return;
+
+            // 1. VRMExpressionController を試す
+            var expressionController = obj.GetComponent<Arsist.Runtime.VRM.VRMExpressionController>();
+            if (expressionController != null && expressionController.enabled)
+            {
+                expressionController.ResetAllExpressions();
+                return;
+            }
+
+            // 2. PropertyController を試す
+            var propertyController = obj.GetComponent<Arsist.Runtime.Scene.PropertyController>();
+            if (propertyController != null)
+            {
+                propertyController.ResetAllBlendShapes();
+                return;
+            }
+
+            // 3. Fallback: BlendShape 直接リセット
+            var skinnedMeshes = obj.GetComponentsInChildren<SkinnedMeshRenderer>();
+            foreach (var smr in skinnedMeshes)
+            {
+                if (smr == null || smr.sharedMesh == null) continue;
+                int blendCount = smr.sharedMesh.blendShapeCount;
+                for (int i = 0; i < blendCount; i++)
+                {
+                    smr.SetBlendShapeWeight(i, 0f);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Humanoidボーンの回転を設定
+        /// VRMBoneController → PropertyController → Animator の優先順で処理
+        /// </summary>
+        public void setBoneRotation(string id, string boneName, float pitch, float yaw, float roll)
+        {
+            var obj = GetObject(id);
+            if (obj == null) return;
+
+            // 1. 新しい VRMBoneController を試す（最優先）
+            var boneController = obj.GetComponent<Arsist.Runtime.VRM.VRMBoneController>();
+            if (boneController != null && boneController.enabled)
+            {
+                if (boneController.SetBoneRotation(boneName, pitch, yaw, roll))
+                {
+                    return;  // 成功したら終了
+                }
+            }
+
+            // 2. PropertyController を試す
+            var propertyController = obj.GetComponent<Arsist.Runtime.Scene.PropertyController>();
+            if (propertyController != null)
+            {
+                propertyController.SetBoneRotation(boneName, pitch, yaw, roll);
+                return;  // 成功したら終了
+            }
+
+            // 3. Fallback: Animator 直接操作
+            var animator = obj.GetComponent<Animator>();
+            if (animator != null && animator.isHuman)
+            {
+                if (System.Enum.TryParse<HumanBodyBones>(boneName, out var bone))
+                {
+                    var boneTransform = animator.GetBoneTransform(bone);
+                    if (boneTransform != null)
+                    {
+                        boneTransform.localRotation = Quaternion.Euler(pitch, yaw, roll);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// ボーンの相対回転
+        /// VRMBoneController → PropertyController → Animator の優先順で処理
+        /// </summary>
+        public void rotateBone(string id, string boneName, float deltaPitch, float deltaYaw, float deltaRoll)
+        {
+            var obj = GetObject(id);
+            if (obj == null) return;
+
+            // 1. VRMBoneController を試す（最優先）
+            var boneController = obj.GetComponent<Arsist.Runtime.VRM.VRMBoneController>();
+            if (boneController != null && boneController.enabled)
+            {
+                if (boneController.RotateBoneDelta(boneName, deltaPitch, deltaYaw, deltaRoll))
+                {
+                    return;  // 成功したら終了
+                }
+            }
+
+            // 2. PropertyController を試す
+            var propertyController = obj.GetComponent<Arsist.Runtime.Scene.PropertyController>();
+            if (propertyController != null)
+            {
+                propertyController.RotateBoneDelta(boneName, deltaPitch, deltaYaw, deltaRoll);
+                return;  // 成功したら終了
+            }
+
+            // 3. Fallback: Animator 直接操作
+            var animator = obj.GetComponent<Animator>();
+            if (animator != null && animator.isHuman)
+            {
+                if (System.Enum.TryParse<HumanBodyBones>(boneName, out var bone))
+                {
+                    var boneTransform = animator.GetBoneTransform(bone);
+                    if (boneTransform != null)
+                    {
+                        boneTransform.Rotate(deltaPitch, deltaYaw, deltaRoll);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// すべてのボーンをリセット
+        /// VRMBoneController → PropertyController の優先順で処理
+        /// </summary>
+        public void resetAllBones(string id)
+        {
+            var obj = GetObject(id);
+            if (obj == null) return;
+
+            // 1. VRMBoneController を試す
+            var boneController = obj.GetComponent<Arsist.Runtime.VRM.VRMBoneController>();
+            if (boneController != null && boneController.enabled)
+            {
+                boneController.ResetAllBones();
+                return;
+            }
+
+            // 2. PropertyController を試す
+            var propertyController = obj.GetComponent<Arsist.Runtime.Scene.PropertyController>();
+            if (propertyController != null)
+            {
+                propertyController.ResetAllBones();
+            }
+        }
+
+        // ========================================
         // Transform 状態データクラス
         // ========================================
 

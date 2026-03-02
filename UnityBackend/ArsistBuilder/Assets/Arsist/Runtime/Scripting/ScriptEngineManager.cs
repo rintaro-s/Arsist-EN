@@ -162,6 +162,22 @@ namespace Arsist.Runtime.Scripting
                 if (req.result != UnityWebRequest.Result.Success)
                 {
                     Debug.LogError($"[Arsist] scripts.json load failed: {req.error} (url: {url})");
+
+                    // フォールバック: Resources/ArsistScripts.json を読む
+                    var fallback = Resources.Load<TextAsset>("ArsistScripts");
+                    if (fallback != null && !string.IsNullOrEmpty(fallback.text))
+                    {
+                        Debug.Log("[Arsist] Falling back to Resources/ArsistScripts");
+                        try
+                        {
+                            ParseAndStoreScripts(fallback.text);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"[Arsist] Failed to parse fallback scripts: {ex.Message}");
+                        }
+                    }
+
                     _scriptsLoaded = true;
                     yield break;
                 }
@@ -171,31 +187,7 @@ namespace Arsist.Runtime.Scripting
 
                 try
                 {
-                    var bundle = JObject.Parse(json);
-                    var arr = bundle["scripts"] as JArray;
-                    if (arr == null)
-                    {
-                        Debug.LogWarning("[Arsist] scripts.json has no 'scripts' array.");
-                        _scriptsLoaded = true;
-                        yield break;
-                    }
-
-                    var list = new List<ScriptEntry>();
-                    foreach (JObject item in arr)
-                    {
-                        var entry = new ScriptEntry
-                        {
-                            id = item["id"]?.ToString() ?? "(unnamed)",
-                            trigger = item["trigger"] as JObject,
-                            code = item["code"]?.ToString() ?? "",
-                            enabled = item["enabled"]?.Value<bool>() ?? true,
-                        };
-                        if (entry.enabled && !string.IsNullOrEmpty(entry.code))
-                            list.Add(entry);
-                    }
-
-                    _loadedScripts = list.ToArray();
-                    Debug.Log($"[Arsist] Loaded {_loadedScripts.Length} script(s) from StreamingAssets.");
+                    ParseAndStoreScripts(json);
                 }
                 catch (Exception ex)
                 {
@@ -204,6 +196,35 @@ namespace Arsist.Runtime.Scripting
             }
 
             _scriptsLoaded = true;
+        }
+
+        private void ParseAndStoreScripts(string json)
+        {
+            var bundle = JObject.Parse(json);
+            var arr = bundle["scripts"] as JArray;
+            if (arr == null)
+            {
+                Debug.LogWarning("[Arsist] scripts.json has no 'scripts' array.");
+                _loadedScripts = Array.Empty<ScriptEntry>();
+                return;
+            }
+
+            var list = new List<ScriptEntry>();
+            foreach (JObject item in arr)
+            {
+                var entry = new ScriptEntry
+                {
+                    id = item["id"]?.ToString() ?? "(unnamed)",
+                    trigger = item["trigger"] as JObject,
+                    code = item["code"]?.ToString() ?? "",
+                    enabled = item["enabled"]?.Value<bool>() ?? true,
+                };
+                if (entry.enabled && !string.IsNullOrEmpty(entry.code))
+                    list.Add(entry);
+            }
+
+            _loadedScripts = list.ToArray();
+            Debug.Log($"[Arsist] Loaded {_loadedScripts.Length} script(s).");
         }
 
         /// <summary>

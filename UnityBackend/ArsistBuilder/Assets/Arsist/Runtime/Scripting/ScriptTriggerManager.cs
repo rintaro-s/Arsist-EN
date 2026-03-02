@@ -4,6 +4,7 @@
 // ==============================================
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Arsist.Runtime.Scripting
@@ -20,6 +21,7 @@ namespace Arsist.Runtime.Scripting
     public class ScriptTriggerManager : MonoBehaviour
     {
         public static ScriptTriggerManager Instance { get; private set; }
+        private readonly List<(string id, string code)> _updateScripts = new List<(string id, string code)>();
 
         private void Awake()
         {
@@ -48,6 +50,29 @@ namespace Arsist.Runtime.Scripting
             Debug.Log("[Arsist] ScriptTriggerManager: starting async script load...");
             yield return engine.StartCoroutine(engine.LoadScriptsAsync());
 
+            // VRM ロード完了を待機（VRM がある場合のみ）
+            if (Arsist.Runtime.VRM.ArsistVRMLoaderTask.PendingCount > 0)
+            {
+                Debug.Log($"[Arsist] ScriptTriggerManager: waiting for {Arsist.Runtime.VRM.ArsistVRMLoaderTask.PendingCount} VRM(s) to load...");
+                float vrmTimeout = 30f;
+                float vrmElapsed = 0f;
+                while (Arsist.Runtime.VRM.ArsistVRMLoaderTask.PendingCount > 0 && vrmElapsed < vrmTimeout)
+                {
+                    vrmElapsed += Time.unscaledDeltaTime;
+                    yield return null;
+                }
+                if (vrmElapsed >= vrmTimeout)
+                {
+                    Debug.LogWarning("[Arsist] ScriptTriggerManager: VRM load timeout. Proceeding with script execution.");
+                }
+                else
+                {
+                    Debug.Log($"[Arsist] ScriptTriggerManager: All VRM(s) loaded ({vrmElapsed:F1}s)");
+                }
+                // 追加の1フレーム待機 - VRM 登録処理の完了を保証
+                yield return null;
+            }
+
             var scripts = engine.GetLoadedScripts();
             Debug.Log($"[Arsist] ScriptTriggerManager: {scripts.Length} script(s) to register.");
 
@@ -60,7 +85,13 @@ namespace Arsist.Runtime.Scripting
                 {
                     case "awake":
                     case "start":
+                    case "onstart":
                         StartCoroutine(RunOnce(script.id, script.code));
+                        break;
+
+                    case "onupdate":
+                        _updateScripts.Add((script.id, script.code));
+                        Debug.Log($"[Arsist] Script '{script.id}' registered for onUpdate");
                         break;
 
                     case "interval":
@@ -81,6 +112,20 @@ namespace Arsist.Runtime.Scripting
                         Debug.LogWarning($"[Arsist] Script '{script.id}': unknown trigger type '{triggerType}'");
                         break;
                 }
+            }
+        }
+
+        private void Update()
+        {
+            if (_updateScripts.Count == 0) return;
+
+            var engine = ScriptEngineManager.Instance;
+            if (engine == null) return;
+
+            for (int i = 0; i < _updateScripts.Count; i++)
+            {
+                var entry = _updateScripts[i];
+                engine.ExecuteScript(entry.id, entry.code);
             }
         }
 

@@ -104,6 +104,26 @@ function pickFirstExisting(paths) {
   });
 
   console.log('[Arsist] Build result:', result);
+  
+  // ビルド失敗時の詳細ログ出力
+  if (!result.success && logFilePath && fs.existsSync(logFilePath)) {
+    try {
+      const logContent = fs.readFileSync(logFilePath, 'utf8');
+      const errorLines = logContent.split('\n').filter(line => 
+        line.includes('error') || line.includes('Error') || 
+        line.includes('failed') || line.includes('compiler') ||
+        line.includes('Aborting')
+      );
+      if (errorLines.length > 0) {
+        console.error('[Arsist] ===== Build Error Details =====');
+        errorLines.slice(-30).forEach(line => console.error(line));
+        console.error('[Arsist] ===== End of Error Details =====');
+      }
+    } catch (logErr) {
+      console.error('[Arsist] Could not read build log:', logErr.message);
+    }
+  }
+  
   process.exit(result.success ? 0 : 1);
 })().catch((e) => {
   console.error('[Arsist] Fatal:', e);

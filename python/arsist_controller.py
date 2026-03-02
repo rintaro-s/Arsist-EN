@@ -20,13 +20,15 @@ from typing import Optional, Callable
 class ArsistRemoteController:
     """Arsist デバイスをリモート制御するクライアント"""
     
-    def __init__(self, device_ip: str, port: int = 8765):
+    def __init__(self, device_ip: str, port: int = 8765, password: str = None):
         """
         Args:
             device_ip: デバイスの IP アドレス (例: "192.168.1.100")
             port: WebSocket ポート (デフォルト: 8765)
+            password: 認証パスワード。None なら認証なし
         """
         self.url = f"ws://{device_ip}:{port}"
+        self.password = password
         self.ws: Optional[websocket.WebSocket] = None
         self.connected = False
         
@@ -78,6 +80,8 @@ class ArsistRemoteController:
             "method": method,
             "parameters": params
         }
+        if self.password:
+            command["authToken"] = self.password
         
         try:
             self.ws.send(json.dumps(command))

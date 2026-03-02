@@ -4,10 +4,11 @@
  * UI: Element Inspector (スタイル, Bind, レイアウト)
  * DataFlow: Source / Transform 設定
  */
+import React, { useState } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { Vector3, UIElement, UIStyle, DataSourceDefinition, TransformDefinition } from '../../../shared/types';
-import { Box, Compass, Layout, Database, Activity, Wifi } from 'lucide-react';
+import { Box, Compass, Layout, Database, Activity, Wifi, User } from 'lucide-react';
 import { ScriptInspector } from '../viewport/ScriptEditor';
 
 export function RightPanel() {
@@ -224,11 +225,144 @@ function ObjectInspector() {
           </div>
         )}
 
+        {/* VRM Capabilities (VRMタイプの場合のみ表示) */}
+        {obj.type === 'vrm' && <VRMCapabilitiesPanel assetId={obj.assetId} modelPath={obj.modelPath} />}
+
         {/* Delete */}
         <button onClick={() => removeObject(obj.id)} className="btn btn-ghost text-arsist-error text-xs w-full justify-center">
           削除
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════
+   VRM Capabilities Panel
+   ════════════════════════════════════════ */
+
+/** VRM固有の情報: 表情・ボーン・リモートコントロール用ヒント */
+function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelPath?: string }) {
+  const [expanded, setExpanded] = React.useState<{ expressions: boolean; bones: boolean }>({ expressions: false, bones: false });
+
+  // VRM standard expressions (UniVRM 0.x / 1.0)
+  const vrmExpressions = [
+    'Joy', 'Angry', 'Sorrow', 'Fun', 'Blink', 'BlinkLeft', 'BlinkRight',
+    'A', 'I', 'U', 'E', 'O', 'Surprised', 'Neutral',
+  ];
+  const humanoidBones = [
+    'Hips', 'Spine', 'Chest', 'UpperChest', 'Neck', 'Head',
+    'LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand',
+    'RightShoulder', 'RightUpperArm', 'RightLowerArm', 'RightHand',
+    'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes',
+    'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes',
+  ];
+
+  const fileName = modelPath ? modelPath.split(/[/\\]/).pop() : undefined;
+
+  return (
+    <div className="p-3 rounded-lg border border-purple-500/30 bg-purple-900/10 space-y-3">
+      {/* Header */}
+      <div className="flex items-center gap-1.5">
+        <User size={14} className="text-purple-400" />
+        <label className="text-xs font-semibold text-purple-400">VRM 情報</label>
+      </div>
+
+      {/* Model file */}
+      {fileName && (
+        <div className="text-[9px] text-arsist-muted">
+          モデル: <span className="font-mono text-arsist-text">{fileName}</span>
+        </div>
+      )}
+
+      {/* Asset ID reminder */}
+      {assetId ? (
+        <div className="text-[9px] text-[#4CAF50]">
+          制御ID: <span className="font-mono font-bold">{assetId}</span>
+        </div>
+      ) : (
+        <div className="text-[9px] text-[#FF9800]">
+          ⚠ Asset ID を設定するとスクリプトから制御できます
+        </div>
+      )}
+
+      {/* Expressions section */}
+      <div>
+        <button
+          className="flex items-center gap-1 text-xs text-arsist-text hover:text-arsist-accent w-full text-left"
+          onClick={() => setExpanded(prev => ({ ...prev, expressions: !prev.expressions }))}
+        >
+          <span className="text-[10px]">{expanded.expressions ? '▼' : '▶'}</span>
+          <span className="font-semibold">表情 (Expressions)</span>
+          <span className="text-[10px] text-arsist-muted ml-auto">{vrmExpressions.length} 標準</span>
+        </button>
+        {expanded.expressions && (
+          <div className="mt-1.5 space-y-1">
+            <div className="flex flex-wrap gap-1">
+              {vrmExpressions.map(expr => (
+                <span key={expr} className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-arsist-surface border border-arsist-border text-arsist-muted">
+                  {expr}
+                </span>
+              ))}
+            </div>
+            {assetId && (
+              <p className="text-[9px] text-[#2196F3] mt-1">
+                <span className="font-mono bg-[#2d2d2d] px-1 rounded">vrm.setExpression('{assetId}', 'Joy', 100)</span>
+              </p>
+            )}
+            <p className="text-[9px] text-arsist-muted">
+              ※ 実際の表情はモデルに依存します。ビルド後にクエリAPIで正確な一覧を取得できます
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Bones section */}
+      <div>
+        <button
+          className="flex items-center gap-1 text-xs text-arsist-text hover:text-arsist-accent w-full text-left"
+          onClick={() => setExpanded(prev => ({ ...prev, bones: !prev.bones }))}
+        >
+          <span className="text-[10px]">{expanded.bones ? '▼' : '▶'}</span>
+          <span className="font-semibold">ボーン (Humanoid Bones)</span>
+          <span className="text-[10px] text-arsist-muted ml-auto">{humanoidBones.length} 主要</span>
+        </button>
+        {expanded.bones && (
+          <div className="mt-1.5 space-y-1">
+            <div className="flex flex-wrap gap-1">
+              {humanoidBones.map(bone => (
+                <span key={bone} className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-arsist-surface border border-arsist-border text-arsist-muted">
+                  {bone}
+                </span>
+              ))}
+            </div>
+            {assetId && (
+              <p className="text-[9px] text-[#2196F3] mt-1">
+                <span className="font-mono bg-[#2d2d2d] px-1 rounded">vrm.setBoneRotation('{assetId}', 'Head', 15, 0, 0)</span>
+              </p>
+            )}
+            <p className="text-[9px] text-arsist-muted">
+              ※ VRM 0.x / 1.0 両対応。ビルド後にクエリAPIで正確な一覧を取得できます
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Python remote control snippet */}
+      {assetId && (
+        <div className="mt-2 p-2 rounded bg-[#1e1e1e] border border-arsist-border">
+          <div className="text-[9px] text-arsist-muted mb-1">Python リモート制御サンプル:</div>
+          <pre className="text-[9px] font-mono text-[#9CDCFE] leading-relaxed whitespace-pre-wrap">
+{`from python.Control import ArsistControl
+ctrl = ArsistControl("127.0.0.1", password="0000")
+ctrl.connect()
+caps = ctrl.get_capabilities("${assetId}")
+ctrl.set_expression("${assetId}", "Joy", 100)
+ctrl.set_bone_rotation("${assetId}", "Head", 15, 0, 0)
+ctrl.disconnect()`}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

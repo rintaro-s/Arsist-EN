@@ -33,8 +33,9 @@ import argparse
 class ArsistControl:
     """Arsist Remote Controller with Query API"""
     
-    def __init__(self, device_ip: str, port: int = 8765, verbose: bool = False):
+    def __init__(self, device_ip: str, port: int = 8765, password: str = None, verbose: bool = False):
         self.url = f"ws://{device_ip}:{port}"
+        self.password = password
         self.ws: Optional[websocket.WebSocket] = None
         self.connected = False
         self.verbose = verbose
@@ -119,6 +120,8 @@ class ArsistControl:
             "requestId": request_id,
             "parameters": params
         }
+        if self.password:
+            cmd["authToken"] = self.password
         
         if self.verbose:
             print(f"[QUERY] {request_id[:8]}: {cmd_type}/{method}")
@@ -149,6 +152,8 @@ class ArsistControl:
             "method": method,
             "parameters": params
         }
+        if self.password:
+            cmd["authToken"] = self.password
         
         if self.verbose:
             print(f"[COMMAND] {cmd_type}/{method}")
@@ -171,10 +176,10 @@ class ArsistControl:
         """Get object/VRM state"""
         return self.query("query", "getState", object_id=object_id)
     
-    def ping(self) -> str:
+    def ping(self) -> dict:
         """Ping device"""
         result = self.query("query", "ping", timeout=5.0)
-        return result.get("message", "No response")
+        return result
     
     # ========================================
     # VRM Control (Fire-and-forget)
@@ -196,6 +201,22 @@ class ArsistControl:
                          pitch=pitch,
                          yaw=yaw,
                          roll=roll)
+    
+    def set_position(self, object_id: str, x: float, y: float, z: float):
+        """Set object position"""
+        self.send_command("scene", "setPosition", id=object_id, x=x, y=y, z=z)
+    
+    def set_rotation(self, object_id: str, pitch: float, yaw: float, roll: float):
+        """Set object rotation"""
+        self.send_command("scene", "setRotation", id=object_id, pitch=pitch, yaw=yaw, roll=roll)
+    
+    def set_scale(self, object_id: str, x: float, y: float, z: float):
+        """Set object scale"""
+        self.send_command("scene", "setScale", id=object_id, x=x, y=y, z=z)
+    
+    def set_visible(self, object_id: str, visible: bool):
+        """Set object visibility"""
+        self.send_command("scene", "setVisible", id=object_id, visible=visible)
     
     def reset_expressions(self, avatar_id: str):
         """Reset all expressions"""
@@ -354,11 +375,12 @@ def main():
     parser.add_argument("--list-ids", action="store_true", help="List VRM IDs")
     parser.add_argument("--avatar-id", default="avatar", help="Target avatar ID")
     parser.add_argument("--generate-sample", action="store_true", help="Generate sample script")
+    parser.add_argument("--password", default="0000", help="Authentication password (default: 0000)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
     
-    ctrl = ArsistControl(args.device, verbose=args.verbose)
+    ctrl = ArsistControl(args.device, password=args.password, verbose=args.verbose)
     if not ctrl.connect():
         print("Failed to connect to device")
         return

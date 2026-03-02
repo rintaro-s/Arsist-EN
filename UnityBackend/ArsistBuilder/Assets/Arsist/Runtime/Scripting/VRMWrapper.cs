@@ -56,24 +56,37 @@ namespace Arsist.Runtime.Scripting
             var vrmObj = GetVRM(id);
             if (vrmObj == null) return;
 
+            // 1. VRMBoneController を試す
+            var boneController = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMBoneController>();
+            if (boneController != null)
+            {
+                bool success = boneController.SetBoneRotation(boneName, pitch, yaw, roll);
+                if (success)
+                {
+                    Debug.Log($"[VRMWrapper] Bone '{boneName}' rotated via VRMBoneController");
+                    return;
+                }
+            }
+
+            // 2. Fallback: 直接 Animator でボーン回転
             var animator = vrmObj.GetComponent<Animator>();
             if (animator == null || !animator.isHuman)
             {
-                Debug.LogWarning($"[VRMWrapper] No Humanoid Animator found on VRM '{id}'");
+                Debug.LogWarning($"[VRMWrapper] No Humanoid Animator found on VRM '{id}'. Bone '{boneName}' not rotated.");
                 return;
             }
 
-            // ボーン名をHumanBodyBonesに変換
             if (System.Enum.TryParse<HumanBodyBones>(boneName, out var bone))
             {
                 Transform boneTransform = animator.GetBoneTransform(bone);
                 if (boneTransform != null)
                 {
                     boneTransform.localRotation = Quaternion.Euler(pitch, yaw, roll);
+                    Debug.Log($"[VRMWrapper] Bone '{boneName}' rotated via Animator (fallback)");
                 }
                 else
                 {
-                    Debug.LogWarning($"[VRMWrapper] Bone '{boneName}' not found on VRM '{id}'");
+                    Debug.LogWarning($"[VRMWrapper] Bone '{boneName}' transform not found on Animator");
                 }
             }
             else
@@ -90,16 +103,22 @@ namespace Arsist.Runtime.Scripting
             var vrmObj = GetVRM(id);
             if (vrmObj == null) return;
 
+            // VRMBoneController 経由で LateUpdate に委ねる（Animator 上書き対策）
+            var boneController = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMBoneController>();
+            if (boneController != null)
+            {
+                boneController.RotateBoneDelta(boneName, deltaPitch, deltaYaw, deltaRoll);
+                return;
+            }
+
+            // Fallback: Animator 直接（Animator なし環境向け）
             var animator = vrmObj.GetComponent<Animator>();
             if (animator == null || !animator.isHuman) return;
-
             if (System.Enum.TryParse<HumanBodyBones>(boneName, out var bone))
             {
                 Transform boneTransform = animator.GetBoneTransform(bone);
                 if (boneTransform != null)
-                {
                     boneTransform.Rotate(deltaPitch, deltaYaw, deltaRoll);
-                }
             }
         }
 
@@ -117,7 +136,19 @@ namespace Arsist.Runtime.Scripting
             var vrmObj = GetVRM(id);
             if (vrmObj == null) return;
 
-            // VRMモデルのSkinnedMeshRendererを検索
+            // 1. VRMExpressionController を試す
+            var expressionController = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMExpressionController>();
+            if (expressionController != null)
+            {
+                bool success = expressionController.SetExpression(expressionName, value);
+                if (success)
+                {
+                    Debug.Log($"[VRMWrapper] Expression '{expressionName}' set via VRMExpressionController");
+                    return;
+                }
+            }
+
+            // 2. Fallback: 直接 BlendShape を設定
             var skinnedMeshes = vrmObj.GetComponentsInChildren<SkinnedMeshRenderer>();
             bool found = false;
 
@@ -126,12 +157,12 @@ namespace Arsist.Runtime.Scripting
                 var mesh = smr.sharedMesh;
                 if (mesh == null) continue;
 
-                // BlendShape名でインデックスを検索
                 int blendShapeIndex = mesh.GetBlendShapeIndex(expressionName);
                 if (blendShapeIndex >= 0)
                 {
                     smr.SetBlendShapeWeight(blendShapeIndex, Mathf.Clamp(value, 0f, 100f));
                     found = true;
+                    Debug.Log($"[VRMWrapper] Expression '{expressionName}' set via BlendShape (fallback)");
                 }
             }
 
@@ -291,7 +322,18 @@ namespace Arsist.Runtime.Scripting
             // --- Humanoid ボーン一覧 ---
             var animator = vrmObj.GetComponent<Animator>();
             caps.HasHumanoid = animator != null && animator.isHuman;
-            if (caps.HasHumanoid)
+
+            // VRMBoneController を使ってボーン一覧を取得（名前ベースフォールバック対応）
+            var boneController = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMBoneController>();
+            if (boneController != null && boneController.enabled)
+            {
+                caps.HumanoidBones = boneController.GetAvailableBones();
+                if (caps.HumanoidBones.Count > 0)
+                {
+                    caps.HasHumanoid = true;  // 名前ベースでもボーン制御可能
+                }
+            }
+            else if (caps.HasHumanoid)
             {
                 foreach (HumanBodyBones bone in System.Enum.GetValues(typeof(HumanBodyBones)))
                 {

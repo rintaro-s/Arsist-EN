@@ -129,7 +129,7 @@ namespace Arsist.Runtime.Network
         private void HandleClient(TcpClient client)
         {
             NetworkStream stream = client.GetStream();
-            byte[] buffer = new byte[4096];
+            byte[] buffer = new byte[65536];  // 64KB バッファ（大きなメッセージに対応）
 
             try
             {
@@ -276,15 +276,29 @@ namespace Arsist.Runtime.Network
                 object responseData = null;
                 string errorMsg = null;
 
-                switch (cmd.type)
+                var commandType = cmd.type?.ToLowerInvariant();
+                var methodName = cmd.method?.ToLowerInvariant();
+                cmd.type = commandType;
+                cmd.method = methodName;
+
+                switch (commandType)
                 {
                     case "scene":
+                    case "transform":
                         ExecuteSceneCommand(scriptEngine.SceneWrapper, cmd);
                         responseData = new { ok = true };
                         break;
                     case "vrm":
-                        ExecuteVRMCommand(scriptEngine.VRMWrapper, cmd);
-                        responseData = new { ok = true };
+                        // 互換: vrm タイプでクエリ系メソッドが来た場合も応答を返す
+                        if (methodName == "getcapabilities" || methodName == "getinfo" || methodName == "getids" || methodName == "getbones" || methodName == "getexpressions" || methodName == "getstate" || methodName == "ping")
+                        {
+                            responseData = ExecuteQueryCommand(scriptEngine, cmd, out errorMsg);
+                        }
+                        else
+                        {
+                            ExecuteVRMCommand(scriptEngine.VRMWrapper, scriptEngine.SceneWrapper, cmd);
+                            responseData = new { ok = true };
+                        }
                         break;
                     case "query":
                         responseData = ExecuteQueryCommand(scriptEngine, cmd, out errorMsg);
@@ -299,6 +313,11 @@ namespace Arsist.Runtime.Network
                         break;
                 }
 
+                if (string.IsNullOrEmpty(errorMsg))
+                {
+                    Debug.Log($"[ArsistWebSocket] Command accepted: type={cmd.type}, method={cmd.method}, requestId={cmd.requestId}");
+                }
+
                 // requestId があればレスポンス送信
                 if (!string.IsNullOrEmpty(cmd.requestId))
                 {
@@ -309,6 +328,18 @@ namespace Arsist.Runtime.Network
             catch (Exception ex)
             {
                 Debug.LogError($"[ArsistWebSocket] Command processing error: {ex.Message}");
+                try
+                {
+                    var cmd = JsonConvert.DeserializeObject<RemoteCommand>(jsonCommand);
+                    if (cmd != null && !string.IsNullOrEmpty(cmd.requestId))
+                    {
+                        SendWebSocketFrame(responseStream, BuildResponse(cmd.requestId, false, null, ex.Message));
+                    }
+                }
+                catch
+                {
+                    // ignore secondary parse error
+                }
             }
         }
 
@@ -316,34 +347,38 @@ namespace Arsist.Runtime.Network
         private object ExecuteQueryCommand(Scripting.ScriptEngineManager scriptEngine, RemoteCommand cmd, out string errorMsg)
         {
             errorMsg = null;
-            var p = cmd.parameters;
+            var p = cmd.parameters ?? new CommandParameters();
 
+            // NOTE: cmd.method は ProcessCommand で既に ToLowerInvariant() 済み
             switch (cmd.method)
             {
-                case "getInfo":
-                    return scriptEngine.VRMWrapper.GetCapabilities(p.id);
+                case "getinfo":
+                case "getcapabilities":
+                    return scriptEngine.VRMWrapper.GetCapabilities(p.id ?? p.avatar_id);
 
-                case "getExpressions":
+                case "getexpressions":
                 {
-                    var caps = scriptEngine.VRMWrapper.GetCapabilities(p.id);
-                    return new { id = p.id, expressions = caps.Expressions, count = caps.Expressions.Count };
+                    var capsId = p.id ?? p.avatar_id;
+                    var caps = scriptEngine.VRMWrapper.GetCapabilities(capsId);
+                    return new { id = capsId, expressions = caps.Expressions, count = caps.Expressions.Count };
                 }
 
-                case "getBones":
+                case "getbones":
                 {
-                    var caps = scriptEngine.VRMWrapper.GetCapabilities(p.id);
-                    return new { id = p.id, bones = caps.HumanoidBones, hasHumanoid = caps.HasHumanoid, count = caps.HumanoidBones.Count };
+                    var capsId = p.id ?? p.avatar_id;
+                    var caps = scriptEngine.VRMWrapper.GetCapabilities(capsId);
+                    return new { id = capsId, bones = caps.HumanoidBones, hasHumanoid = caps.HasHumanoid, count = caps.HumanoidBones.Count };
                 }
 
-                case "getIds":
+                case "getids":
                     return new
                     {
                         vrmIds   = scriptEngine.VRMWrapper.GetRegisteredIds(),
                         sceneIds = scriptEngine.SceneWrapper.GetRegisteredIds()
                     };
 
-                case "getState":
-                    return scriptEngine.SceneWrapper.GetState(p.id);
+                case "getstate":
+                    return scriptEngine.SceneWrapper.GetState(p.id ?? p.object_id);
 
                 case "ping":
                     return new { pong = true, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
@@ -416,38 +451,46 @@ namespace Arsist.Runtime.Network
 
         private void ExecuteSceneCommand(Scripting.SceneWrapper scene, RemoteCommand cmd)
         {
-            var p = cmd.parameters;
+            var p = cmd.parameters ?? new CommandParameters();
 
             switch (cmd.method)
             {
                 case "setPosition":
+                case "setposition":
                     scene.setPosition(p.id, p.x ?? 0, p.y ?? 0, p.z ?? 0);
                     break;
                 case "move":
                     scene.move(p.id, p.x ?? 0, p.y ?? 0, p.z ?? 0);
                     break;
                 case "setRotation":
-                    scene.setRotation(p.id, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
+                case "setrotation":
+                    scene.setRotation(p.id, p.pitch ?? p.x ?? 0, p.yaw ?? p.y ?? 0, p.roll ?? p.z ?? 0);
                     break;
                 case "rotate":
-                    scene.rotate(p.id, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
+                    scene.rotate(p.id, p.pitch ?? p.x ?? 0, p.yaw ?? p.y ?? 0, p.roll ?? p.z ?? 0);
                     break;
                 case "setScale":
+                case "setscale":
                     scene.setScale(p.id, p.x ?? 1, p.y ?? 1, p.z ?? 1);
                     break;
                 case "setUniformScale":
+                case "setuniformscale":
                     scene.setUniformScale(p.id, p.scale ?? 1);
                     break;
                 case "playAnimation":
+                case "playanimation":
                     scene.playAnimation(p.id, p.animName);
                     break;
                 case "stopAnimation":
+                case "stopanimation":
                     scene.stopAnimation(p.id);
                     break;
                 case "setAnimationSpeed":
+                case "setanimationspeed":
                     scene.setAnimationSpeed(p.id, p.speed ?? 1);
                     break;
                 case "setVisible":
+                case "setvisible":
                     scene.setVisible(p.id, p.visible ?? true);
                     break;
                 default:
@@ -456,32 +499,42 @@ namespace Arsist.Runtime.Network
             }
         }
 
-        private void ExecuteVRMCommand(Scripting.VRMWrapper vrm, RemoteCommand cmd)
+        private void ExecuteVRMCommand(Scripting.VRMWrapper vrm, Scripting.SceneWrapper scene, RemoteCommand cmd)
         {
-            var p = cmd.parameters;
-
+            var p = cmd.parameters ?? new CommandParameters();
+            
+            // VRMコマンド → 汎用SceneWrapper経由で処理
+            // PropertyControllerが有効な場合は自動的にそちらを使用
             switch (cmd.method)
             {
                 case "setBoneRotation":
-                    vrm.setBoneRotation(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
+                case "setbonerotation":
+                    // scene経由でPropertyControllerを使用
+                    scene.setBoneRotation(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
                     break;
                 case "rotateBone":
-                    vrm.rotateBone(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
+                case "rotatebone":
+                    scene.rotateBone(p.id, p.boneName, p.pitch ?? 0, p.yaw ?? 0, p.roll ?? 0);
                     break;
                 case "setExpression":
-                    vrm.setExpression(p.id, p.expressionName, p.value ?? 0);
+                case "setexpression":
+                    scene.setBlendShapeWeight(p.id, p.expressionName ?? p.name, p.value ?? 0);
                     break;
                 case "resetExpressions":
-                    vrm.resetExpressions(p.id);
+                case "resetexpressions":
+                    scene.resetAllBlendShapes(p.id);
                     break;
                 case "lookAt":
+                case "lookat":
                     vrm.lookAt(p.id, p.x ?? 0, p.y ?? 0, p.z ?? 0);
                     break;
                 case "playAnimation":
-                    vrm.playAnimation(p.id, p.animName);
+                case "playanimation":
+                    scene.playAnimation(p.id, p.animName);
                     break;
                 case "setAnimationSpeed":
-                    vrm.setAnimationSpeed(p.id, p.speed ?? 1);
+                case "setanimationspeed":
+                    scene.setAnimationSpeed(p.id, p.speed ?? 1);
                     break;
                 default:
                     Debug.LogWarning($"[ArsistWebSocket] Unknown vrm method: {cmd.method}");
@@ -516,6 +569,8 @@ namespace Arsist.Runtime.Network
         private class CommandParameters
         {
             public string id;
+            public string avatar_id;       // Python互換: getCapabilities用
+            public string object_id;       // Python互換: getState用
             public float? x;
             public float? y;
             public float? z;
@@ -528,6 +583,7 @@ namespace Arsist.Runtime.Network
             public bool? visible;
             public string boneName;
             public string expressionName;
+            public string name;           // Python/legacy互換: setExpression 用
             public float? value;
             public string code;
         }

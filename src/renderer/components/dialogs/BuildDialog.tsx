@@ -23,7 +23,7 @@ const devices: DeviceOption[] = [
 ];
 
 export function BuildDialog({ onClose }: BuildDialogProps) {
-  const { project, projectPath } = useProjectStore();
+  const { project, projectPath, exportScriptBundle } = useProjectStore();
   const { 
     isBuilding, 
     buildProgress, 
@@ -211,6 +211,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         manifestData,
         scenesData: project.scenes,
         uiData: project.uiLayouts,
+        scriptsData: exportScriptBundle(),
       });
 
       if (buildResult.success) {

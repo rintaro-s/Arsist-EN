@@ -20,6 +20,18 @@ namespace Arsist.Runtime.VRM
         [SerializeField] public string vrmPath;
         [SerializeField] public string assetId;
 
+        /// <summary>
+        /// ロード中の VRM 数。ScriptTriggerManager がこの値を参照して
+        /// 全 VRM がロード完了するまでスクリプト実行を遅延する。
+        /// </summary>
+        public static int PendingCount { get; private set; }
+
+        private void Awake()
+        {
+            PendingCount++;
+            Debug.Log($"[ArsistVRMLoaderTask] Pending VRM count: {PendingCount}");
+        }
+
         private void Start()
         {
             if (string.IsNullOrEmpty(vrmPath))
@@ -69,6 +81,9 @@ namespace Arsist.Runtime.VRM
                 vrmInstance.transform.localPosition = Vector3.zero;
                 vrmInstance.transform.localRotation = Quaternion.identity;
 
+                // 向き補正: VRM0.x/1.0 混在時に子スケルトンが180度回転して逆向きになるケースを修正
+                FixVRMFacing(vrmInstance);
+
                 // 表示保証（見えない経路を潰す）
                 EnsureVRMVisible(vrmInstance);
 
@@ -79,6 +94,10 @@ namespace Arsist.Runtime.VRM
             {
                 Debug.LogError($"[ArsistVRMLoaderTask] ❌ VRM load failed: {error}");
             }
+
+            // ペンディングカウントをデクリメント
+            PendingCount = Mathf.Max(0, PendingCount - 1);
+            Debug.Log($"[ArsistVRMLoaderTask] VRM load completed. Pending count: {PendingCount}");
 
             // このコンポーネントは不要になったので削除
             Destroy(loaderInstance);
@@ -99,18 +118,119 @@ namespace Arsist.Runtime.VRM
             var scriptEngine = ScriptEngineManager.Instance;
             if (scriptEngine == null)
             {
-                Debug.LogWarning($"[ArsistVRMLoaderTask] ScriptEngineManager not available after {timeoutSeconds:F0}s. VRM '{actualAssetId}' was not registered.");
+                Debug.LogError($"[ArsistVRMLoaderTask] ❌ ScriptEngineManager not ready. VRM '{actualAssetId}' NOT registered.");
                 yield break;
             }
 
-            scriptEngine.VRMWrapper.RegisterVRM(actualAssetId, vrmInstance);
-            scriptEngine.SceneWrapper.RegisterObject(actualAssetId, vrmInstance);
-            Debug.Log($"[ArsistVRMLoaderTask] ✅ VRM '{actualAssetId}' registered for scripting");
-
-            // Inspector 表示用のメタデータコンポーネントを追加
-            var metadataDisplay = gameObject.AddComponent<VRMMetadataDisplay>();
+            // Animator を取得
             var animator = vrmInstance.GetComponent<Animator>();
-            metadataDisplay.UpdateMetadata(actualAssetId, animator);
+            if (animator == null)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] ⚠ No Animator on VRM '{actualAssetId}'");
+            }
+            else if (!animator.isHuman)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] ⚠ Animator is not Humanoid for VRM '{actualAssetId}'");
+            }
+
+            // 1. VRMWrapper に登録
+            try
+            {
+                scriptEngine.VRMWrapper.RegisterVRM(actualAssetId, vrmInstance);
+                Debug.Log($"[ArsistVRMLoaderTask] ✅ VRM '{actualAssetId}' registered to VRMWrapper");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[ArsistVRMLoaderTask] Error registering to VRMWrapper: {e.Message}");
+            }
+
+            // 2. SceneWrapper に登録
+            try
+            {
+                scriptEngine.SceneWrapper.RegisterObject(actualAssetId, vrmInstance);
+                Debug.Log($"[ArsistVRMLoaderTask] ✅ VRM '{actualAssetId}' registered to SceneWrapper");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[ArsistVRMLoaderTask] Error registering to SceneWrapper: {e.Message}");
+            }
+
+            // 3. PropertyController を初期化（無視できる。必須ではない）
+            try
+            {
+                var propertyController = vrmInstance.GetComponent<Arsist.Runtime.Scene.PropertyController>();
+                if (propertyController == null)
+                {
+                    propertyController = vrmInstance.AddComponent<Arsist.Runtime.Scene.PropertyController>();
+                }
+
+                if (animator != null)
+                {
+                    propertyController.Initialize(animator);
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ PropertyController initialized for '{actualAssetId}'");
+                }
+                else
+                {
+                    Debug.LogWarning($"[ArsistVRMLoaderTask] ⚠ PropertyController init skipped: No Animator");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] PropertyController init failed (non-critical): {e.Message}");
+            }
+
+            // 4. VRMBoneController を追加（確実なボーン制御用）
+            try
+            {
+                var boneController = vrmInstance.GetComponent<VRMBoneController>();
+                if (boneController == null)
+                {
+                    boneController = vrmInstance.AddComponent<VRMBoneController>();
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ VRMBoneController added for '{actualAssetId}'");
+                }
+
+                if (animator != null && animator.isHuman)
+                {
+                    var availableBones = boneController.GetAvailableBones();
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ {availableBones.Count} bones available for bone control");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] VRMBoneController add failed (non-critical): {e.Message}");
+            }
+
+            // 5. VRMExpressionController を追加（表情制御用）
+            try
+            {
+                var expressionController = vrmInstance.GetComponent<VRMExpressionController>();
+                if (expressionController == null)
+                {
+                    expressionController = vrmInstance.AddComponent<VRMExpressionController>();
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ VRMExpressionController added for '{actualAssetId}'");
+                }
+
+                var availableExpressions = expressionController.GetAvailableExpressions();
+                Debug.Log($"[ArsistVRMLoaderTask] ✅ {availableExpressions.Count} expressions available");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] VRMExpressionController add failed (non-critical): {e.Message}");
+            }
+
+            // 4. VRMMetadataDisplay を追加（Editor表示用）
+            try
+            {
+                var metadataDisplay = vrmInstance.AddComponent<VRMMetadataDisplay>();
+                metadataDisplay.UpdateMetadata(actualAssetId, animator);
+                Debug.Log($"[ArsistVRMLoaderTask] ✅ VRMMetadataDisplay added for '{actualAssetId}'");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] VRMMetadataDisplay init failed (non-critical): {e.Message}");
+            }
+
+            Debug.Log($"[ArsistVRMLoaderTask] ✅✅✅ VRM '{actualAssetId}' initialization complete");
         }
 
         private void EnsureVRMVisible(GameObject vrmRoot)
@@ -165,14 +285,10 @@ namespace Arsist.Runtime.VRM
                     var offset = targetPos - center;
                     vrmRoot.transform.position += offset;
 
-                    var lookDir = cameraTransform.position - vrmRoot.transform.position;
-                    lookDir.y = 0f;
-                    if (lookDir.sqrMagnitude > 0.0001f)
-                    {
-                        vrmRoot.transform.rotation = Quaternion.LookRotation(-lookDir.normalized, Vector3.up);
-                    }
-
-                    Debug.Log("[ArsistVRMLoaderTask] Repositioned VRM in front of camera for visibility");
+                    // NOTE:
+                    // 向きはエディタ設定（Scene transform）を尊重する。
+                    // ここで自動回転すると「エンジンとUnityで向きが違う」問題を誘発するため回転補正は行わない。
+                    Debug.Log("[ArsistVRMLoaderTask] ✅ Repositioned VRM: position corrected (rotation preserved)");
                 }
             }
 
@@ -214,6 +330,50 @@ namespace Arsist.Runtime.VRM
             if (Camera.main != null) return Camera.main.transform;
             var anyCamera = FindAnyObjectByType<Camera>();
             return anyCamera != null ? anyCamera.transform : null;
+        }
+
+        /// <summary>
+        /// VRM0.x / VRM1.0 ロード時に子スケルトンルートが 180 度回転している問題を修正。
+        /// 各直下・深度2子 Transform の Y 軸回転を確認し、
+        /// ≈180 度なら 0 度に補正（モデルルートが逆を向くケースが対象）。
+        /// </summary>
+        private static void FixVRMFacing(GameObject vrmRoot)
+        {
+            if (vrmRoot == null) return;
+
+            // vrmRoot 自身のローカル回転をリセット（既に呼び出し側で identity 設定済みだが念のため）
+            vrmRoot.transform.localRotation = Quaternion.identity;
+
+            // vrmRoot の直下の子を全て確認して Y≈180° なら補正
+            for (int i = 0; i < vrmRoot.transform.childCount; i++)
+            {
+                var child = vrmRoot.transform.GetChild(i);
+                if (child == null) continue;
+
+                var yRot = child.localEulerAngles.y;
+                // 170°～190° の範囲を 180° 回転として検出
+                if (Mathf.Abs(Mathf.DeltaAngle(yRot, 180f)) < 20f)
+                {
+                    var orig = child.localEulerAngles;
+                    child.localEulerAngles = new Vector3(orig.x, 0f, orig.z);
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ Fixed facing: '{child.name}' Y={yRot:F1}° → 0°");
+                }
+
+                // 子の直下も確認（UniVRMのルート構成が深い場合）
+                for (int j = 0; j < child.childCount; j++)
+                {
+                    var grandChild = child.GetChild(j);
+                    if (grandChild == null) continue;
+
+                    var gcYRot = grandChild.localEulerAngles.y;
+                    if (Mathf.Abs(Mathf.DeltaAngle(gcYRot, 180f)) < 20f)
+                    {
+                        var gcOrig = grandChild.localEulerAngles;
+                        grandChild.localEulerAngles = new Vector3(gcOrig.x, 0f, gcOrig.z);
+                        Debug.Log($"[ArsistVRMLoaderTask] ✅ Fixed facing (depth2): '{grandChild.name}' Y={gcYRot:F1}° → 0°");
+                    }
+                }
+            }
         }
 
         private static void SetActiveRecursively(GameObject root, bool active)

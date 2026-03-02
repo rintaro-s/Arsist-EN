@@ -84,15 +84,93 @@ namespace Arsist.Runtime.VRM
         }
 
         /// <summary>
-        /// VRMバイト列からロード
+        /// VRMバイト列からロード（VRM0.x → VRM1.0 のデュアルパス）
         /// </summary>
         private IEnumerator LoadVRMFromBytes(byte[] vrmData, string vrmPath, Action<GameObject> onLoaded, Action<string> onError)
         {
             Debug.Log($"[ArsistVRMLoader] Loading VRM from bytes: {vrmPath} ({vrmData.Length} bytes)");
 
+            // ── ステップ1: VRM1.0 ローダーを優先して試行 ──
+            // UniVRM 0.131+ では Vrm10.LoadBytesAsync が VRM1.0 を正しく Humanoid で読める
+            var vrm10Loaded = false;
+            GameObject vrm10Instance = null;
+
+            var vrm10Type = ResolveType("UniVRM10.Vrm10");
+            if (vrm10Type != null)
+            {
+                Debug.Log("[ArsistVRMLoader] VRM1.0 loader (UniVRM10.Vrm10) found. Trying VRM1.0 path first...");
+                var loadBytes10 = vrm10Type.GetMethod("LoadBytesAsync", BindingFlags.Public | BindingFlags.Static);
+                if (loadBytes10 != null)
+                {
+                    object task10 = null;
+                    try
+                    {
+                        // UniVRM10.Vrm10.LoadBytesAsync(byte[] bytes, bool canLoadVrm0X = true, ...)
+                        var paramInfos = loadBytes10.GetParameters();
+                        var args10 = new object[paramInfos.Length];
+                        for (int i = 0; i < paramInfos.Length; i++)
+                        {
+                            var pi = paramInfos[i];
+                            if (pi.ParameterType == typeof(byte[]))
+                                args10[i] = vrmData;
+                            else if (pi.ParameterType == typeof(string))
+                                args10[i] = vrmPath;
+                            else if (pi.ParameterType == typeof(bool) && pi.Name == "canLoadVrm0X")
+                                args10[i] = true;  // VRM0.x も読めるようにする
+                            else if (pi.HasDefaultValue)
+                                args10[i] = pi.DefaultValue;
+                            else
+                                args10[i] = null;
+                        }
+                        task10 = loadBytes10.Invoke(null, args10);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[ArsistVRMLoader] VRM1.0 loader invoke failed: {ex.InnerException?.Message ?? ex.Message}");
+                    }
+
+                    if (task10 != null)
+                    {
+                        yield return WaitForTask(task10);
+                        var result10 = ExtractTaskResult(task10);
+                        if (result10 != null)
+                        {
+                            var rt10 = result10.GetType();
+                            var rootProp10 = rt10.GetProperty("Root") ?? rt10.GetProperty("gameObject");
+                            vrm10Instance = rootProp10?.GetValue(result10) as GameObject;
+                            if (vrm10Instance != null)
+                            {
+                                var anim10 = vrm10Instance.GetComponent<Animator>();
+                                if (anim10 != null && anim10.isHuman)
+                                {
+                                    vrm10Loaded = true;
+                                    Debug.Log($"[ArsistVRMLoader] ✅ VRM loaded via VRM1.0 path: {vrm10Instance.name} (Humanoid ✓)");
+                                    onLoaded?.Invoke(vrm10Instance);
+                                    yield break;
+                                }
+                                else
+                                {
+                                    Debug.Log($"[ArsistVRMLoader] VRM1.0 loaded '{vrm10Instance.name}' but no Humanoid. Falling through...");
+                                    // VRM1.0でもHumanoidなしなら保持して後で使う
+                                    vrm10Loaded = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── ステップ2: VRM0.x ローダーを試行 ──
             var vrmUtilityType = ResolveType("VRM.VrmUtility");
             if (vrmUtilityType == null)
             {
+                // VRM0.x ローダーなし: VRM1.0の結果があればそれを使う
+                if (vrm10Loaded && vrm10Instance != null)
+                {
+                    Debug.Log("[ArsistVRMLoader] VRM0.x loader not found, using VRM1.0 result.");
+                    onLoaded?.Invoke(vrm10Instance);
+                    yield break;
+                }
                 onError?.Invoke("UniVRM runtime library not found. Please import UniVRM-0.131.0 or later into Unity project.");
                 yield break;
             }
@@ -100,6 +178,11 @@ namespace Arsist.Runtime.VRM
             var loadBytesAsync = vrmUtilityType.GetMethod("LoadBytesAsync", BindingFlags.Public | BindingFlags.Static);
             if (loadBytesAsync == null)
             {
+                if (vrm10Loaded && vrm10Instance != null)
+                {
+                    onLoaded?.Invoke(vrm10Instance);
+                    yield break;
+                }
                 onError?.Invoke("UniVRM VrmUtility.LoadBytesAsync was not found");
                 yield break;
             }
@@ -143,79 +226,60 @@ namespace Arsist.Runtime.VRM
                 {
                     Debug.LogError($"[ArsistVRMLoader] Inner Exception: {ex.InnerException.Message}");
                 }
+                // VRM0.x失敗: VRM1.0の結果があればそれを使う
+                if (vrm10Loaded && vrm10Instance != null)
+                {
+                    Debug.Log("[ArsistVRMLoader] Falling back to VRM1.0 result");
+                    onLoaded?.Invoke(vrm10Instance);
+                    yield break;
+                }
                 onError?.Invoke($"Failed to invoke UniVRM loader: {ex.Message}");
                 yield break;
             }
 
             if (taskObj == null)
             {
+                if (vrm10Loaded && vrm10Instance != null)
+                {
+                    onLoaded?.Invoke(vrm10Instance);
+                    yield break;
+                }
                 onError?.Invoke("UniVRM loader returned null task");
                 yield break;
             }
 
-            var taskType = taskObj.GetType();
-            var isCompletedProp = taskType.GetProperty("IsCompleted");
+            yield return WaitForTask(taskObj);
 
-            // Wait for task completion
-            int waitFrames = 0;
-            while (!(bool)(isCompletedProp?.GetValue(taskObj) ?? true))
-            {
-                waitFrames++;
-                if (waitFrames > 1000) // Safety: 1000 frames timeout
-                {
-                    onError?.Invoke("VRM loading timeout");
-                    yield break;
-                }
-                yield return null;
-            }
-
-            var isFaultedProp = taskType.GetProperty("IsFaulted");
+            var isFaultedProp = taskObj.GetType().GetProperty("IsFaulted");
             var isFaulted = (bool)(isFaultedProp?.GetValue(taskObj) ?? false);
             if (isFaulted)
             {
-                var exceptionProp = taskType.GetProperty("Exception");
+                var exceptionProp = taskObj.GetType().GetProperty("Exception");
                 Exception exceptionObj = null;
-                try
-                {
-                    exceptionObj = exceptionProp?.GetValue(taskObj) as Exception;
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"[ArsistVRMLoader] Exception property retrieval failed: {ex.Message}");
-                }
+                try { exceptionObj = exceptionProp?.GetValue(taskObj) as Exception; } catch { }
                 
                 var err = exceptionObj?.InnerException?.Message ?? exceptionObj?.Message ?? "Unknown UniVRM task error";
-                Debug.LogError($"[ArsistVRMLoader] ❌ UniVRM task faulted: {err}");
-                if (exceptionObj?.InnerException != null)
+                Debug.LogError($"[ArsistVRMLoader] ❌ VRM0.x task faulted: {err}");
+
+                // VRM0.x失敗: VRM1.0の結果があればそれを使う
+                if (vrm10Loaded && vrm10Instance != null)
                 {
-                    Debug.LogError($"[ArsistVRMLoader] Inner exception: {exceptionObj.InnerException.StackTrace}");
+                    Debug.Log("[ArsistVRMLoader] VRM0.x failed, using VRM1.0 result");
+                    onLoaded?.Invoke(vrm10Instance);
+                    yield break;
                 }
                 onError?.Invoke($"UniVRM task failed: {err}");
                 yield break;
             }
 
-            object runtimeInstance = null;
-            try
-            {
-                var resultProp = taskType.GetProperty("Result");
-                if (resultProp == null)
-                {
-                    Debug.LogError("[ArsistVRMLoader] ❌ Result property not found on task object");
-                    onError?.Invoke("Task Result property not found");
-                    yield break;
-                }
-                runtimeInstance = resultProp.GetValue(taskObj);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[ArsistVRMLoader] ❌ Failed to get Result from task: {ex.Message}");
-                Debug.LogError($"[ArsistVRMLoader] Exception: {ex.StackTrace}");
-                onError?.Invoke($"Failed to get UniVRM load result: {ex.Message}");
-                yield break;
-            }
-
+            object runtimeInstance = ExtractTaskResult(taskObj);
             if (runtimeInstance == null)
             {
+                if (vrm10Loaded && vrm10Instance != null)
+                {
+                    onLoaded?.Invoke(vrm10Instance);
+                    yield break;
+                }
                 onError?.Invoke("UniVRM load result is null");
                 yield break;
             }
@@ -226,23 +290,79 @@ namespace Arsist.Runtime.VRM
 
             if (vrmInstance == null)
             {
+                if (vrm10Loaded && vrm10Instance != null)
+                {
+                    onLoaded?.Invoke(vrm10Instance);
+                    yield break;
+                }
                 onError?.Invoke("VRM root GameObject is null");
                 yield break;
             }
 
-            Debug.Log($"[ArsistVRMLoader] ✅ VRM loaded successfully: {vrmInstance.name}");
-
             var animator = vrmInstance.GetComponent<Animator>();
-            if (animator != null && animator.isHuman)
+            bool hasHumanoid = animator != null && animator.isHuman;
+
+            // VRM0.xの結果がHumanoidなら採用
+            if (hasHumanoid)
             {
-                Debug.Log("[ArsistVRMLoader] ✅ Humanoid Animator found");
-            }
-            else
-            {
-                Debug.LogWarning("[ArsistVRMLoader] ⚠️ No Humanoid Animator found on loaded VRM");
+                Debug.Log($"[ArsistVRMLoader] ✅ VRM loaded via VRM0.x path: {vrmInstance.name} (Humanoid ✓)");
+                onLoaded?.Invoke(vrmInstance);
+                yield break;
             }
 
+            // VRM0.xもHumanoidなし: VRM1.0結果を優先（存在すれば）
+            if (vrm10Loaded && vrm10Instance != null)
+            {
+                Debug.Log($"[ArsistVRMLoader] VRM0.x loaded as '{vrmInstance.name}' without Humanoid. Using VRM1.0 result instead.");
+                // VRM0.xの結果を破棄
+                UnityEngine.Object.Destroy(vrmInstance);
+                onLoaded?.Invoke(vrm10Instance);
+                yield break;
+            }
+
+            // 両方ともHumanoidなし: VRM0.xの結果を使用
+            Debug.LogWarning($"[ArsistVRMLoader] ⚠️ VRM loaded as '{vrmInstance.name}' without Humanoid Animator (both paths tried)");
             onLoaded?.Invoke(vrmInstance);
+        }
+
+        /// <summary>
+        /// Task の完了を待つヘルパー
+        /// </summary>
+        private IEnumerator WaitForTask(object taskObj)
+        {
+            var taskType = taskObj.GetType();
+            var isCompletedProp = taskType.GetProperty("IsCompleted");
+            int waitFrames = 0;
+            while (!(bool)(isCompletedProp?.GetValue(taskObj) ?? true))
+            {
+                waitFrames++;
+                if (waitFrames > 1000)
+                    yield break;
+                yield return null;
+            }
+        }
+
+        /// <summary>
+        /// Task の Result を安全に抽出するヘルパー
+        /// </summary>
+        private object ExtractTaskResult(object taskObj)
+        {
+            try
+            {
+                var taskType = taskObj.GetType();
+                var isFaultedProp = taskType.GetProperty("IsFaulted");
+                if ((bool)(isFaultedProp?.GetValue(taskObj) ?? false))
+                    return null;
+
+                var resultProp = taskType.GetProperty("Result");
+                if (resultProp == null) return null;
+                return resultProp.GetValue(taskObj);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ArsistVRMLoader] ExtractTaskResult failed: {ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>
