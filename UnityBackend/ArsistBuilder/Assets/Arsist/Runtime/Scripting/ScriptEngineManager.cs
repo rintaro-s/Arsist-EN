@@ -39,6 +39,7 @@ namespace Arsist.Runtime.Scripting
         private Engine _engine;
         private ApiWrapper _apiWrapper;
         private UiWrapper _uiWrapper;
+        private StoreWrapper _storeWrapper;
         private SceneWrapper _sceneWrapper;
         private VRMWrapper _vrmWrapper;
         private RemoteControlWrapper _remoteControlWrapper;
@@ -78,6 +79,7 @@ namespace Arsist.Runtime.Scripting
 
             _apiWrapper = new ApiWrapper(_engine);
             _uiWrapper = new UiWrapper();
+            _storeWrapper = new StoreWrapper();
             _sceneWrapper = new SceneWrapper();
             _vrmWrapper = new VRMWrapper();
             _remoteControlWrapper = new RemoteControlWrapper();
@@ -85,6 +87,7 @@ namespace Arsist.Runtime.Scripting
             // JS 環境に安全なラッパーのみを公開
             _engine.SetValue("api", _apiWrapper);
             _engine.SetValue("ui", _uiWrapper);
+            _engine.SetValue("store", _storeWrapper);
             _engine.SetValue("scene", _sceneWrapper);
             _engine.SetValue("vrm", _vrmWrapper);
             _engine.SetValue("remote", _remoteControlWrapper);

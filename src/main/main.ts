@@ -395,6 +395,20 @@ ipcMain.handle('unity:build', async (_, buildConfig) => {
   });
 });
 
+ipcMain.handle('unity:cancel-build', async () => {
+  const unityPath = store.get('unityPath') as string;
+  if (!unityPath) {
+    return { success: false, error: 'Unity path not configured' };
+  }
+
+  if (!unityBuilder || unityBuilder.getUnityPath() !== unityPath) {
+    unityBuilder = new UnityBuilder(unityPath);
+  }
+
+  unityBuilder.cancel();
+  return { success: true };
+});
+
 ipcMain.handle('unity:validate', async () => {
   const unityPath = store.get('unityPath') as string;
   const unityVersion = store.get('unityVersion') as string;

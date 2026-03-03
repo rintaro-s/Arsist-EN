@@ -379,6 +379,11 @@ export class UnityBuilder extends EventEmitter {
       this.emitProgress('sdk', 40, '必須SDKを確認/組み込み中...');
       await this.integrateRequiredSdks(unityProjectPath, config.targetDevice);
 
+      // Phase 3.55: Android ツールチェーン設定ファイルを注入
+      // Unity はプロジェクト読み込み時に ProjectSettings/AndroidExternalToolsSettings.asset を参照するため
+      // プロセス起動前に書き込んでおく必要がある。
+      await this.writeAndroidToolchainSettings(unityProjectPath);
+
       // Phase 3.6: VRMプロジェクトならUniVRMパッケージをインポート
       if (this.projectUsesVRM(config)) {
         this.emitProgress('sdk-vrm', 45, 'UniVRMパッケージをインポート中...');
@@ -1043,6 +1048,7 @@ export class UnityBuilder extends EventEmitter {
     
     if (!adapterDir || !await fs.pathExists(adapterDir)) {
       this.emit('log', `[Arsist] No specific patch for ${targetDevice}, using default settings`);
+      await this.ensureAndroidCleartextHttpPolicy(unityProjectPath);
       return;
     }
 
@@ -1091,7 +1097,31 @@ export class UnityBuilder extends EventEmitter {
       this.emit('log', '[Arsist] Applied packages patch');
     }
 
+    await this.ensureAndroidCleartextHttpPolicy(unityProjectPath);
+
     this.emit('log', `[Arsist] Device patch applied for ${targetDevice}`);
+  }
+
+  private async ensureAndroidCleartextHttpPolicy(unityProjectPath: string): Promise<void> {
+    const manifestPath = path.join(unityProjectPath, 'Assets', 'Plugins', 'Android', 'AndroidManifest.xml');
+    if (!await fs.pathExists(manifestPath)) {
+      this.emit('log', '[Arsist] AndroidManifest.xml not found, skip cleartext policy patch');
+      return;
+    }
+
+    const before = await fs.readFile(manifestPath, 'utf-8');
+    let after = before;
+
+    if (!/android:usesCleartextTraffic\s*=/.test(after)) {
+      after = after.replace(/<application\b([^>]*)>/, '<application$1 android:usesCleartextTraffic="true">');
+    } else {
+      after = after.replace(/android:usesCleartextTraffic\s*=\s*"[^"]*"/g, 'android:usesCleartextTraffic="true"');
+    }
+
+    if (after !== before) {
+      await fs.writeFile(manifestPath, after, 'utf-8');
+      this.emit('log', '[Arsist] Enforced cleartext HTTP policy in AndroidManifest');
+    }
   }
 
   private isXrealTarget(targetDevice: string): boolean {
@@ -1144,10 +1174,32 @@ export class UnityBuilder extends EventEmitter {
     const dependencies = (manifest.dependencies ?? {}) as Record<string, string>;
     // Packages/manifest.json からの相対パス（同じフォルダ内のcom.xreal.xr）
     dependencies['com.xreal.xr'] = 'file:com.xreal.xr';
+
+    // XREAL ビルドに必要な最低依存を補完（com.unity.modules.* + ugui）
+    this.applyXrealRequiredDependencies(dependencies);
+
     manifest.dependencies = dependencies;
     await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
 
     this.emit('log', '[Arsist] Embedded XREAL SDK: Packages/com.xreal.xr (manifest.json updated)');
+  }
+
+  private applyXrealRequiredDependencies(deps: Record<string, string>): void {
+    const setIfMissing = (pkg: string, version: string) => {
+      if (!deps[pkg]) deps[pkg] = version;
+    };
+
+    // XREAL SDK が内部で使用する Unity モジュール
+    setIfMissing('com.unity.modules.physics', '1.0.0');
+    setIfMissing('com.unity.modules.physics2d', '1.0.0');
+    setIfMissing('com.unity.modules.ui', '1.0.0');
+    setIfMissing('com.unity.modules.uielements', '1.0.0');
+    setIfMissing('com.unity.modules.xr', '1.0.0');
+    setIfMissing('com.unity.modules.audio', '1.0.0');
+    // Legacy UI: Unity 2022 では 1.0.0（2.0.0 は Unity 6 以降）
+    setIfMissing('com.unity.ugui', '1.0.0');
+    // TextMeshPro
+    setIfMissing('com.unity.textmeshpro', '3.0.6');
   }
 
   private async integrateQuestSdk(unityProjectPath: string): Promise<void> {
@@ -1299,11 +1351,177 @@ export class UnityBuilder extends EventEmitter {
     }
   }
 
+  // ----------------------------------------------------------------
+  // Android ツールチェーン検出ヘルパー
+  // ----------------------------------------------------------------
+
+  /**
+   * JDKのホームディレクトリを返す。
+   * 優先順位: JAVA_HOME env → JDK_HOME env → Unity bundled OpenJDK → 一般的なインストールパス
+   */
+  private async detectJdkPath(): Promise<string | null> {
+    const javaExe = process.platform === 'win32' ? 'java.exe' : 'java';
+
+    // 1) Unity 付属 OpenJDK を最優先（バージョン問題が起きない）
+    try {
+      const unityDir = path.dirname(this.unityPath); // Editor/
+      const unityOpenJdk = path.join(unityDir, 'Data', 'PlaybackEngines', 'AndroidPlayer', 'OpenJDK');
+      if (await fs.pathExists(path.join(unityOpenJdk, 'bin', javaExe))) {
+        return unityOpenJdk;
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2) 環境変数
+    for (const key of ['JAVA_HOME', 'JDK_HOME']) {
+      const v = process.env[key];
+      if (v && await fs.pathExists(path.join(v, 'bin', javaExe))) {
+        return v;
+      }
+    }
+
+    return null;
+  }
+
+  /** ディレクトリ名からJDKメジャーバージョン番号を抽出. 例: "jdk-17.0.5.8-hotspot" → 17 */
+  private parseJdkMajorVersion(dirName: string): number {
+    // パターン: jdk-17.x / jdk1.8 / temurin-17+... etc.
+    const m = dirName.match(/jdk[_\-]?(\d+)[._]/i) || dirName.match(/jdk(\d+)/i);
+    if (m) {
+      const v = parseInt(m[1], 10);
+      // Java 1.8 → major 8
+      return v === 1 ? 8 : v;
+    }
+    return 0;
+  }
+
+  /**
+   * Android SDK ルートディレクトリを返す。
+   * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
+   */
+  private async detectAndroidSdkPath(): Promise<string | null> {
+    // 1) Unity 付属 Android SDK を最優先
+    try {
+      const unityDir = path.dirname(this.unityPath);
+      const unitySdk = path.join(unityDir, 'Data', 'PlaybackEngines', 'AndroidPlayer', 'SDK');
+      if (await fs.pathExists(unitySdk)) return unitySdk;
+    } catch {
+      // ignore
+    }
+
+    for (const key of ['ANDROID_HOME', 'ANDROID_SDK_ROOT']) {
+      const v = process.env[key];
+      if (v && await fs.pathExists(v)) return v;
+    }
+
+    if (process.platform === 'win32') {
+      const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+      const candidate = path.join(localAppData, 'Android', 'Sdk');
+      if (await fs.pathExists(candidate)) return candidate;
+    } else if (process.platform === 'darwin') {
+      const candidate = path.join(os.homedir(), 'Library', 'Android', 'sdk');
+      if (await fs.pathExists(candidate)) return candidate;
+    } else {
+      const candidate = path.join(os.homedir(), 'Android', 'Sdk');
+      if (await fs.pathExists(candidate)) return candidate;
+    }
+
+    return null;
+  }
+
+  /**
+   * Unityプロジェクトの ProjectSettings/AndroidExternalToolsSettings.asset を生成し、
+   * JDK / Android SDK / NDK パスを書き込む。
+   * Unity はプロジェクト読み込み時にこのファイルを参照するため、プロセス起動前に作成する必要がある。
+   */
+  private async writeAndroidToolchainSettings(unityProjectPath: string): Promise<void> {
+    const jdkPath = await this.detectJdkPath();
+    const androidSdkPath = await this.detectAndroidSdkPath();
+
+    if (!jdkPath && !androidSdkPath) {
+      this.emit('log', '[Arsist] Android toolchain: no JDK/SDK found, skipping AndroidExternalToolsSettings.asset');
+      return;
+    }
+
+    // NDK パスを Android SDK 内で検索
+    let ndkPath = '';
+    if (androidSdkPath) {
+      const ndkRoots = [
+        path.join(androidSdkPath, 'ndk'),
+        path.join(androidSdkPath, 'ndk-bundle'),
+      ];
+      for (const ndkRoot of ndkRoots) {
+        if (await fs.pathExists(ndkRoot)) {
+          try {
+            const entries = (await fs.readdir(ndkRoot)).sort();
+            if (entries.length > 0) {
+              ndkPath = path.join(ndkRoot, entries[entries.length - 1]); // 最新バージョン
+            } else {
+              ndkPath = ndkRoot;
+            }
+          } catch {
+            ndkPath = ndkRoot;
+          }
+          break;
+        }
+      }
+    }
+
+    // Unity asset YAML (forward slashes required)
+    const toUnityPath = (p: string) => p.replace(/\\/g, '/');
+
+    const assetContent = [
+      '%YAML 1.1',
+      '%TAG !u! tag:unity3d.com,2011:',
+      '--- !u!162 &1',
+      'AndroidExternalToolsSettings:',
+      '  m_ObjectHideFlags: 0',
+      '  serializedVersion: 2',
+      `  sdkRootPath: ${androidSdkPath ? toUnityPath(androidSdkPath) : ''}`,
+      `  jdkRootPath: ${jdkPath ? toUnityPath(jdkPath) : ''}`,
+      `  ndkRootPath: ${ndkPath ? toUnityPath(ndkPath) : ''}`,
+      '  gradlePath: ',
+      // maxJdkVersion: -1 = no upper limit (Unity interprets 0 as "version 0 = invalid")
+      '  maxJdkVersion: -1',
+      '  userGradleVersion: ',
+      '',
+    ].join('\n');
+
+    const settingsDir = path.join(unityProjectPath, 'ProjectSettings');
+    await fs.ensureDir(settingsDir);
+    const assetPath = path.join(settingsDir, 'AndroidExternalToolsSettings.asset');
+    await fs.writeFile(assetPath, assetContent, 'utf8');
+
+    this.emit('log', `[Arsist] Wrote AndroidExternalToolsSettings.asset`);
+    if (jdkPath) this.emit('log', `[Arsist]   jdkRootPath: ${jdkPath}`);
+    if (androidSdkPath) this.emit('log', `[Arsist]   sdkRootPath: ${androidSdkPath}`);
+    if (ndkPath) this.emit('log', `[Arsist]   ndkRootPath: ${ndkPath}`);
+  }
+
+  // ----------------------------------------------------------------
+
   private async executeUnityBuild(
     unityProjectPath: string,
     config: UnityBuildConfig,
     options?: { batchMode?: boolean; noGraphics?: boolean; manualLicenseFile?: string },
   ): Promise<{ success: boolean; error?: string }> {
+    // Android ツールチェーンを事前検出（Promise外で await 可能）
+    const jdkPath = await this.detectJdkPath();
+    const androidSdkPath = await this.detectAndroidSdkPath();
+
+    if (jdkPath) {
+      this.emit('log', `[Arsist] JDK detected: ${jdkPath}`);
+    } else {
+      this.emit('log', '[Arsist] WARNING: JDK not detected. Unity Android build may fail with "JDK not found".');
+      this.emit('log', '[Arsist] Install Android Build Support module via Unity Hub, or set JAVA_HOME.');
+    }
+    if (androidSdkPath) {
+      this.emit('log', `[Arsist] Android SDK detected: ${androidSdkPath}`);
+    } else {
+      this.emit('log', '[Arsist] WARNING: Android SDK not detected. Set ANDROID_HOME or install Android Studio.');
+    }
+
     return new Promise((resolve) => {
       const timeoutMinutes = config.buildTimeoutMinutes ?? 60;
       const logFile = config.logFilePath || path.join(config.outputPath, 'unity_build.log');
@@ -1345,6 +1563,9 @@ export class UnityBuilder extends EventEmitter {
         '-targetDevice', config.targetDevice,
         '-developmentBuild', config.developmentBuild ? 'true' : 'false',
         ...(options?.manualLicenseFile ? ['-manualLicenseFile', this.normalizeOsPath(options.manualLicenseFile)] : []),
+        // Android ツールチェーンパスを C# 側の BuildFromCLI に渡す
+        ...(jdkPath ? ['-arsist-jdk', this.normalizeOsPath(jdkPath)] : []),
+        ...(androidSdkPath ? ['-arsist-android-sdk', this.normalizeOsPath(androidSdkPath)] : []),
         '-logFile', this.normalizeOsPath(logFile),
       ];
 
@@ -1371,6 +1592,24 @@ export class UnityBuilder extends EventEmitter {
 
       if (options?.manualLicenseFile) {
         env.UNITY_LICENSE_FILE = options.manualLicenseFile;
+      }
+
+      // JDK パス注入（Unity Android ビルドに必要）
+      if (jdkPath) {
+        if (!env.JAVA_HOME) env.JAVA_HOME = jdkPath;
+        // PATH に bin を先頭追加しておくことで Unity が java コマンドを見つけやすくする
+        const javaBin = path.join(jdkPath, 'bin');
+        const pathSep = process.platform === 'win32' ? ';' : ':';
+        const currentPath = env.PATH || '';
+        if (!currentPath.includes(javaBin)) {
+          env.PATH = `${javaBin}${pathSep}${currentPath}`;
+        }
+      }
+
+      // Android SDK パス注入
+      if (androidSdkPath) {
+        if (!env.ANDROID_HOME) env.ANDROID_HOME = androidSdkPath;
+        if (!env.ANDROID_SDK_ROOT) env.ANDROID_SDK_ROOT = androidSdkPath;
       }
 
       // Windowsでも shell 経由にせず、Unity.exe を直接起動する（スペース含むパスでも安全）

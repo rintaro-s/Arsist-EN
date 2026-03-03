@@ -268,7 +268,13 @@ namespace Arsist.Adapters.XrealOne
 
             // === Android基本設定 ===
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29; // Android 10
-            PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel34; // Android 14
+            AndroidSdkVersions targetSdk;
+            if (!System.Enum.TryParse("AndroidApiLevel34", out targetSdk) &&
+                !System.Enum.TryParse("AndroidApiLevel33", out targetSdk))
+            {
+                targetSdk = AndroidSdkVersions.AndroidApiLevelAuto;
+            }
+            PlayerSettings.Android.targetSdkVersion = targetSdk;
             
             // ARM64のみ（XREAL Oneは64bit専用）
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
@@ -897,6 +903,8 @@ namespace Arsist.Adapters.XrealOne
             var application = manifest.SelectSingleNode("application") as XmlElement;
             if (application != null)
             {
+                application.SetAttribute("usesCleartextTraffic", "http://schemas.android.com/apk/res/android", "true");
+
                 // meta-data追加
                 AddMetaDataIfMissing(doc, application, "com.xreal.sdk.version", SDK_VERSION, nsManager);
                 
@@ -939,7 +947,8 @@ namespace Arsist.Adapters.XrealOne
         android:allowBackup=""false""
         android:icon=""@mipmap/app_icon""
         android:label=""@string/app_name""
-        android:theme=""@style/UnityThemeSelector"">
+        android:theme=""@style/UnityThemeSelector""
+        android:usesCleartextTraffic=""true"">
         
         <activity
             android:name=""com.unity3d.player.UnityPlayerActivity""

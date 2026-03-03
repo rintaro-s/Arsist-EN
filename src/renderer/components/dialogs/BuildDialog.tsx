@@ -23,7 +23,7 @@ const devices: DeviceOption[] = [
 ];
 
 export function BuildDialog({ onClose }: BuildDialogProps) {
-  const { project, projectPath, exportScriptBundle } = useProjectStore();
+  const { project, projectPath, exportScriptBundle, saveProject, isDirty } = useProjectStore();
   const { 
     isBuilding, 
     buildProgress, 
@@ -42,6 +42,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   const [unityPath, setUnityPath] = useState('');
   const [unityValid, setUnityValid] = useState<boolean | null>(null);
   const [unityManualLicenseFile, setUnityManualLicenseFile] = useState('');
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
   const [errorModal, setErrorModal] = useState<{ summary: string; details?: string } | null>(null);
 
@@ -142,7 +143,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     }
   };
 
-  const handleBuild = async () => {
+  const executeBuild = async () => {
     if (!window.electronAPI || !project) return;
     
     if (!unityPath || !outputPath) {
@@ -233,6 +234,41 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     } finally {
       setIsBuilding(false);
     }
+  };
+
+  const handleBuild = async () => {
+    if (isBuilding) return;
+    if (isDirty) {
+      setShowUnsavedConfirm(true);
+      return;
+    }
+    await executeBuild();
+  };
+
+  const handleSaveAndBuild = async () => {
+    await saveProject();
+    if (useProjectStore.getState().isDirty) {
+      addNotification({ type: 'error', message: '保存に失敗したためビルドを開始できませんでした' });
+      return;
+    }
+    setShowUnsavedConfirm(false);
+    await executeBuild();
+  };
+
+  const handleBuildWithoutSave = async () => {
+    setShowUnsavedConfirm(false);
+    await executeBuild();
+  };
+
+  const handleCancelBuild = async () => {
+    if (!window.electronAPI) return;
+    const result = await window.electronAPI.unity.cancelBuild();
+    if (result?.success) {
+      addBuildLog('[Arsist] Build cancel requested');
+      addNotification({ type: 'info', message: 'ビルドキャンセルを要求しました' });
+      return;
+    }
+    addNotification({ type: 'error', message: result?.error || 'ビルドキャンセルに失敗しました' });
   };
 
   return (
@@ -385,13 +421,21 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
 
         {/* Footer */}
         <div className="modal-footer">
-          <button 
-            onClick={onClose} 
-            className="btn btn-ghost"
-            disabled={isBuilding}
-          >
-            キャンセル
-          </button>
+          {isBuilding ? (
+            <button 
+              onClick={handleCancelBuild}
+              className="btn btn-danger"
+            >
+              ビルドキャンセル
+            </button>
+          ) : (
+            <button 
+              onClick={onClose}
+              className="btn btn-ghost"
+            >
+              閉じる
+            </button>
+          )}
           <button
             onClick={handleBuild}
             className="btn btn-primary"
@@ -412,6 +456,35 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         </div>
         </div>
       </div>
+
+      {showUnsavedConfirm && (
+        <div className="modal-overlay" style={{ zIndex: 1001 }}>
+          <div className="modal max-w-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header flex items-center justify-between">
+              <span>未保存の変更があります</span>
+              <button onClick={() => setShowUnsavedConfirm(false)} className="btn-icon">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p className="text-sm text-arsist-muted">
+                ビルド前に保存しますか？
+              </p>
+            </div>
+            <div className="modal-footer flex justify-end gap-2">
+              <button onClick={() => setShowUnsavedConfirm(false)} className="btn btn-ghost">
+                キャンセル
+              </button>
+              <button onClick={handleBuildWithoutSave} className="btn btn-secondary">
+                保存せずビルド
+              </button>
+              <button onClick={handleSaveAndBuild} className="btn btn-primary">
+                保存してビルド
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* BuildDialogのオーバーレイより後に描画して最前面に出す */}
       {errorModal && (

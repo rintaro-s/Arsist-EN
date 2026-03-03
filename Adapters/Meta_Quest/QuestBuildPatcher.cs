@@ -87,6 +87,9 @@ namespace Arsist.Adapters.MetaQuest
             // ─── Quest VR カテゴリ追加 ───
             EnsureIntentCategory(doc, ns, nsMgr, "com.oculus.intent.category.VR");
 
+            // ─── HTTP (cleartext) 許可 ───
+            EnsureApplicationAttribute(app, ns, "usesCleartextTraffic", "true");
+
             // ─── Quest SDK メタデータ ───
             EnsureMetaData(doc, ns, app, "com.samsung.android.vr.application.mode", "vr_only");
             EnsureMetaData(doc, ns, app, "com.oculus.ossplash", "false");
@@ -199,6 +202,12 @@ namespace Arsist.Adapters.MetaQuest
             node.SetAttribute("required", ns, required ? "true" : "false");
             if (version != null) node.SetAttribute("version", ns, version);
             manifest.AppendChild(node);
+        }
+
+        private static void EnsureApplicationAttribute(XmlNode application, string ns, string attributeName, string value)
+        {
+            if (application is not XmlElement app) return;
+            app.SetAttribute(attributeName, ns, value);
         }
     }
 }

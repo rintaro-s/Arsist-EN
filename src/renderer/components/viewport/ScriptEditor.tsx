@@ -367,7 +367,12 @@ export function ScriptInspector() {
                   type="radio"
                   name="trigger"
                   checked={script.trigger.type === t}
-                  onChange={() => updateScript(script.id, { trigger: { type: t } })}
+                  onChange={() => updateScript(script.id, {
+                    trigger: {
+                      type: t,
+                      value: t === 'interval' ? 1000 : t === 'event' ? '' : undefined,
+                    },
+                  })}
                   className="accent-arsist-accent"
                 />
                 <TriggerOption type={t} />

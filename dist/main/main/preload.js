@@ -19,6 +19,7 @@ const electronAPI = {
         setPath: (unityPath) => electron_1.ipcRenderer.invoke('unity:set-path', unityPath),
         getPath: () => electron_1.ipcRenderer.invoke('unity:get-path'),
         build: (config) => electron_1.ipcRenderer.invoke('unity:build', config),
+        cancelBuild: () => electron_1.ipcRenderer.invoke('unity:cancel-build'),
         validate: () => electron_1.ipcRenderer.invoke('unity:validate'),
         detectPaths: () => electron_1.ipcRenderer.invoke('unity:detect-paths'),
         onBuildProgress: (callback) => {

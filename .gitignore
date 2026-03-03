@@ -1,4 +1,4 @@
-node_modules/
+*node_modules/
 sdk/
 archive/
 tmp/
@@ -6,3 +6,4 @@ dist/
 UnityBackend/ArsistBuilder/Library/
 UnityBackend/ArsistBuilder/Temp/
 UnityBackend/ArsistBuilder/Logs/
+BuildOutput/TempUnityProject/Library/

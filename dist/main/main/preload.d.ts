@@ -9,6 +9,7 @@ declare const electronAPI: {
         setPath: (unityPath: string) => Promise<any>;
         getPath: () => Promise<any>;
         build: (config: any) => Promise<any>;
+        cancelBuild: () => Promise<any>;
         validate: () => Promise<any>;
         detectPaths: () => Promise<any>;
         onBuildProgress: (callback: (progress: any) => void) => () => void;

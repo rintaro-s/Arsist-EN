@@ -414,6 +414,17 @@ electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => {
         unityVersion: buildConfig?.unityVersion || unityVersion,
     });
 });
+electron_1.ipcMain.handle('unity:cancel-build', async () => {
+    const unityPath = store.get('unityPath');
+    if (!unityPath) {
+        return { success: false, error: 'Unity path not configured' };
+    }
+    if (!unityBuilder || unityBuilder.getUnityPath() !== unityPath) {
+        unityBuilder = new UnityBuilder_1.UnityBuilder(unityPath);
+    }
+    unityBuilder.cancel();
+    return { success: true };
+});
 electron_1.ipcMain.handle('unity:validate', async () => {
     const unityPath = store.get('unityPath');
     const unityVersion = store.get('unityVersion');

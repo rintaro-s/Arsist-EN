@@ -54,12 +54,14 @@ namespace Arsist.Runtime.Scripting
 
         private IEnumerator GetCoroutine(string url, JsValue callback)
         {
+            Debug.Log($"[Arsist] api.get request: {url}");
             using var req = UnityWebRequest.Get(url);
             req.timeout = 10;
             yield return req.SendWebRequest();
 
             if (req.result == UnityWebRequest.Result.Success)
             {
+                Debug.Log($"[Arsist] api.get success: {url} (status={req.responseCode})");
                 InvokeCallback(callback, req.downloadHandler.text);
             }
             else
@@ -71,6 +73,7 @@ namespace Arsist.Runtime.Scripting
 
         private IEnumerator PostCoroutine(string url, string bodyJson, JsValue callback)
         {
+            Debug.Log($"[Arsist] api.post request: {url}");
             var data = System.Text.Encoding.UTF8.GetBytes(bodyJson);
             using var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST);
             req.uploadHandler = new UploadHandlerRaw(data);
@@ -81,6 +84,7 @@ namespace Arsist.Runtime.Scripting
 
             if (req.result == UnityWebRequest.Result.Success)
             {
+                Debug.Log($"[Arsist] api.post success: {url} (status={req.responseCode})");
                 InvokeCallback(callback, req.downloadHandler.text);
             }
             else

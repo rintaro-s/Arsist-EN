@@ -24,6 +24,7 @@ declare global {
         setPath: (path: string) => Promise<any>;
         getPath: () => Promise<string>;
         build: (config: any) => Promise<any>;
+        cancelBuild: () => Promise<{ success: boolean; error?: string }>;
         validate: () => Promise<any>;
         detectPaths: () => Promise<{ success: boolean; candidates: string[]; error?: string }>;
         onBuildProgress: (callback: (progress: any) => void) => () => void;

@@ -90,14 +90,34 @@ export declare class UnityBuilder extends EventEmitter {
     private findFileRecursive;
     private transferProjectData;
     private applyDevicePatch;
+    private ensureAndroidCleartextHttpPolicy;
     private isXrealTarget;
     private isQuestTarget;
     private integrateRequiredSdks;
     private integrateXrealSdk;
+    private applyXrealRequiredDependencies;
     private integrateQuestSdk;
     private applyQuestXrBootstrap;
     private readQuestSampleDependencies;
     private applyQuestRequiredDependencies;
+    /**
+     * JDKのホームディレクトリを返す。
+     * 優先順位: JAVA_HOME env → JDK_HOME env → Unity bundled OpenJDK → 一般的なインストールパス
+     */
+    private detectJdkPath;
+    /** ディレクトリ名からJDKメジャーバージョン番号を抽出. 例: "jdk-17.0.5.8-hotspot" → 17 */
+    private parseJdkMajorVersion;
+    /**
+     * Android SDK ルートディレクトリを返す。
+     * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
+     */
+    private detectAndroidSdkPath;
+    /**
+     * Unityプロジェクトの ProjectSettings/AndroidExternalToolsSettings.asset を生成し、
+     * JDK / Android SDK / NDK パスを書き込む。
+     * Unity はプロジェクト読み込み時にこのファイルを参照するため、プロセス起動前に作成する必要がある。
+     */
+    private writeAndroidToolchainSettings;
     private executeUnityBuild;
     private parseUnityProgress;
     private verifyBuildOutput;

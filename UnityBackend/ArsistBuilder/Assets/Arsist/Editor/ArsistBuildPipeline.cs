@@ -174,6 +174,9 @@ namespace Arsist.Builder
 
         private static void ParseCommandLineArgs()
         {
+            string arsistJdkPath = null;
+            string arsistAndroidSdkPath = null;
+
             var args = Environment.GetCommandLineArgs();
             for (int i = 0; i < args.Length; i++)
             {
@@ -191,10 +194,333 @@ namespace Arsist.Builder
                     case "-developmentBuild":
                         _developmentBuild = args[++i].ToLower() == "true";
                         break;
+                    case "-arsist-jdk":
+                        arsistJdkPath = args[++i];
+                        break;
+                    case "-arsist-android-sdk":
+                        arsistAndroidSdkPath = args[++i];
+                        break;
                 }
             }
 
             Debug.Log($"[Arsist] Target: {_buildTarget}, Output: {_outputPath}, Device: {_targetDevice}, Dev: {_developmentBuild}");
+
+            // Android ツールチェーンのパスを AndroidExternalToolsSettings に反映
+            ApplyAndroidExternalToolsSettings(arsistJdkPath, arsistAndroidSdkPath);
+        }
+
+        /// <summary>
+        /// AndroidExternalToolsSettings (UnityEditor.Android) に JDK / SDK / NDK パスを設定する。
+        /// reflection で呼ぶことで Android Build Support 未インストール環境でも型エラーを起こさない。
+        /// </summary>
+        private static void ApplyAndroidExternalToolsSettings(string jdkPath, string androidSdkPath)
+        {
+            // EditorPrefs に先に書く（legacy かつ広範な互換性）
+            // Unity のバッチモードでは EditorPrefs は HKCU レジストリに書かれ、プロセス内から即時参照される
+            if (!string.IsNullOrWhiteSpace(jdkPath))
+            {
+                EditorPrefs.SetString("JdkPath", jdkPath);
+                Debug.Log($"[Arsist] EditorPrefs.JdkPath = {jdkPath}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(androidSdkPath))
+            {
+                EditorPrefs.SetString("AndroidSdkRoot", androidSdkPath);
+                Debug.Log($"[Arsist] EditorPrefs.AndroidSdkRoot = {androidSdkPath}");
+
+                // NDK: sdk/ndk/<version> または sdk/ndk-bundle
+                var ndkCandidates = new[]
+                {
+                    System.IO.Path.Combine(androidSdkPath, "ndk"),
+                    System.IO.Path.Combine(androidSdkPath, "ndk-bundle"),
+                };
+                string ndkPath = null;
+                foreach (var c in ndkCandidates)
+                {
+                    if (System.IO.Directory.Exists(c))
+                    {
+                        var sub = System.IO.Directory.GetDirectories(c);
+                        if (sub.Length > 0)
+                        {
+                            System.Array.Sort(sub);
+                            ndkPath = sub[sub.Length - 1];
+                        }
+                        else
+                        {
+                            ndkPath = c;
+                        }
+                        break;
+                    }
+                }
+
+                if (ndkPath != null)
+                {
+                    EditorPrefs.SetString("AndroidNdkRoot", ndkPath);
+                    EditorPrefs.SetString("AndroidNdkRootR16b", ndkPath);
+                    Debug.Log($"[Arsist] EditorPrefs.AndroidNdkRoot = {ndkPath}");
+                }
+            }
+
+            // AndroidExternalToolsSettings (Unity 2021+) による設定も試みる
+            try
+            {
+                var settingsType = FindTypeInLoadedAssemblies("UnityEditor.Android.AndroidExternalToolsSettings");
+                if (settingsType == null)
+                {
+                    Debug.LogWarning("[Arsist] AndroidExternalToolsSettings type not found. Using EditorPrefs only.");
+                    return;
+                }
+
+                // デバッグ: AndroidExternalToolsSettings の全フィールド/プロパティを列挙
+                try
+                {
+                    var allProps = settingsType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    var allStaticFields = settingsType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                    var allInstFields = settingsType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    var allMethods = settingsType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                    Debug.Log($"[Arsist] AndroidExternalToolsSettings props: {string.Join(", ", System.Array.ConvertAll(allProps, p => p.Name))}");
+                    Debug.Log($"[Arsist] AndroidExternalToolsSettings static fields: {string.Join(", ", System.Array.ConvertAll(allStaticFields, f => f.Name))}");
+                    Debug.Log($"[Arsist] AndroidExternalToolsSettings inst fields: {string.Join(", ", System.Array.ConvertAll(allInstFields, f => f.Name))}");
+                    Debug.Log($"[Arsist] AndroidExternalToolsSettings methods: {string.Join(", ", System.Array.ConvertAll(allMethods, m => m.Name))}");
+
+                    // SetAndroidRootPath のシグネチャを確認
+                    var setAndroid = settingsType.GetMethod("SetAndroidRootPath", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                    if (setAndroid != null)
+                    {
+                        var paramInfos = setAndroid.GetParameters();
+                        Debug.Log($"[Arsist] SetAndroidRootPath params: {string.Join(", ", System.Array.ConvertAll(paramInfos, p => $"{p.ParameterType.Name} {p.Name}"))}");
+                    }
+
+                    // BaseType を調べる
+                    Debug.Log($"[Arsist] AndroidExternalToolsSettings BaseType: {settingsType.BaseType?.FullName ?? "null"}");
+
+                    // 現在の jdkRootPath を取得
+                    var jdkPropGetter = settingsType.GetProperty("jdkRootPath", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                    if (jdkPropGetter != null)
+                    {
+                        var current = jdkPropGetter.GetValue(null);
+                        Debug.Log($"[Arsist] jdkRootPath (current) = '{current}'");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[Arsist] Failed to enumerate members: {ex.Message}");
+                }
+
+                void TrySetProp(string propName, object value)
+                {
+                    if (value is string s && string.IsNullOrWhiteSpace(s)) return;
+                    try
+                    {
+                        var prop = settingsType.GetProperty(propName,
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        if (prop != null && prop.CanWrite)
+                        {
+                            prop.SetValue(null, value);
+                            Debug.Log($"[Arsist] AndroidExternalToolsSettings.{propName} = {value}");
+                        }
+                        else if (prop != null)
+                        {
+                            Debug.LogWarning($"[Arsist] AndroidExternalToolsSettings.{propName} is read-only");
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"[Arsist] AndroidExternalToolsSettings.{propName} property not found");
+                        }
+                    }
+                    catch (Exception inner)
+                    {
+                        // プロパティセッターが検証エラーを出すことがある（例: JDK バージョン不一致）
+                        Debug.LogWarning($"[Arsist] AndroidExternalToolsSettings.{propName} setter failed (EditorPrefs was set): {inner.InnerException?.Message ?? inner.Message}");
+                    }
+                }
+
+                // SetAndroidRootPath(AndroidRoot, string) を直接呼び出してJDKを登録する
+                // (property setter の バリデーションをバイパスできる可能性がある)
+                var allMethodsForSearch = settingsType.GetMethods(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                // SetAndroidRootPath を確実に探す (型チェックは緩く)
+                System.Reflection.MethodInfo setAndroidRootPathMethod = null;
+                foreach (var m in allMethodsForSearch)
+                {
+                    if (m.Name == "SetAndroidRootPath")
+                    {
+                        var ps = m.GetParameters();
+                        if (ps.Length == 2)
+                        {
+                            setAndroidRootPathMethod = m;
+                            Debug.Log($"[Arsist] SetAndroidRootPath found: IsStatic={m.IsStatic}, p0={ps[0].ParameterType.Name}({ps[0].ParameterType.IsEnum}), p1={ps[1].ParameterType.Name}");
+                            break;
+                        }
+                    }
+                }
+
+                if (setAndroidRootPathMethod != null && !string.IsNullOrWhiteSpace(jdkPath))
+                {
+                    var paramInfos = setAndroidRootPathMethod.GetParameters();
+                    var androidRootType = paramInfos.Length > 0 ? paramInfos[0].ParameterType : null;
+
+                    if (androidRootType != null)
+                    {
+                        // AndroidRoot のすべての具体的サブクラスを AppDomain 全体から探す
+                        System.Type jdkConcreteType = null;
+                        var subclassLog = new System.Text.StringBuilder();
+                        try
+                        {
+                            foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                            {
+                                System.Type[] asmTypes;
+                                try { asmTypes = asm.GetTypes(); }
+                                catch { continue; }
+                                foreach (var t in asmTypes)
+                                {
+                                    if (t.IsClass && !t.IsAbstract && androidRootType.IsAssignableFrom(t))
+                                    {
+                                        subclassLog.Append(t.FullName).Append(", ");
+                                        if (jdkConcreteType == null
+                                            && (t.Name.IndexOf("jdk", System.StringComparison.OrdinalIgnoreCase) >= 0
+                                             || t.Name.IndexOf("java", System.StringComparison.OrdinalIgnoreCase) >= 0))
+                                        {
+                                            jdkConcreteType = t;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception exSub)
+                        {
+                            Debug.LogWarning($"[Arsist] Subclass scan failed: {exSub.Message}");
+                        }
+                        Debug.Log($"[Arsist] AndroidRoot subclasses: {subclassLog}");
+                        Debug.Log($"[Arsist] JDK concrete type: {jdkConcreteType?.FullName ?? "NOT FOUND"}");
+
+                        object jdkRootValue = null;
+
+                        if (jdkConcreteType != null)
+                        {
+                            // JDK 用具体クラスのコンストラクタを試みる
+                            var jdkCtors = jdkConcreteType.GetConstructors(
+                                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                                | System.Reflection.BindingFlags.Instance);
+                            foreach (var ctor in jdkCtors)
+                            {
+                                var ps = ctor.GetParameters();
+                                Debug.Log($"[Arsist] {jdkConcreteType.Name} ctor({string.Join(", ", System.Array.ConvertAll(ps, p => p.ParameterType.Name + " " + p.Name))})");
+                                try
+                                {
+                                    object inst = null;
+                                    if (ps.Length == 0) inst = ctor.Invoke(null);
+                                    else if (ps.Length == 1 && ps[0].ParameterType == typeof(string)) inst = ctor.Invoke(new object[] { jdkPath });
+                                    else if (ps.Length == 1 && ps[0].ParameterType == typeof(bool)) inst = ctor.Invoke(new object[] { false });
+                                    else if (ps.Length == 2 && ps[0].ParameterType == typeof(bool) && ps[1].ParameterType == typeof(string))
+                                        inst = ctor.Invoke(new object[] { false, jdkPath });
+
+                                    if (inst != null)
+                                    {
+                                        // m_CustomDirectory / m_UseEmbedded をセット
+                                        foreach (var fn in new[] { "m_CustomDirectory", "customDirectory", "_customDirectory" })
+                                        {
+                                            var fld = jdkConcreteType.GetField(fn, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                            fld?.SetValue(inst, jdkPath);
+                                        }
+                                        foreach (var fn in new[] { "m_UseEmbedded", "useEmbedded", "_useEmbedded" })
+                                        {
+                                            var fld = jdkConcreteType.GetField(fn, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                            fld?.SetValue(inst, false);
+                                        }
+                                        jdkRootValue = inst;
+                                        Debug.Log($"[Arsist] {jdkConcreteType.Name} instance created");
+                                        break;
+                                    }
+                                }
+                                catch (Exception exCtor)
+                                {
+                                    Debug.Log($"[Arsist] {jdkConcreteType.Name} ctor({ps.Length}) failed: {exCtor.InnerException?.Message ?? exCtor.Message}");
+                                }
+                            }
+                        }
+
+                        if (jdkRootValue != null)
+                        {
+                            try
+                            {
+                                setAndroidRootPathMethod.Invoke(null, new object[] { jdkRootValue, jdkPath });
+                                Debug.Log($"[Arsist] SetAndroidRootPath succeeded");
+
+                                var postCheck = settingsType.GetProperty("jdkRootPath",
+                                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                                if (postCheck != null)
+                                    Debug.Log($"[Arsist] jdkRootPath after SetAndroidRootPath = '{postCheck.GetValue(null)}'");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogWarning($"[Arsist] SetAndroidRootPath failed: {ex.InnerException?.Message ?? ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            Debug.LogWarning("[Arsist] Could not construct/find AndroidRoot JDK value");
+                        }
+                    }
+                }
+
+                // jdkRootPath セッターが失敗する場合はバッキングフィールドへ直接書き込む
+                if (!string.IsNullOrWhiteSpace(jdkPath))
+                {
+                    bool jdkSet = false;
+                    // まず通常のプロパティセッターを試みる
+                    try
+                    {
+                        var prop = settingsType.GetProperty("jdkRootPath",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        if (prop != null && prop.CanWrite)
+                        {
+                            prop.SetValue(null, jdkPath);
+                            Debug.Log($"[Arsist] AndroidExternalToolsSettings.jdkRootPath = {jdkPath}");
+                            jdkSet = true;
+                        }
+                    }
+                    catch (Exception inner)
+                    {
+                        Debug.LogWarning($"[Arsist] jdkRootPath setter failed, trying field: {inner.InnerException?.Message ?? inner.Message}");
+                    }
+
+                    // セッターが失敗した場合: バッキングフィールドへ直接書き込む
+                    if (!jdkSet)
+                    {
+                        var fieldNames = new[] { "m_JDKRoot", "m_JdkRoot", "m_JDKRootPath", "m_JdkRootPath", "jdkRootPath", "<jdkRootPath>k__BackingField" };
+                        foreach (var fn in fieldNames)
+                        {
+                            var field = settingsType.GetField(fn,
+                                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
+                                | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                            if (field != null)
+                            {
+                                try
+                                {
+                                    field.SetValue(null, jdkPath);
+                                    jdkSet = true;
+                                    Debug.Log($"[Arsist] AndroidExternalToolsSettings.{fn} (field) = {jdkPath}");
+                                    break;
+                                }
+                                catch { /* ignore */ }
+                            }
+                        }
+
+                        if (!jdkSet)
+                        {
+                            Debug.LogWarning("[Arsist] Could not set JDK path via AndroidExternalToolsSettings. Relying on EditorPrefs.");
+                        }
+                    }
+                }
+
+                TrySetProp("sdkRootPath", androidSdkPath);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to apply AndroidExternalToolsSettings via reflection: {e.Message}");
+            }
         }
 
         private static BuildTarget ParseBuildTarget(string raw)
@@ -3038,6 +3364,7 @@ ScriptedImporter:
             
             PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+            PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
             PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
 
             // Quest(OpenXR + Oculus Utilities) は Linear color space が必須
@@ -3093,12 +3420,27 @@ ScriptedImporter:
             try
             {
                 var normalized = (targetDevice ?? "").ToLowerInvariant();
+                var manifestPath = Path.Combine(Application.dataPath, "Plugins", "Android", "AndroidManifest.xml");
+
                 if (normalized.Contains("xreal"))
                 {
                     // Adapters/XREAL_One/XrealBuildPatcher.cs がUnityプロジェクト側にコピーされている前提
                     InvokeStaticIfExists(
                         "Arsist.Adapters.XrealOne.XrealBuildPatcher",
                         "ApplyAllPatches"
+                    );
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.XrealOne.XrealBuildPatcher",
+                        "PatchAndroidManifest"
+                    );
+                }
+
+                if (normalized.Contains("quest") || normalized.Contains("meta"))
+                {
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "PatchAndroidManifest",
+                        manifestPath
                     );
                 }
             }
@@ -3807,6 +4149,9 @@ ScriptedImporter:
         }
 
         private static void InvokeStaticIfExists(string typeName, string methodName)
+            => InvokeStaticIfExists(typeName, methodName, null);
+
+        private static void InvokeStaticIfExists(string typeName, string methodName, params object[] args)
         {
             var t = FindTypeInLoadedAssemblies(typeName);
             if (t == null)
@@ -3822,7 +4167,7 @@ ScriptedImporter:
                 return;
             }
 
-            mi.Invoke(null, null);
+            mi.Invoke(null, args);
         }
 
         private static Type FindTypeInLoadedAssemblies(string fullName)

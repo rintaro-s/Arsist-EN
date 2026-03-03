@@ -1,0 +1,27 @@
+{
+  "appType": "ar",
+  "arSettings": {
+    "presentationMode": "world_anchored",
+    "floatingScreen": {
+      "distance": 2.0
+    },
+    "trackingMode": "6dof"
+  },
+  "name": "Test AR App",
+  "version": "1.0.0",
+  "targetDevice": "XREAL_One",
+  "buildSettings": {
+    "packageName": "com.test.arapp",
+    "productName": "Test AR App"
+  },
+  "uiAuthoring": {
+    "mode": "visual"
+  },
+  "id": "test-project-001",
+  "scenes": [
+    {
+      "name": "MainScene",
+      "objects": []
+    }
+  ]
+}

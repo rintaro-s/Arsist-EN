@@ -79,7 +79,7 @@ namespace Arsist.Runtime.Scripting
             foreach (var script in scripts)
             {
                 var triggerType = script.trigger?["type"]?.ToString() ?? "awake";
-                var triggerValue = script.trigger?["value"]?.ToString() ?? "0";
+                var triggerValue = script.trigger?["value"]?.ToString() ?? "1000";
 
                 switch (triggerType.ToLowerInvariant())
                 {
@@ -95,10 +95,16 @@ namespace Arsist.Runtime.Scripting
                         break;
 
                     case "interval":
-                        if (float.TryParse(triggerValue, out var ms) && ms > 0f)
-                            StartCoroutine(RunInterval(script.id, script.code, ms / 1000f));
-                        else
-                            Debug.LogWarning($"[Arsist] Script '{script.id}': invalid interval value '{triggerValue}'");
+                        const float defaultIntervalMs = 1000f;
+                        float intervalMs;
+
+                        if (!float.TryParse(triggerValue, out intervalMs) || intervalMs <= 0f)
+                        {
+                            intervalMs = defaultIntervalMs;
+                            Debug.LogWarning($"[Arsist] Script '{script.id}': invalid interval value '{triggerValue}', fallback to {defaultIntervalMs}ms");
+                        }
+
+                        StartCoroutine(RunInterval(script.id, script.code, intervalMs / 1000f));
                         break;
 
                     case "event":
