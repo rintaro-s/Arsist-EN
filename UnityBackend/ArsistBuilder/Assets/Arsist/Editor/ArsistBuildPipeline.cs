@@ -651,45 +651,8 @@ namespace Arsist.Builder
                         var go = CreateGameObject(obj);
                         if (go != null && contentParent != null)
                         {
-                            // **修正: 親に配置した後にトランスフォームを再適用**
-                            // これにより、エディタで設定した回転/位置が確実に反映される
-                            go.transform.SetParent(contentParent, false); // worldPositionStays = false
-                            
-                            // トランスフォームデータを再適用
-                            var transformData = obj["transform"] as JObject;
-                            if (transformData != null)
-                            {
-                                var pos = transformData["position"] as JObject;
-                                var rot = transformData["rotation"] as JObject;
-                                var scale = transformData["scale"] as JObject;
-
-                                if (pos != null)
-                                {
-                                    go.transform.position = new Vector3(
-                                        pos["x"]?.Value<float>() ?? 0,
-                                        pos["y"]?.Value<float>() ?? 0,
-                                        pos["z"]?.Value<float>() ?? 0
-                                    );
-                                }
-
-                                if (rot != null)
-                                {
-                                    go.transform.eulerAngles = new Vector3(
-                                        rot["x"]?.Value<float>() ?? 0,
-                                        rot["y"]?.Value<float>() ?? 0,
-                                        rot["z"]?.Value<float>() ?? 0
-                                    );
-                                }
-
-                                if (scale != null)
-                                {
-                                    go.transform.localScale = new Vector3(
-                                        scale["x"]?.Value<float>() ?? 1,
-                                        scale["y"]?.Value<float>() ?? 1,
-                                        scale["z"]?.Value<float>() ?? 1
-                                    );
-                                }
-                            }
+                            // 親に配置（worldPositionStays = false でローカル座標を保持）
+                            go.transform.SetParent(contentParent, false);
                         }
                     }
                 }
@@ -782,58 +745,57 @@ namespace Arsist.Builder
 
             go.name = name;
 
-            // **重要: Transform適用は親に配置する前に行う**
-            // これにより、親の回転の影響を受けずにエディタと同じ結果になる
             var transformData = objData["transform"] as JObject;
             if (transformData != null)
             {
-                var pos = transformData["position"] as JObject;
-                var rot = transformData["rotation"] as JObject;
-                var scale = transformData["scale"] as JObject;
+                var pos   = transformData["position"] as JObject;
+                var rot   = transformData["rotation"] as JObject;
+                var scale = transformData["scale"]    as JObject;
 
-                if (pos != null)
-                    go.transform.position = new Vector3(
-                        pos["x"]?.Value<float>() ?? 0,
-                        pos["y"]?.Value<float>() ?? 0,
-                        pos["z"]?.Value<float>() ?? 0
-                    );
+                float px = pos?["x"]?.Value<float>() ?? 0;
+                float py = pos?["y"]?.Value<float>() ?? 0;
+                float pz = pos?["z"]?.Value<float>() ?? 0;
 
-                if (rot != null)
+                float rx = rot?["x"]?.Value<float>() ?? 0;
+                float ry = rot?["y"]?.Value<float>() ?? 0;
+                float rz = rot?["z"]?.Value<float>() ?? 0;
+
+                float sx = scale?["x"]?.Value<float>() ?? 1;
+                float sy = scale?["y"]?.Value<float>() ?? 1;
+                float sz = scale?["z"]?.Value<float>() ?? 1;
+
+                if (type == "model")
                 {
-                    var rotX = rot["x"]?.Value<float>() ?? 0;
-                    var rotY = rot["y"]?.Value<float>() ?? 0;
-                    var rotZ = rot["z"]?.Value<float>() ?? 0;
-                    
-                    // CRITICAL: GLB rotation compensation
-                    // glTFast imports GLB models with coordinate conversion that affects rotation
-                    // The engine shows rotation in Unity coordinate system, but GLB import adds implicit rotation
-                    // For GLB models specifically, we need to compensate
-                    bool isGLBModel = go.name.Contains("_Model") || go.GetComponentInChildren<MeshFilter>() != null;
-                    
-                    if (isGLBModel)
-                    {
-                        // GLB models: Apply rotation with X-axis compensation
-                        // glTFast imports with implicit -90 X rotation (Z-up to Y-up conversion)
-                        // Engine shows rotation in Unity space, so we need +90 X compensation
-                        var rotation = new Vector3(rotX + 90f, rotY, rotZ);
-                        go.transform.localEulerAngles = rotation;
-                        Debug.Log($"[Arsist] Applied GLB rotation compensation to {name}: engine({rotX},{rotY},{rotZ}) -> unity({rotation.x},{rotation.y},{rotation.z})");
-                    }
-                    else
-                    {
-                        // Non-GLB objects: Apply rotation directly
-                        var rotation = new Vector3(rotX, rotY, rotZ);
-                        go.transform.localEulerAngles = rotation;
-                        Debug.Log($"[Arsist] Applied rotation to {name}: {rotation}");
-                    }
-                }
+                    // -------------------------------------------------------
+                    // GLB/GLTF: エディタ(Three.js 右手座標系) → Unity(左手座標系) 変換
+                    //
+                    // Three.js : 右手系 Y-up  Z+ = 手前
+                    // Unity    : 左手系 Y-up  Z+ = 奥
+                    //
+                    // Position : Z を反転  (x, y, z) → (x, y, -z)
+                    // Rotation : X・Y 成分を反転したクォータニオン変換
+                    //            Q_unity = new Quaternion(-qx, -qy, qz, qw)
+                    // Scale    : そのまま
+                    // -------------------------------------------------------
+                    go.transform.localPosition = new Vector3(px, py, -pz);
 
-                if (scale != null)
-                    go.transform.localScale = new Vector3(
-                        scale["x"]?.Value<float>() ?? 1,
-                        scale["y"]?.Value<float>() ?? 1,
-                        scale["z"]?.Value<float>() ?? 1
-                    );
+                    // Three.js Euler(XYZ順, 右手系) → Unity クォータニオン(左手系)
+                    var qRH  = Quaternion.Euler(rx, ry, rz);
+                    var qLH  = new Quaternion(-qRH.x, -qRH.y, qRH.z, qRH.w);
+                    go.transform.localRotation = qLH;
+
+                    go.transform.localScale = new Vector3(sx, sy, sz);
+
+                    Debug.Log($"[Arsist] GLB transform (RH→LH): pos({px},{py},{pz})->({px},{py},{-pz}) rot({rx},{ry},{rz})->q({qLH.x:F3},{qLH.y:F3},{qLH.z:F3},{qLH.w:F3}) scale({sx},{sy},{sz})");
+                }
+                else
+                {
+                    // GLB 以外 (primitive / vrm / light / canvas 等) はそのまま適用
+                    go.transform.localPosition    = new Vector3(px, py, pz);
+                    go.transform.localEulerAngles = new Vector3(rx, ry, rz);
+                    go.transform.localScale       = new Vector3(sx, sy, sz);
+                    Debug.Log($"[Arsist] Transform applied to {name} (type:{type}): pos({px},{py},{pz}) rot({rx},{ry},{rz}) scale({sx},{sy},{sz})");
+                }
             }
 
             // マテリアル適用
@@ -1910,19 +1872,21 @@ namespace Arsist.Builder
             var importedPath = ImportModelAsAsset(foundAssetPath, name);
             if (!string.IsNullOrEmpty(importedPath))
             {
-                // インポート済みアセットからPrefabをインスタンス化
                 var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(importedPath);
                 if (prefab != null)
                 {
-                    // **CRITICAL: GLB coordinate system fix**
-                    // glTFast imports GLB with automatic coordinate conversion
-                    // This causes rotation mismatch with engine
-                    // Solution: Don't wrap, use the prefab directly and apply rotation compensation
+                    // **CRITICAL: Use wrapper pattern**
+                    // glTFast bakes coordinate conversion into the prefab's internal nodes.
+                    // We MUST NOT touch the prefab instance's own transform.
+                    // User transform (from Three.js right-handed space) is applied to the
+                    // wrapper after RH→LH coordinate conversion in CreateGameObject.
+                    var wrapper = new GameObject(name);
                     var instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-                    instance.name = name;
-                    
-                    Debug.Log($"[Arsist] Model imported: {importedPath}");
-                    return instance;
+                    instance.name = name + "_GLBRoot";
+                    // worldPositionStays=false: preserves glTFast's baked local transform
+                    instance.transform.SetParent(wrapper.transform, false);
+                    Debug.Log($"[Arsist] Model imported with wrapper: {importedPath}");
+                    return wrapper;
                 }
             }
 
