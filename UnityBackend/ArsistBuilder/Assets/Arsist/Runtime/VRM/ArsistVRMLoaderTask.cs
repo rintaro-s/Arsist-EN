@@ -77,9 +77,18 @@ namespace Arsist.Runtime.VRM
             if (vrmInstance != null)
             {
                 // VRM をこのゲームオブジェクトの子として配置
-                // ※ localRotation は設定しない。
-                //   VRM1.0 は UniVRM が glTF→Unity 座標変換のため 180° Y 回転を root に持つ。
-                //   ここで identity に上書きするとモデルが逆を向く。
+                //
+                // 【Arsist 座標系】
+                //   エディタ X+ = 左、Z+ = 前 → Unity X+ = 右、Z+ = 前
+                //   → wrapper の localPosition は (-px, py, pz) として X 反転済み
+                //   → wrapper の localRotation は Quaternion.identity（ユーザー回転 rx/ry/rz が 0 の場合）
+                //      ユーザーが回転を設定した場合は Mirror_X Quaternion が wrapper に適用済み
+                //
+                // ※ localRotation に追加補正はしない。
+                //   VRM 1.0 は UniVRM が glTF→Unity 変換で Y 軸 180° をルートに焼き込む。
+                //   ここで identity に上書きすると +Z 向きになる（後ろ向き）。
+                //   VRM 0.x は UniVRM が補正済みで通常 -Z 向き（正面）。
+                //
                 vrmInstance.transform.SetParent(gameObject.transform, false);
                 vrmInstance.transform.localPosition = Vector3.zero;
 

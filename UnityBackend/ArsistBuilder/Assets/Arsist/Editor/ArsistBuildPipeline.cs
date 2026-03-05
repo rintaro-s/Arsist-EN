@@ -764,37 +764,55 @@ namespace Arsist.Builder
                 float sy = scale?["y"]?.Value<float>() ?? 1;
                 float sz = scale?["z"]?.Value<float>() ?? 1;
 
-                if (type == "model")
+                // =================================================================
+                // 【Arsist 座標系定義】
+                //
+                // エディタ（Arsist Engine ビューポート）の座標系:
+                //   原点  = ユーザーのデフォルト位置（AR 開始点）
+                //   Z+   = ユーザーの正面（前方）
+                //   X+   = ユーザーの左
+                //   X-   = ユーザーの右
+                //   Y+   = 上
+                //
+                // Unity AR の世界座標系（XREAL / Meta Quest ともに同様）:
+                //   原点  = XR Origin（= AR 開始点）
+                //   Z+   = 前方  ← エディタ Z+ と同じ → Z はそのまま
+                //   X+   = 右   ← エディタ X+ とは逆  → X を反転 (-x)
+                //   Y+   = 上   ← 同じ → Y はそのまま
+                //
+                // 変換式（全タイプ共通）:
+                //   Position  : (x, y, z) → (-x, y, z)
+                //   Rotation  : X 軸鏡像変換後の Quaternion
+                //               Mirror_X(Q) = new Quaternion(-qx, qy, qz, -qw)
+                //   Scale     : (x, y, z) そのまま（スケールは鏡像しない）
+                //
+                // ※ GLB (model): wrapper に上記変換適用。glTFast の内部座標変換は保持。
+                // ※ VRM        : wrapper に Position のみ適用。Rotation は UniVRM 内部変換に委任。
+                // =================================================================
+
+                if (type == "vrm")
                 {
-                    // -------------------------------------------------------
-                    // GLB/GLTF: エディタ(Three.js 右手座標系) → Unity(左手座標系) 変換
-                    //
-                    // Three.js : 右手系 Y-up  Z+ = 手前
-                    // Unity    : 左手系 Y-up  Z+ = 奥
-                    //
-                    // Position : Z を反転  (x, y, z) → (x, y, -z)
-                    // Rotation : X・Y 成分を反転したクォータニオン変換
-                    //            Q_unity = new Quaternion(-qx, -qy, qz, qw)
-                    // Scale    : そのまま
-                    // -------------------------------------------------------
-                    go.transform.localPosition = new Vector3(px, py, -pz);
-
-                    // Three.js Euler(XYZ順, 右手系) → Unity クォータニオン(左手系)
-                    var qRH  = Quaternion.Euler(rx, ry, rz);
-                    var qLH  = new Quaternion(-qRH.x, -qRH.y, qRH.z, qRH.w);
-                    go.transform.localRotation = qLH;
-
-                    go.transform.localScale = new Vector3(sx, sy, sz);
-
-                    Debug.Log($"[Arsist] GLB transform (RH→LH): pos({px},{py},{pz})->({px},{py},{-pz}) rot({rx},{ry},{rz})->q({qLH.x:F3},{qLH.y:F3},{qLH.z:F3},{qLH.w:F3}) scale({sx},{sy},{sz})");
+                    // VRM: Position X 反転 + Rotation Mirror_X 変換。
+                    // UniVRM の内部変換（Y180等）は wrapper localRotation に加算されるため問題なし。
+                    go.transform.localPosition = new Vector3(-px, py, pz);
+                    var qv = Quaternion.Euler(rx, ry, rz);
+                    go.transform.localRotation = new Quaternion(-qv.x, qv.y, qv.z, -qv.w);
+                    go.transform.localScale    = new Vector3(sx, sy, sz);
+                    Debug.Log($"[Arsist] VRM pos(-x,y,z): ({px},{py},{pz})->({-px},{py},{pz}) rot({rx},{ry},{rz}) scale({sx},{sy},{sz})");
                 }
                 else
                 {
-                    // GLB 以外 (primitive / vrm / light / canvas 等) はそのまま適用
-                    go.transform.localPosition    = new Vector3(px, py, pz);
-                    go.transform.localEulerAngles = new Vector3(rx, ry, rz);
-                    go.transform.localScale       = new Vector3(sx, sy, sz);
-                    Debug.Log($"[Arsist] Transform applied to {name} (type:{type}): pos({px},{py},{pz}) rot({rx},{ry},{rz}) scale({sx},{sy},{sz})");
+                    // primitive / model(GLB) / light / canvas / text 等: 全同一変換
+                    // Position: X 反転
+                    go.transform.localPosition = new Vector3(-px, py, pz);
+
+                    // Rotation: X 軸鏡像 Quaternion
+                    var q  = Quaternion.Euler(rx, ry, rz);
+                    var qm = new Quaternion(-q.x, q.y, q.z, -q.w);
+                    go.transform.localRotation = qm;
+
+                    go.transform.localScale = new Vector3(sx, sy, sz);
+                    Debug.Log($"[Arsist] {type} pos(-x,y,z): ({px},{py},{pz})->({-px},{py},{pz}) rot({rx},{ry},{rz})->q({qm.x:F3},{qm.y:F3},{qm.z:F3},{qm.w:F3}) scale({sx},{sy},{sz})");
                 }
             }
 
