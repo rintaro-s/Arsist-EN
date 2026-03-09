@@ -18,20 +18,20 @@ interface TemplateOption {
 const templates: TemplateOption[] = [
   {
     id: '3d_ar_scene',
-    name: '3D ARシーン',
-    description: '6DoFトラッキング。空間に3Dオブジェクトを配置する標準AR',
+    name: '3D AR Scene',
+    description: '6DoF tracking. Standard AR with 3D objects in space',
     icon: <Glasses size={32} />,
   },
   {
     id: '2d_floating_screen',
-    name: '2D フローティングスクリーン',
-    description: '3DoFトラッキング。視線前方に2D画面を固定表示',
+    name: '2D Floating Screen',
+    description: '3DoF tracking. Fixed 2D display in front of view',
     icon: <Monitor size={32} />,
   },
   {
     id: 'head_locked_hud',
     name: 'Head-Locked HUD',
-    description: 'Head-locked。視界固定のHUD表示に最適',
+    description: 'Head-locked. Ideal for fixed HUD overlay',
     icon: <Layout size={32} />,
   },
 ];
@@ -79,7 +79,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
 
   const handleCreate = async () => {
     if (!projectName || !projectPath) {
-      addNotification({ type: 'error', message: 'プロジェクト名とパスを入力してください' });
+      addNotification({ type: 'error', message: 'Please enter project name and path' });
       return;
     }
 
@@ -93,10 +93,10 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
         targetDevice: selectedDevice,
       });
       
-      addNotification({ type: 'success', message: 'プロジェクトを作成しました' });
+      addNotification({ type: 'success', message: 'Project created successfully' });
       onClose();
     } catch (error) {
-      addNotification({ type: 'error', message: `プロジェクトの作成に失敗しました: ${error}` });
+      addNotification({ type: 'error', message: `Failed to create project: ${error}` });
     } finally {
       setIsCreating(false);
     }
@@ -107,7 +107,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
       <div className="modal max-w-2xl" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header flex items-center justify-between">
-          <span>新規プロジェクト</span>
+          <span>New Project</span>
           <button onClick={onClose} className="btn-icon">
             <X size={18} />
           </button>
@@ -115,11 +115,11 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
 
         {/* Steps Indicator */}
         <div className="px-6 py-3 border-b border-arsist-primary/30 flex items-center gap-4">
-          <StepIndicator step={1} currentStep={step} label="テンプレート" />
+          <StepIndicator step={1} currentStep={step} label="Template" />
           <div className="flex-1 h-0.5 bg-arsist-primary/30" />
-          <StepIndicator step={2} currentStep={step} label="設定" />
+          <StepIndicator step={2} currentStep={step} label="Settings" />
           <div className="flex-1 h-0.5 bg-arsist-primary/30" />
-          <StepIndicator step={3} currentStep={step} label="デバイス" />
+          <StepIndicator step={3} currentStep={step} label="Device" />
         </div>
 
         {/* Content */}
@@ -128,7 +128,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
           {step === 1 && (
             <div className="space-y-4">
               <p className="text-arsist-muted text-sm mb-4">
-                プロジェクトのテンプレートを選択してください
+                Select a project template
               </p>
               <div className="grid grid-cols-1 gap-3">
                 {templates.map(template => (
@@ -162,7 +162,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
           {step === 2 && (
             <div className="space-y-6">
               <div>
-                <label className="input-label">プロジェクト名</label>
+                <label className="input-label">Project Name</label>
                 <input
                   type="text"
                   value={projectName}
@@ -173,7 +173,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               </div>
 
               <div>
-                <label className="input-label">保存先</label>
+                <label className="input-label">Save Location</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -189,7 +189,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               </div>
 
               <div className="p-4 bg-arsist-bg rounded-lg">
-                <h4 className="text-sm font-medium mb-2">プロジェクト構成</h4>
+                <h4 className="text-sm font-medium mb-2">Project Structure</h4>
                 <pre className="text-xs text-arsist-muted font-mono">
 {`${projectName}/
 ├── project.json
@@ -205,10 +205,10 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               </div>
 
               <div>
-                <label className="input-label">UI作成</label>
+                <label className="input-label">UI Creation</label>
                 <div className="p-3 rounded border border-arsist-accent bg-arsist-accent/10 text-xs">
-                  <div className="font-medium">GUI統合モード</div>
-                  <div className="text-arsist-muted">Figma風のUIエディタで直感的に編集します</div>
+                  <div className="font-medium">Integrated GUI Mode</div>
+                  <div className="text-arsist-muted">Intuitive editing with Figma-like UI editor</div>
                 </div>
               </div>
             </div>
@@ -218,7 +218,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
           {step === 3 && (
             <div className="space-y-4">
               <p className="text-arsist-muted text-sm mb-4">
-                ターゲットデバイスを選択してください（後から変更可能）
+                Select target device (can be changed later)
               </p>
               <div className="grid grid-cols-2 gap-3">
                 {devices.map(device => (
@@ -241,7 +241,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
                       <div>
                         <h3 className="font-medium">{device.name}</h3>
                         {!device.available && (
-                          <span className="text-xs text-arsist-muted">近日対応予定</span>
+                          <span className="text-xs text-arsist-muted">Coming Soon</span>
                         )}
                       </div>
                     </div>
@@ -252,7 +252,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               <div className="mt-6 p-4 bg-arsist-primary/20 rounded-lg">
                 <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
                   <MapPin size={16} className="text-arsist-accent" />
-                  選択されたデバイス: {devices.find(d => d.id === selectedDevice)?.name}
+                  Selected Device: {devices.find(d => d.id === selectedDevice)?.name}
                 </h4>
                 <p className="text-xs text-arsist-muted">
                   {selectedDevice === 'Meta_Quest'
@@ -268,13 +268,13 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
         <div className="modal-footer">
           {step > 1 && (
             <button onClick={() => setStep(s => s - 1)} className="btn btn-ghost">
-              戻る
+              Back
             </button>
           )}
           <div className="flex-1" />
           {step < 3 ? (
             <button onClick={() => setStep(s => s + 1)} className="btn btn-primary">
-              次へ
+              Next
             </button>
           ) : (
             <button 
@@ -285,10 +285,10 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               {isCreating ? (
                 <>
                   <div className="spinner" />
-                  作成中...
+                  Creating...
                 </>
               ) : (
-                'プロジェクト作成'
+                'Create Project'
               )}
             </button>
           )}

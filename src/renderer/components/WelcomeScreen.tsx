@@ -52,7 +52,7 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
           </div>
           <h1 className="text-3xl font-bold text-arsist-text mb-2">Arsist Engine</h1>
           <p className="text-arsist-muted">
-            ARグラス・クロスプラットフォーム開発エンジン
+            Cross-Platform Development Engine for AR Glasses
           </p>
         </div>
 
@@ -65,9 +65,9 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
             <div className="w-10 h-10 bg-arsist-accent/20 rounded-lg flex items-center justify-center mb-3 group-hover:bg-arsist-accent/30 transition-colors">
               <Plus size={20} className="text-arsist-accent" />
             </div>
-            <h3 className="font-medium mb-1">新規プロジェクト</h3>
+            <h3 className="font-medium mb-1">New Project</h3>
             <p className="text-xs text-arsist-muted">
-              テンプレートから新しいARアプリを作成
+              Create a new AR app from template
             </p>
           </button>
 
@@ -78,16 +78,16 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
             <div className="w-10 h-10 bg-arsist-hover rounded-lg flex items-center justify-center mb-3 group-hover:bg-arsist-active transition-colors">
               <FolderOpen size={20} className="text-arsist-muted" />
             </div>
-            <h3 className="font-medium mb-1">プロジェクトを開く</h3>
+            <h3 className="font-medium mb-1">Open Project</h3>
             <p className="text-xs text-arsist-muted">
-              既存のArsistプロジェクトを読み込む
+              Load an existing Arsist project
             </p>
           </button>
         </div>
 
         {recent.length > 0 && (
           <div className="mb-6">
-            <h4 className="text-xs font-medium text-arsist-muted mb-2">最近開いたプロジェクト</h4>
+            <h4 className="text-xs font-medium text-arsist-muted mb-2">Recent Projects</h4>
             <div className="space-y-2">
               {recent.map((p) => (
                 <button
@@ -108,21 +108,21 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
         <div className="grid grid-cols-3 gap-3 mb-6">
           <div className="p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border text-center">
             <Box size={20} className="text-arsist-primary mx-auto mb-1" />
-            <p className="text-xs text-arsist-muted">3Dシーン編集</p>
+            <p className="text-xs text-arsist-muted">3D Scene Editing</p>
           </div>
           <div className="p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border text-center">
             <Layout size={20} className="text-arsist-warning mx-auto mb-1" />
-            <p className="text-xs text-arsist-muted">UI/HUDデザイン</p>
+            <p className="text-xs text-arsist-muted">UI/HUD Design</p>
           </div>
           <div className="p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border text-center">
             <Activity size={20} className="text-arsist-accent mx-auto mb-1" />
-            <p className="text-xs text-arsist-muted">データフロー</p>
+            <p className="text-xs text-arsist-muted">Data Flow</p>
           </div>
         </div>
 
         {/* Supported Devices */}
         <div className="bg-arsist-surface/50 rounded-lg p-4 border border-arsist-border">
-          <h4 className="text-xs font-medium text-arsist-muted mb-3">対応デバイス</h4>
+          <h4 className="text-xs font-medium text-arsist-muted mb-3">Supported Devices</h4>
           <div className="flex flex-wrap gap-2">
             {['XREAL One', 'XREAL Air 2', 'Rokid Max', 'VITURE One'].map((device) => (
               <span
@@ -133,7 +133,7 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
               </span>
             ))}
             <span className="px-2 py-1 bg-arsist-bg rounded text-xs text-arsist-muted">
-              + 追加予定
+              + More Coming
             </span>
           </div>
         </div>
@@ -141,7 +141,7 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
         {/* Quick Start Hint */}
         <div className="mt-4 text-center">
           <p className="text-xs text-arsist-muted">
-            <span className="kbd">Ctrl+N</span> 新規作成 | <span className="kbd">Ctrl+O</span> 開く | <span className="kbd">Ctrl+,</span> 設定
+            <span className="kbd">Ctrl+N</span> New | <span className="kbd">Ctrl+O</span> Open | <span className="kbd">Ctrl+,</span> Settings
           </p>
         </div>
       </div>

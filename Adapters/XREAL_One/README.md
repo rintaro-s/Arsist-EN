@@ -1,18 +1,18 @@
 # XREAL One Adapter for Arsist Engine
 
-XREAL One ARグラス用のデバイスアダプターです。
+Device adapter for XREAL One AR glasses.
 
-## 概要
+## Overview
 
-このアダプターは、ArsistエンジンでXREAL One/One Pro向けのARアプリケーションをビルドするために必要な設定とパッチを提供します。
+This adapter provides the necessary configurations and patches to build AR applications for XREAL One/One Pro using the Arsist engine.
 
-## 対応デバイス
+## Supported Devices
 
 - XREAL One
 - XREAL One Pro
-- (XREAL Air シリーズも基本的な互換性あり)
+- (XREAL Air series also has basic compatibility)
 
-## 必要なSDK
+## Required SDKs
 
 - **XREAL SDK**: 3.1.0以上
 - **Unity**: 2022.3.20f1 LTS以上
@@ -20,118 +20,118 @@ XREAL One ARグラス用のデバイスアダプターです。
 - **XR Interaction Toolkit**: 2.5.0以上
 - **OpenXR Plugin**: 1.9.0以上
 
-## インストール
+## Installation
 
-1. Arsistエンジンのアダプター管理画面でXREAL Oneを選択
-2. 「アダプターをインストール」をクリック
-3. Unityプロジェクトにパッチが自動適用されます
+1. Select XREAL One in the Arsist engine adapter management screen
+2. Click "Install Adapter"
+3. Patches will be automatically applied to the Unity project
 
-## ファイル構成
+## File Structure
 
 ```
 XREAL_One/
-├── adapter.json        # アダプター設定ファイル
-├── XrealBuildPatcher.cs # ビルドパッチャー
-├── AndroidManifest.xml  # Androidマニフェストテンプレート
-└── README.md           # このファイル
+├── adapter.json        # Adapter configuration file
+├── XrealBuildPatcher.cs # Build patcher
+├── AndroidManifest.xml  # Android manifest template
+└── README.md           # This file
 ```
 
-## 適用されるパッチ
+## Applied Patches
 
 ### Player Settings
-- **アーキテクチャ**: ARM64のみ
-- **スクリプトバックエンド**: IL2CPP
-- **グラフィックスAPI**: OpenGLES3 のみ（Vulkanは無効化）
-- **カラースペース**: Linear
-- **画面向き**: 横向き固定
+- **Architecture**: ARM64 only
+- **Scripting Backend**: IL2CPP
+- **Graphics API**: OpenGLES3 only (Vulkan disabled)
+- **Color Space**: Linear
+- **Screen Orientation**: Landscape locked
 
 ### Quality Settings
-- **アンチエイリアシング**: MSAAx4
-- **シャドウ距離**: 20m
-- **ターゲットフレームレート**: 60fps
+- **Anti-Aliasing**: MSAAx4
+- **Shadow Distance**: 20m
+- **Target Frame Rate**: 60fps
 
 ### XR Configuration
-- XR Plug-in Management (Android) で XREAL Loader を有効化
-- XR Interaction Toolkitの初期化
-- 視線/レイインタラクションの設定
+- Enable XREAL Loader in XR Plug-in Management (Android)
+- Initialize XR Interaction Toolkit
+- Configure gaze/ray interaction
 
-## ディスプレイ仕様
+## Display Specifications
 
-| 項目 | 値 |
-|------|-----|
-| 解像度 | 1920x1080 (片目) |
-| 視野角 | 50° (水平) / 28° (垂直) |
-| リフレッシュレート | 60Hz / 90Hz |
-| カラー深度 | 24bit |
+| Item | Value |
+|------|-------|
+| Resolution | 1920x1080 (per eye) |
+| Field of View | 50° (horizontal) / 28° (vertical) |
+| Refresh Rate | 60Hz / 90Hz |
+| Color Depth | 24bit |
 
-## 対応機能
+## Supported Features
 
-| 機能 | サポート |
-|------|---------|
-| 6DoFトラッキング | ✅ |
-| 平面検出 | ✅ |
-| 画像トラッキング | ✅ |
-| 空間マッピング | ✅ |
-| ジェスチャー認識 | ✅ |
-| ハンドトラッキング | ❌ |
-| フェイストラッキング | ❌ |
-| 音声入力 | ❌ |
+| Feature | Support |
+|---------|---------|
+| 6DoF Tracking | ✅ |
+| Plane Detection | ✅ |
+| Image Tracking | ✅ |
+| Spatial Mapping | ✅ |
+| Gesture Recognition | ✅ |
+| Hand Tracking | ❌ |
+| Face Tracking | ❌ |
+| Voice Input | ❌ |
 
-## 使用方法
+## Usage
 
-### Arsistエディタから
+### From Arsist Editor
 
-1. プロジェクトを作成/開く
-2. ビルド設定で「XREAL One」を選択
-3. 「ビルド」をクリック
+1. Create/open a project
+2. Select "XREAL One" in build settings
+3. Click "Build"
 
-### コマンドラインから
+### From Command Line
 
 ```bash
-# Arsist CLIでビルド
+# Build with Arsist CLI
 arsist build --device xreal-one --output ./build/
 
-# Unity直接ビルド
+# Direct Unity build
 unity -batchmode -quit \
   -executeMethod Arsist.Builder.ArsistBuildPipeline.BuildFromCLI \
   -targetDevice xreal-one \
   -outputPath ./build/
 ```
 
-## パフォーマンス推奨事項
+## Performance Recommendations
 
-1. **ドローコール**: 100以下を維持
-2. **ポリゴン数**: シーン全体で10万以下
-3. **テクスチャ**: ASTC圧縮使用、最大2048x2048
-4. **動的ライト**: 最小限に
-5. **透明オブジェクト**: 減らす
-6. **Single Pass Stereo Rendering**: 有効化
+1. **Draw Calls**: Keep below 100
+2. **Polygon Count**: Below 100k for entire scene
+3. **Textures**: Use ASTC compression, max 2048x2048
+4. **Dynamic Lights**: Minimize usage
+5. **Transparent Objects**: Reduce
+6. **Single Pass Stereo Rendering**: Enable
 
-## トラブルシューティング
+## Troubleshooting
 
-### ビルドが失敗する
+### Build Fails
 
-- XREAL SDKがインストールされているか確認
-- Unity バージョンが2022.3.20f1以上か確認
-- Android SDK/NDKのパスが設定されているか確認
+- Verify XREAL SDK is installed
+- Verify Unity version is 2022.3.20f1 or higher
+- Verify Android SDK/NDK paths are configured
 
-### アプリが起動しない
+### App Won't Launch
 
-- APKが署名されているか確認
-- minSdkVersionが29以上か確認
-- XREAL Oneのファームウェアが最新か確認
+- Verify APK is signed
+- Verify minSdkVersion is 29 or higher
+- Verify XREAL One firmware is up to date
 
-### トラッキングが不安定
+### Tracking is Unstable
 
-- 照明条件を改善
-- テクスチャの少ない壁を避ける
-- カメラの汚れを確認
+- Improve lighting conditions
+- Avoid walls with few textures
+- Check camera for dirt
 
-## ライセンス
+## License
 
 MIT License
 
-## サポート
+## Support
 
-- 問題報告: https://github.com/arsist/adapters/issues
-- ドキュメント: https://arsist.dev/docs/adapters/xreal-one
+- Issue Reports: https://github.com/arsist/adapters/issues
+- Documentation: https://arsist.dev/docs/adapters/xreal-one

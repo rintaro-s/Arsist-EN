@@ -4,7 +4,7 @@
  * UI: Element Inspector (スタイル, Bind, レイアウト)
  * DataFlow: Source / Transform 設定
  */
-import React, { useState } from 'react';
+import React from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { Vector3, UIElement, UIStyle, DataSourceDefinition, TransformDefinition } from '../../../shared/types';
@@ -29,7 +29,7 @@ export function RightPanel() {
 
 function ProjectARSettings() {
   const { project, updateARSettings } = useProjectStore();
-  if (!project) return <EmptyState icon={<Box size={28} />} text="オブジェクトを選択" sub="シーン内のオブジェクトをクリック" />;
+  if (!project) return <EmptyState icon={<Box size={28} />} text="Select an object" sub="Click an object in the scene" />;
 
   const ar = project.arSettings;
   const hasVRM = project.scenes.some((scene) => scene.objects.some((obj) => obj.type === 'vrm'));
@@ -39,21 +39,21 @@ function ProjectARSettings() {
       <div className="panel-header"><span>Project Settings</span></div>
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
 
-        {/* AR コンテキスト */}
+        {/* AR context */}
         <div className="text-[10px] text-arsist-muted flex items-center gap-1.5">
           <Compass size={12} />
           <span>{ar.trackingMode.toUpperCase()} / {ar.presentationMode.replace(/_/g, ' ')}</span>
         </div>
 
-        {/* リモートコントロール（VRMが存在する場合のみ表示） */}
+        {/* Remote control (visible only when VRM objects exist) */}
         {hasVRM && (
           <div className="p-3 rounded-lg border border-arsist-border space-y-2">
             <div className="flex items-center gap-1.5">
               <Wifi size={14} className="text-arsist-accent" />
-              <label className="text-xs font-semibold text-arsist-text">Python リモートコントロール</label>
+              <label className="text-xs font-semibold text-arsist-text">Python Remote Control</label>
             </div>
             <p className="text-[9px] text-arsist-muted leading-tight">
-              有効にするとビルド成果物に WS サーバーが起動し、Python から接続できます。同一 LAN 上のクライアントのみ接続可能です。
+              When enabled, the build spins up a WS server so Python clients on the same LAN can connect.
             </p>
             <div className="flex items-center gap-2">
               <input
@@ -64,12 +64,12 @@ function ProjectARSettings() {
                 className="w-3.5 h-3.5 accent-arsist-accent"
               />
               <label htmlFor="enableRemoteControl" className="text-xs text-arsist-text cursor-pointer">
-                リモートコントロールを有効にする
+                Enable remote control
               </label>
             </div>
             {ar.enableRemoteControl && (
               <>
-                <Field label="WebSocket ポート">
+                <Field label="WebSocket Port">
                   <input
                     type="number"
                     className="input text-xs py-1"
@@ -79,20 +79,20 @@ function ProjectARSettings() {
                     max={65535}
                   />
                 </Field>
-                <Field label="認証パスワード (任意)">
+                <Field label="Authentication Password (optional)">
                   <input
                     type="password"
                     className="input text-xs py-1"
                     value={ar.remoteControlPassword ?? ''}
                     onChange={(e) => updateARSettings({ remoteControlPassword: e.target.value })}
-                    placeholder="未設定なら認証なし"
+                    placeholder="No auth when empty"
                   />
                 </Field>
               </>
             )}
             {ar.enableRemoteControl && (
               <p className="text-[9px] text-arsist-warning leading-tight">
-                ⚠ 注意: 有効時は同一 LAN 内から接続可能です。公開ネットワークでは必ずパスワードを設定してください。
+                ⚠ Note: When enabled, any client on the same LAN can connect. Set a password before exposing on public networks.
               </p>
             )}
           </div>
@@ -101,7 +101,7 @@ function ProjectARSettings() {
         {!hasVRM && (
           <div className="p-3 rounded-lg border border-arsist-border/60 bg-arsist-surface/40">
             <p className="text-[10px] text-arsist-muted leading-tight">
-              リモートコントロールは VRM オブジェクトが 1 つ以上ある場合に表示されます。
+              Remote control settings appear once at least one VRM object exists.
             </p>
           </div>
         )}
@@ -143,7 +143,7 @@ function ObjectInspector() {
         )}
 
         {/* Name */}
-        <Field label="名前">
+        <Field label="Name">
           <input className="input text-sm" value={obj.name} onChange={(e) => updateObject(obj.id, { name: e.target.value })} />
         </Field>
 
@@ -151,24 +151,24 @@ function ObjectInspector() {
         <div className="p-3 rounded-lg border border-[#FF9800]/30 bg-[#E65100]/10 space-y-2">
           <div className="flex items-center gap-1.5">
             <Box size={14} className="text-[#FF9800]" />
-            <label className="text-xs font-semibold text-[#FF9800]">Asset ID (スクリプト用)</label>
+            <label className="text-xs font-semibold text-[#FF9800]">Asset ID (for scripting)</label>
           </div>
           <p className="text-[9px] text-[#9e9e9e] leading-tight">
-            スクリプトやPythonからこのオブジェクトを制御するためのIDです
+            ID used to control this object from scripts or Python
           </p>
           <Field label="ID">
-            <input className="input text-xs font-mono" placeholder="例: avatar, robot_01"
+            <input className="input text-xs font-mono" placeholder="e.g., avatar, robot_01"
               value={obj.assetId || ''}
               onChange={(e) => updateObject(obj.id, { assetId: e.target.value || undefined })} />
           </Field>
           {obj.assetId && (
             <p className="text-[9px] text-[#4CAF50] mt-1">
-              スクリプトで <span className="font-mono bg-[#2d2d2d] px-1 rounded">scene.setPosition('{obj.assetId}', 0, 0, 2)</span> のように使用できます
+              Use in scripts like <span className="font-mono bg-[#2d2d2d] px-1 rounded">scene.setPosition('{obj.assetId}', 0, 0, 2)</span>
             </p>
           )}
           {obj.type === 'vrm' && obj.assetId && (
             <p className="text-[9px] text-[#2196F3] mt-1">
-              VRM制御: <span className="font-mono bg-[#2d2d2d] px-1 rounded">vrm.setExpression('{obj.assetId}', 'Joy', 100)</span>
+              VRM control: <span className="font-mono bg-[#2d2d2d] px-1 rounded">vrm.setExpression('{obj.assetId}', 'Joy', 100)</span>
             </p>
           )}
         </div>
@@ -193,7 +193,7 @@ function ObjectInspector() {
         {/* Material */}
         {obj.material && (
           <div>
-            <label className="input-label">マテリアル</label>
+            <label className="input-label">Material</label>
             <div className="flex items-center gap-2">
               <input type="color" value={obj.material.color} className="w-8 h-8 rounded border border-arsist-border cursor-pointer"
                 onChange={(e) => updateObject(obj.id, { material: { ...obj.material!, color: e.target.value } })} />
@@ -205,19 +205,19 @@ function ObjectInspector() {
         {/* Canvas settings */}
         {obj.type === 'canvas' && obj.canvasSettings && (
           <div className="space-y-2">
-            <label className="input-label">Canvas 設定</label>
-            <Field label="UIレイアウト">
+            <label className="input-label">Canvas Settings</label>
+            <Field label="UI Layout">
               <select className="input text-xs" value={obj.canvasSettings.layoutId}
                 onChange={(e) => updateObject(obj.id, { canvasSettings: { ...obj.canvasSettings!, layoutId: e.target.value } })}>
                 {canvasLayouts.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
             </Field>
             <div className="grid grid-cols-2 gap-2">
-              <Field label="幅 (m)">
+              <Field label="Width (m)">
                 <input type="number" step="0.1" className="input text-xs py-1" value={obj.canvasSettings.widthMeters}
                   onChange={(e) => updateObject(obj.id, { canvasSettings: { ...obj.canvasSettings!, widthMeters: parseFloat(e.target.value) || 1 } })} />
               </Field>
-              <Field label="高さ (m)">
+              <Field label="Height (m)">
                 <input type="number" step="0.1" className="input text-xs py-1" value={obj.canvasSettings.heightMeters}
                   onChange={(e) => updateObject(obj.id, { canvasSettings: { ...obj.canvasSettings!, heightMeters: parseFloat(e.target.value) || 1 } })} />
               </Field>
@@ -230,7 +230,7 @@ function ObjectInspector() {
 
         {/* Delete */}
         <button onClick={() => removeObject(obj.id)} className="btn btn-ghost text-arsist-error text-xs w-full justify-center">
-          削除
+          Delete
         </button>
       </div>
     </div>
@@ -241,7 +241,7 @@ function ObjectInspector() {
    VRM Capabilities Panel
    ════════════════════════════════════════ */
 
-/** VRM固有の情報: 表情・ボーン・リモートコントロール用ヒント */
+/** VRM-specific info: expressions, bones, remote control hints */
 function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelPath?: string }) {
   const [expanded, setExpanded] = React.useState<{ expressions: boolean; bones: boolean }>({ expressions: false, bones: false });
 
@@ -265,24 +265,24 @@ function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelP
       {/* Header */}
       <div className="flex items-center gap-1.5">
         <User size={14} className="text-purple-400" />
-        <label className="text-xs font-semibold text-purple-400">VRM 情報</label>
+        <label className="text-xs font-semibold text-purple-400">VRM Details</label>
       </div>
 
       {/* Model file */}
       {fileName && (
         <div className="text-[9px] text-arsist-muted">
-          モデル: <span className="font-mono text-arsist-text">{fileName}</span>
+          Model: <span className="font-mono text-arsist-text">{fileName}</span>
         </div>
       )}
 
       {/* Asset ID reminder */}
       {assetId ? (
         <div className="text-[9px] text-[#4CAF50]">
-          制御ID: <span className="font-mono font-bold">{assetId}</span>
+          Control ID: <span className="font-mono font-bold">{assetId}</span>
         </div>
       ) : (
         <div className="text-[9px] text-[#FF9800]">
-          ⚠ Asset ID を設定するとスクリプトから制御できます
+          ⚠ Set an Asset ID to control from scripts
         </div>
       )}
 
@@ -293,8 +293,8 @@ function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelP
           onClick={() => setExpanded(prev => ({ ...prev, expressions: !prev.expressions }))}
         >
           <span className="text-[10px]">{expanded.expressions ? '▼' : '▶'}</span>
-          <span className="font-semibold">表情 (Expressions)</span>
-          <span className="text-[10px] text-arsist-muted ml-auto">{vrmExpressions.length} 標準</span>
+          <span className="font-semibold">Expressions</span>
+          <span className="text-[10px] text-arsist-muted ml-auto">{vrmExpressions.length} presets</span>
         </button>
         {expanded.expressions && (
           <div className="mt-1.5 space-y-1">
@@ -311,7 +311,7 @@ function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelP
               </p>
             )}
             <p className="text-[9px] text-arsist-muted">
-              ※ 実際の表情はモデルに依存します。ビルド後にクエリAPIで正確な一覧を取得できます
+              ※ Actual expressions depend on the model. Query the runtime API after build for an exact list.
             </p>
           </div>
         )}
@@ -324,8 +324,8 @@ function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelP
           onClick={() => setExpanded(prev => ({ ...prev, bones: !prev.bones }))}
         >
           <span className="text-[10px]">{expanded.bones ? '▼' : '▶'}</span>
-          <span className="font-semibold">ボーン (Humanoid Bones)</span>
-          <span className="text-[10px] text-arsist-muted ml-auto">{humanoidBones.length} 主要</span>
+          <span className="font-semibold">Humanoid Bones</span>
+          <span className="text-[10px] text-arsist-muted ml-auto">{humanoidBones.length} primary</span>
         </button>
         {expanded.bones && (
           <div className="mt-1.5 space-y-1">
@@ -342,7 +342,7 @@ function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelP
               </p>
             )}
             <p className="text-[9px] text-arsist-muted">
-              ※ VRM 0.x / 1.0 両対応。ビルド後にクエリAPIで正確な一覧を取得できます
+              ※ Works with VRM 0.x / 1.0. Query the runtime API post-build for a precise list.
             </p>
           </div>
         )}
@@ -351,7 +351,7 @@ function VRMCapabilitiesPanel({ assetId, modelPath }: { assetId?: string; modelP
       {/* Python remote control snippet */}
       {assetId && (
         <div className="mt-2 p-2 rounded bg-[#1e1e1e] border border-arsist-border">
-          <div className="text-[9px] text-arsist-muted mb-1">Python リモート制御サンプル:</div>
+          <div className="text-[9px] text-arsist-muted mb-1">Python remote control example:</div>
           <pre className="text-[9px] font-mono text-[#9CDCFE] leading-relaxed whitespace-pre-wrap">
 {`from python.Control import ArsistControl
 ctrl = ArsistControl("127.0.0.1", password="0000")
@@ -387,7 +387,7 @@ function UIInspector() {
 
   const element = layout && selectedUIElementId ? findElement(layout.root, selectedUIElementId) : null;
 
-  if (!element) return <EmptyState icon={<Layout size={28} />} text="UI要素を選択" sub="キャンバスまたは左パネルでクリック" />;
+  if (!element) return <EmptyState icon={<Layout size={28} />} text="Select a UI element" sub="Click the canvas or left panel" />;
 
   const update = (updates: Partial<UIElement>) => updateUIElement(element.id, updates);
   const updateStyle = (s: Partial<UIStyle>) => update({ style: { ...element.style, ...s } });
@@ -405,7 +405,7 @@ function UIInspector() {
 
         {/* Content */}
         {(element.type === 'Text' || element.type === 'Button') && (
-          <Field label="テキスト">
+          <Field label="Text">
             <input className="input text-xs" value={element.content || ''} onChange={(e) => update({ content: e.target.value })} />
           </Field>
         )}
@@ -414,19 +414,19 @@ function UIInspector() {
         <div className="p-3 rounded-lg border border-[#FF9800]/30 bg-[#E65100]/10 space-y-2">
           <div className="flex items-center gap-1.5">
             <Layout size={14} className="text-[#FF9800]" />
-            <label className="text-xs font-semibold text-[#FF9800]">Binding ID (スクリプト用)</label>
+            <label className="text-xs font-semibold text-[#FF9800]">Binding ID (for scripting)</label>
           </div>
           <p className="text-[9px] text-[#9e9e9e] leading-tight">
-            スクリプトからこのUI要素を操作するためのIDです
+            ID used to manipulate this UI element from scripts
           </p>
           <Field label="ID">
-            <input className="input text-xs font-mono" placeholder="例: welcomeText"
+            <input className="input text-xs font-mono" placeholder="e.g., welcomeText"
               value={element.bindingId || ''}
               onChange={(e) => update({ bindingId: e.target.value || undefined })} />
           </Field>
           {element.bindingId && (
             <p className="text-[9px] text-[#4CAF50] mt-1">
-              スクリプトで <span className="font-mono bg-[#2d2d2d] px-1 rounded">ui.setText('{element.bindingId}', '...')</span> のように使用できます
+              Use in scripts like <span className="font-mono bg-[#2d2d2d] px-1 rounded">ui.setText('{element.bindingId}', '...')</span>
             </p>
           )}
         </div>
@@ -435,16 +435,16 @@ function UIInspector() {
         <div className="p-3 rounded-lg border border-[#2196F3]/30 bg-[#0D47A1]/10 space-y-2">
           <div className="flex items-center gap-1.5">
             <Database size={14} className="text-[#2196F3]" />
-            <label className="text-xs font-semibold text-[#2196F3]">DataStore バインディング</label>
+            <label className="text-xs font-semibold text-[#2196F3]">DataStore Binding</label>
           </div>
           <p className="text-[9px] text-[#9e9e9e] leading-tight">
-            DataStoreの変数をUIに表示します
+            Displays a DataStore variable in the UI
           </p>
-          <Field label="変数を選択">
+          <Field label="Select Variable">
             <select className="input text-xs"
               value={element.bind?.key || ''}
               onChange={(e) => update({ bind: e.target.value ? { key: e.target.value, format: element.bind?.format } : undefined })}>
-              <option value="">バインディングなし</option>
+              <option value="">No binding</option>
               {(dataFlow?.dataSources || []).map((s) => (
                 <option key={s.id} value={s.storeAs}>
                   {s.storeAs} ({s.type})
@@ -458,50 +458,50 @@ function UIInspector() {
             </select>
           </Field>
           {element.bind?.key && (
-            <Field label="表示形式（オプション）">
-              <input className="input text-xs font-mono" placeholder="例: {value} km/h"
+            <Field label="Display Format (optional)">
+              <input className="input text-xs font-mono" placeholder="e.g., {value} km/h"
                 value={element.bind?.format || ''}
                 onChange={(e) => update({ bind: { key: element.bind?.key || '', format: e.target.value } })} />
-              <p className="text-[9px] text-[#9e9e9e] mt-1">変数 <span className="text-[#4CAF50] font-mono">{element.bind.key}</span> をバインド</p>
+              <p className="text-[9px] text-[#9e9e9e] mt-1">Binding variable <span className="text-[#4CAF50] font-mono">{element.bind.key}</span></p>
             </Field>
           )}
         </div>
 
-        {/* 要素タイプ別ヒント */}
+        {/* Element type hints */}
         {element.type === 'Slider' && (
           <div className="p-2.5 rounded-lg bg-[#4CAF50]/10 border border-[#4CAF50]/30 space-y-1">
             <p className="text-xs font-semibold text-[#4CAF50] flex items-center gap-1">
-              💡 スライダーの使い方
+              💡 Slider Tips
             </p>
             <p className="text-[9px] text-[#9e9e9e] leading-tight">
-              DataFlowエディタで値を持つDataSourceを作成 → このスライダーにバインド → 自動的に値が表示・操作可能になります
+              Create a DataSource with a value in DataFlow → bind it to this slider → the value displays and can be adjusted
             </p>
           </div>
         )}
         {element.type === 'Gauge' && (
           <div className="p-2.5 rounded-lg bg-[#2196F3]/10 border border-[#2196F3]/30 space-y-1">
             <p className="text-xs font-semibold text-[#2196F3] flex items-center gap-1">
-              📊 ゲージの使い方
+              📊 Gauge Tips
             </p>
             <p className="text-[9px] text-[#9e9e9e] leading-tight">
-              0～100の値をバインドするとゲージが自動的に更新されます。温度、バッテリー残量などの表示に最適です
+              Bind a 0–100 value to update automatically. Ideal for temperature, battery level, etc.
             </p>
           </div>
         )}
         {element.type === 'Graph' && (
           <div className="p-2.5 rounded-lg bg-[#FF9800]/10 border border-[#FF9800]/30 space-y-1">
             <p className="text-xs font-semibold text-[#FF9800] flex items-center gap-1">
-              📈 グラフの使い方
+              📈 Graph Tips
             </p>
             <p className="text-[9px] text-[#9e9e9e] leading-tight">
-              DataFlowエディタで History_Buffer を作成し、過去データを保持 → このグラフにバインドしてリアルタイムグラフを作成
+              Create a History_Buffer in DataFlow to store past data → bind this graph for real-time visualization
             </p>
           </div>
         )}
 
         {/* Layout */}
         {element.type === 'Panel' && (
-          <Field label="レイアウト">
+          <Field label="Layout">
             <select className="input text-xs" value={element.layout || 'FlexColumn'}
               onChange={(e) => update({ layout: e.target.value as UIElement['layout'] })}>
               <option value="FlexColumn">Flex Column</option>
@@ -513,11 +513,11 @@ function UIInspector() {
 
         {/* Size */}
         <div className="grid grid-cols-2 gap-2">
-          <Field label="幅">
+          <Field label="Width">
             <input className="input text-xs py-1" placeholder="auto" value={element.style.width ?? ''}
               onChange={(e) => updateStyle({ width: e.target.value === '' ? undefined : (isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value)) })} />
           </Field>
-          <Field label="高さ">
+          <Field label="Height">
             <input className="input text-xs py-1" placeholder="auto" value={element.style.height ?? ''}
               onChange={(e) => updateStyle({ height: e.target.value === '' ? undefined : (isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value)) })} />
           </Field>
@@ -525,7 +525,7 @@ function UIInspector() {
 
         {/* Colors */}
         <div className="grid grid-cols-2 gap-2">
-          <Field label="背景色">
+          <Field label="Background Color">
             <div className="flex items-center gap-1">
               <input type="color" value={element.style.backgroundColor || '#000000'} className="w-6 h-6 rounded border border-arsist-border"
                 onChange={(e) => updateStyle({ backgroundColor: e.target.value })} />
@@ -533,7 +533,7 @@ function UIInspector() {
                 onChange={(e) => updateStyle({ backgroundColor: e.target.value })} />
             </div>
           </Field>
-          <Field label="文字色">
+          <Field label="Text Color">
             <div className="flex items-center gap-1">
               <input type="color" value={element.style.color || '#ffffff'} className="w-6 h-6 rounded border border-arsist-border"
                 onChange={(e) => updateStyle({ color: e.target.value })} />
@@ -545,11 +545,11 @@ function UIInspector() {
 
         {/* Font */}
         <div className="grid grid-cols-2 gap-2">
-          <Field label="フォントサイズ">
+          <Field label="Font Size">
             <input type="number" className="input text-xs py-1" value={element.style.fontSize ?? ''} placeholder="14"
               onChange={(e) => updateStyle({ fontSize: e.target.value ? parseInt(e.target.value) : undefined })} />
           </Field>
-          <Field label="太さ">
+          <Field label="Weight">
             <select className="input text-xs py-1" value={element.style.fontWeight || 'normal'}
               onChange={(e) => updateStyle({ fontWeight: e.target.value })}>
               <option value="normal">Normal</option>
@@ -563,11 +563,11 @@ function UIInspector() {
 
         {/* Border / Radius */}
         <div className="grid grid-cols-2 gap-2">
-          <Field label="角丸">
+          <Field label="Radius">
             <input type="number" className="input text-xs py-1" value={element.style.borderRadius ?? ''} placeholder="0"
               onChange={(e) => updateStyle({ borderRadius: e.target.value ? parseInt(e.target.value) : undefined })} />
           </Field>
-          <Field label="透明度">
+          <Field label="Opacity">
             <input type="number" step="0.1" min="0" max="1" className="input text-xs py-1" value={element.style.opacity ?? 1}
               onChange={(e) => updateStyle({ opacity: parseFloat(e.target.value) })} />
           </Field>
@@ -582,7 +582,7 @@ function UIInspector() {
         )}
 
         <button onClick={() => removeUIElement(element.id)} className="btn btn-ghost text-arsist-error text-xs w-full justify-center">
-          要素を削除
+          Delete Element
         </button>
       </div>
     </div>
@@ -600,36 +600,36 @@ function DataFlowInspector() {
 
   if (source) return <DataSourceEditor source={source} onUpdate={(u) => updateDataSource(source.id, u)} />;
   if (transform) return <TransformEditor transform={transform} onUpdate={(u) => updateTransform(transform.id, u)} />;
-  return <EmptyState icon={<Database size={28} />} text="DataSource / Transform を選択" sub="左パネルまたは中央エディタでクリック" />;
+  return <EmptyState icon={<Database size={28} />} text="Select a DataSource / Transform" sub="Click the left panel or center editor" />;
 }
 
 function DataSourceEditor({ source, onUpdate }: { source: DataSourceDefinition; onUpdate: (u: Partial<DataSourceDefinition>) => void }) {
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="panel-header"><span>DataSource 設定</span></div>
+      <div className="panel-header"><span>DataSource Settings</span></div>
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         <div className="text-[10px] text-arsist-accent flex items-center gap-1.5">
           <Database size={12} />
           <span className="font-medium">{source.type}</span>
         </div>
 
-        <Field label="Store As (変数名)">
+        <Field label="Store As (variable)">
           <input className="input text-xs font-mono" value={source.storeAs} onChange={(e) => onUpdate({ storeAs: e.target.value })} />
         </Field>
 
-        <Field label="モード">
+        <Field label="Mode">
           <select className="input text-xs" value={source.mode} onChange={(e) => onUpdate({ mode: e.target.value as 'polling' | 'event' })}>
-            <option value="polling">Polling (定期取得)</option>
-            <option value="event">Event (随時)</option>
+            <option value="polling">Polling (interval)</option>
+            <option value="event">Event (on demand)</option>
           </select>
         </Field>
 
-        <Field label="更新レート (Hz)">
+        <Field label="Update Rate (Hz)">
           <input type="number" className="input text-xs py-1" value={source.updateRate ?? ''} placeholder="60"
             onChange={(e) => onUpdate({ updateRate: e.target.value ? parseFloat(e.target.value) : undefined })} />
         </Field>
 
-        {/* タイプ固有パラメータ */}
+        {/* Type-specific parameters */}
         {source.type === 'REST_Client' && (
           <>
             <Field label="URL">
@@ -637,7 +637,7 @@ function DataSourceEditor({ source, onUpdate }: { source: DataSourceDefinition; 
                 value={(source.parameters?.url as string) || ''}
                 onChange={(e) => onUpdate({ parameters: { ...source.parameters, url: e.target.value } })} />
             </Field>
-            <Field label="メソッド">
+            <Field label="Method">
               <select className="input text-xs" value={(source.parameters?.method as string) || 'GET'}
                 onChange={(e) => onUpdate({ parameters: { ...source.parameters, method: e.target.value } })}>
                 <option value="GET">GET</option>
@@ -677,25 +677,25 @@ function DataSourceEditor({ source, onUpdate }: { source: DataSourceDefinition; 
 function TransformEditor({ transform, onUpdate }: { transform: TransformDefinition; onUpdate: (u: Partial<TransformDefinition>) => void }) {
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="panel-header"><span>Transform 設定</span></div>
+      <div className="panel-header"><span>Transform Settings</span></div>
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         <div className="text-[10px] text-arsist-warning flex items-center gap-1.5">
           <Activity size={12} />
           <span className="font-medium">{transform.type}</span>
         </div>
 
-        <Field label="Store As (変数名)">
+        <Field label="Store As (variable)">
           <input className="input text-xs font-mono" value={transform.storeAs} onChange={(e) => onUpdate({ storeAs: e.target.value })} />
         </Field>
 
-        <Field label="入力キー (カンマ区切り)">
+        <Field label="Input Keys (comma-separated)">
           <input className="input text-xs font-mono" placeholder="raw_speed, raw_temp"
             value={transform.inputs.join(', ')}
             onChange={(e) => onUpdate({ inputs: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />
         </Field>
 
         {(transform.type === 'Formula' || transform.type === 'String_Template') && (
-          <Field label="式 / テンプレート">
+          <Field label="Expression / Template">
             <input className="input text-xs font-mono" placeholder="(val * 1.8) + 32"
               value={transform.expression || ''}
               onChange={(e) => onUpdate({ expression: e.target.value })} />
@@ -718,21 +718,21 @@ function TransformEditor({ transform, onUpdate }: { transform: TransformDefiniti
         {transform.type === 'Remap' && (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <Field label="入力 Min">
+              <Field label="Input Min">
                 <input type="number" className="input text-xs py-1" value={(transform.parameters?.inputMin as number) ?? 0}
                   onChange={(e) => onUpdate({ parameters: { ...transform.parameters, inputMin: parseFloat(e.target.value) } })} />
               </Field>
-              <Field label="入力 Max">
+              <Field label="Input Max">
                 <input type="number" className="input text-xs py-1" value={(transform.parameters?.inputMax as number) ?? 1}
                   onChange={(e) => onUpdate({ parameters: { ...transform.parameters, inputMax: parseFloat(e.target.value) } })} />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Field label="出力 Min">
+              <Field label="Output Min">
                 <input type="number" className="input text-xs py-1" value={(transform.parameters?.outputMin as number) ?? 0}
                   onChange={(e) => onUpdate({ parameters: { ...transform.parameters, outputMin: parseFloat(e.target.value) } })} />
               </Field>
-              <Field label="出力 Max">
+              <Field label="Output Max">
                 <input type="number" className="input text-xs py-1" value={(transform.parameters?.outputMax as number) ?? 100}
                   onChange={(e) => onUpdate({ parameters: { ...transform.parameters, outputMax: parseFloat(e.target.value) } })} />
               </Field>
@@ -741,21 +741,21 @@ function TransformEditor({ transform, onUpdate }: { transform: TransformDefiniti
         )}
 
         {transform.type === 'Threshold' && (
-          <Field label="しきい値">
+          <Field label="Threshold">
             <input type="number" className="input text-xs py-1" value={(transform.parameters?.threshold as number) ?? ''}
               onChange={(e) => onUpdate({ parameters: { ...transform.parameters, threshold: parseFloat(e.target.value) } })} />
           </Field>
         )}
 
         {transform.type === 'History_Buffer' && (
-          <Field label="バッファサイズ">
+          <Field label="Buffer Size">
             <input type="number" className="input text-xs py-1" value={(transform.parameters?.size as number) ?? 60}
               onChange={(e) => onUpdate({ parameters: { ...transform.parameters, size: parseInt(e.target.value) } })} />
           </Field>
         )}
 
-        <Field label="更新レート (Hz)">
-          <input type="number" className="input text-xs py-1" value={transform.updateRate ?? ''} placeholder="自動"
+        <Field label="Update Rate (Hz)">
+          <input type="number" className="input text-xs py-1" value={transform.updateRate ?? ''} placeholder="Auto"
             onChange={(e) => onUpdate({ updateRate: e.target.value ? parseFloat(e.target.value) : undefined })} />
         </Field>
       </div>

@@ -64,7 +64,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           const s = await api.sdk.xrealStatus();
           setXrealSdkStatus(s);
         } else {
-          setXrealSdkStatus({ exists: false, error: 'SDK検出APIが利用できません（Electronの再起動が必要な可能性があります）' });
+          setXrealSdkStatus({ exists: false, error: 'SDK detection API unavailable (Electron restart may be required)' });
         }
       } catch (e) {
         setXrealSdkStatus({ exists: false, error: String((e as any)?.message || e) });
@@ -77,7 +77,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           const s = await api.sdk.questStatus();
           setQuestSdkStatus(s);
         } else {
-          setQuestSdkStatus({ exists: false, error: 'SDK検出APIが利用できません（Electronの再起動が必要な可能性があります）' });
+          setQuestSdkStatus({ exists: false, error: 'SDK detection API unavailable (Electron restart may be required)' });
         }
       } catch (e) {
         setQuestSdkStatus({ exists: false, error: String((e as any)?.message || e) });
@@ -115,7 +115,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       // preloadが古い等でexistsが無い場合でも落ちないようにする
       addNotification({
         type: 'warning',
-        message: 'Unity実行ファイルの存在確認ができません（Electron側APIが古い可能性）。推測パスを入力しました。',
+        message: 'Cannot verify Unity executable (Electron API may be outdated). Guessed path entered.',
       });
       return linuxCandidate;
     }
@@ -177,13 +177,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     try {
       const api: any = window.electronAPI as any;
       if (typeof api?.unity?.detectPaths !== 'function') {
-        addNotification({ type: 'error', message: 'Unity自動検出APIが利用できません（Electronの再起動が必要な可能性があります）' });
+        addNotification({ type: 'error', message: 'Unity auto-detection API unavailable (Electron restart may be required)' });
         return;
       }
 
       const result = await api.unity.detectPaths();
       if (!result?.success) {
-        addNotification({ type: 'error', message: result?.error || 'Unityパスの自動検出に失敗しました' });
+        addNotification({ type: 'error', message: result?.error || 'Failed to auto-detect Unity path' });
         return;
       }
       const details = (result as any).details as Array<{ path: string; version?: string }> | undefined;
@@ -205,7 +205,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           if (v && !unityVersion.trim()) setUnityVersion(v);
         }
       } else {
-        addNotification({ type: 'warning', message: 'Unityが見つかりませんでした。Unity HubのEditorインストールを確認してください。' });
+        addNotification({ type: 'warning', message: 'Unity not found. Please check Unity Hub Editor installation.' });
       }
     } finally {
       setDetectingUnity(false);
@@ -246,7 +246,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       bottomPanelHeight,
     });
 
-    addNotification({ type: 'success', message: '設定を保存しました' });
+    addNotification({ type: 'success', message: 'Settings saved' });
     onClose();
   };
 
@@ -260,7 +260,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal max-w-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header flex items-center justify-between">
-          <span>設定</span>
+          <span>Settings</span>
           <button onClick={onClose} className="btn-icon">
             <X size={18} />
           </button>
@@ -268,10 +268,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
         <div className="modal-body overflow-y-auto max-h-[70vh] space-y-6">
           <section>
-            <h3 className="text-xs font-medium text-arsist-accent mb-3">Unity設定</h3>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">Unity Settings</h3>
             <div className="space-y-3">
               <div>
-                <label className="input-label">Unity パス</label>
+                <label className="input-label">Unity Path</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -284,19 +284,19 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     <FolderOpen size={16} />
                   </button>
                   <button onClick={handleDetectUnityPath} className="btn btn-secondary" disabled={detectingUnity}>
-                    自動検出
+                    Auto-Detect
                   </button>
                 </div>
                 {versionDetected && (
-                  <p className="text-xs text-arsist-success mt-1">検出: {versionDetected}</p>
+                  <p className="text-xs text-arsist-success mt-1">Detected: {versionDetected}</p>
                 )}
                 <p className="text-xs text-arsist-muted mt-1">
-                  Linuxは通常 <span className="font-mono">.../Editor/Unity</span>、Windowsは <span className="font-mono">.../Editor/Unity.exe</span> を指定します
+                  Linux: typically <span className="font-mono">.../Editor/Unity</span>, Windows: <span className="font-mono">.../Editor/Unity.exe</span>
                 </p>
 
                 {unityCandidates.length > 0 && (
                   <div className="mt-2 p-2 bg-arsist-bg border border-arsist-border rounded">
-                    <div className="text-[10px] text-arsist-muted mb-1">検出候補（クリックで設定）</div>
+                    <div className="text-[10px] text-arsist-muted mb-1">Detected candidates (click to set)</div>
                     <div className="space-y-1">
                       {unityCandidates.map((p) => (
                         <button
@@ -323,7 +323,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 )}
 
                 <div>
-                  <label className="input-label">Unity ライセンスファイル（.ulf）</label>
+                  <label className="input-label">Unity License File (.ulf)</label>
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -337,13 +337,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     </button>
                   </div>
                   <p className="text-xs text-arsist-muted mt-1">
-                    ここを指定すると、ビルド時に <span className="font-mono">-manualLicenseFile</span> を付けて起動します
+                    If specified, builds will use <span className="font-mono">-manualLicenseFile</span> flag
                   </p>
                 </div>
               </div>
 
               <div>
-                <label className="input-label">必要なUnityバージョン</label>
+                <label className="input-label">Required Unity Version</label>
                 <input
                   type="text"
                   value={unityVersion}
@@ -352,7 +352,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   placeholder="2022.3.20f1"
                 />
                 <p className="text-xs text-arsist-muted mt-1">
-                  指定したバージョン以上でビルドが実行されます
+                  Builds will only run on this version or higher
                 </p>
               </div>
             </div>
@@ -362,15 +362,15 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <h3 className="text-xs font-medium text-arsist-accent mb-3">SDK（XREAL）</h3>
             <div className="space-y-2 text-xs">
               <div className="text-arsist-muted">
-                XREAL SDK（UPMパッケージ）はリポジトリ直下の
+                Place XREAL SDK (UPM package) at
                 <span className="font-mono"> sdk/com.xreal.xr/package </span>
-                に配置してください。
+                in repository root.
               </div>
               <div className="p-2 bg-arsist-bg border border-arsist-border rounded">
                 <div className="flex items-center justify-between">
-                  <div className="text-[10px] text-arsist-muted">検出状態</div>
+                  <div className="text-[10px] text-arsist-muted">Detection Status</div>
                   <div className={xrealSdkStatus?.exists ? 'text-arsist-success' : 'text-arsist-error'}>
-                    {xrealSdkStatus?.exists ? 'OK' : '未検出'}
+                    {xrealSdkStatus?.exists ? 'OK' : 'Not Found'}
                   </div>
                 </div>
                 <div className="mt-1 text-[10px] text-arsist-muted">package.json</div>
@@ -387,8 +387,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 )}
               </div>
               <div className="text-[10px] text-arsist-muted">
-                ※ XREAL向けビルド時は、SDKをUnityプロジェクトの <span className="font-mono">Packages/com.xreal.xr</span> に埋め込み、
-                <span className="font-mono">Packages/manifest.json</span> を自動更新します。
+                ※ For XREAL builds, SDK is embedded to <span className="font-mono">Packages/com.xreal.xr</span> and
+                <span className="font-mono">Packages/manifest.json</span> is auto-updated.
               </div>
             </div>
           </section>
@@ -397,18 +397,18 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <h3 className="text-xs font-medium text-arsist-accent mb-3">SDK（Quest）</h3>
             <div className="space-y-2 text-xs">
               <div className="text-arsist-muted">
-                Quest向けSDKは
+                Place Quest SDK at
                 <span className="font-mono"> sdk/quest </span>
-                に配置してください。
+                directory.
               </div>
               <div className="p-2 bg-arsist-bg border border-arsist-border rounded">
                 <div className="flex items-center justify-between">
-                  <div className="text-[10px] text-arsist-muted">検出状態（Core）</div>
+                  <div className="text-[10px] text-arsist-muted">Detection Status (Core)</div>
                   <div className={questSdkStatus?.exists ? 'text-arsist-success' : 'text-arsist-error'}>
-                    {questSdkStatus?.exists ? 'OK' : '未検出'}
+                    {questSdkStatus?.exists ? 'OK' : 'Not Found'}
                   </div>
                 </div>
-                <div className="mt-1 text-[10px] text-arsist-muted">SDK配置先</div>
+                <div className="mt-1 text-[10px] text-arsist-muted">SDK Location</div>
                 <div className="font-mono text-[10px] text-arsist-text break-all">
                   {questSdkStatus?.path || 'sdk/quest'}
                 </div>
@@ -416,7 +416,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 <div className="font-mono text-[10px] text-arsist-text break-all">
                   {questSdkStatus?.corePackage || 'com.meta.xr.sdk.core-*.tgz'}
                 </div>
-                <div className="mt-1 text-[10px] text-arsist-muted">MR Utility Kit（任意）</div>
+                <div className="mt-1 text-[10px] text-arsist-muted">MR Utility Kit (Optional)</div>
                 <div className="font-mono text-[10px] text-arsist-text break-all">
                   {questSdkStatus?.mrukPackage || 'com.meta.xr.mrutilitykit-*.tgz'}
                 </div>
@@ -425,16 +425,16 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 )}
               </div>
               <div className="text-[10px] text-arsist-muted">
-                ※ Quest向けビルド時は、<span className="font-mono">sdk/quest</span> の .tgz をUnityプロジェクトの
-                <span className="font-mono">Packages</span> に埋め込み、
-                <span className="font-mono">Packages/manifest.json</span> を自動更新します。
+                ※ For Quest builds, .tgz files from <span className="font-mono">sdk/quest</span> are embedded to
+                <span className="font-mono">Packages</span> and
+                <span className="font-mono">Packages/manifest.json</span> is auto-updated.
               </div>
             </div>
           </section>
 
           {bundledDeps.length > 0 && (
             <section>
-              <h3 className="text-xs font-medium text-arsist-accent mb-3">バンドル済み依存（sdk/）</h3>
+              <h3 className="text-xs font-medium text-arsist-accent mb-3">Bundled Dependencies (sdk/)</h3>
               <div className="space-y-1">
                 {bundledDeps.map((dep) => (
                   <div key={dep.name} className="p-2 bg-arsist-bg border border-arsist-border rounded flex items-center justify-between">
@@ -444,7 +444,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                       <div className="font-mono text-[10px] text-arsist-muted truncate">{dep.path}</div>
                     </div>
                     <div className={`text-[10px] shrink-0 ml-2 ${dep.exists ? 'text-arsist-success' : 'text-arsist-error'}`}>
-                      {dep.exists ? 'OK' : '未検出'}
+                      {dep.exists ? 'OK' : 'Not Found'}
                     </div>
                   </div>
                 ))}
@@ -453,9 +453,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           )}
 
           <section>
-            <h3 className="text-xs font-medium text-arsist-primary mb-3">ビルド設定</h3>
+            <h3 className="text-xs font-medium text-arsist-primary mb-3">Build Settings</h3>
             <div>
-              <label className="input-label">既定の出力先</label>
+              <label className="input-label">Default Output Directory</label>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -472,10 +472,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           </section>
 
           <section>
-            <h3 className="text-xs font-medium text-arsist-warning mb-3">レイアウト設定</h3>
+            <h3 className="text-xs font-medium text-arsist-warning mb-3">Layout Settings</h3>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="input-label">左パネル幅</label>
+                <label className="input-label">Left Panel Width</label>
                 <input
                   type="number"
                   value={leftPanelWidth}
@@ -486,7 +486,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 />
               </div>
               <div>
-                <label className="input-label">右パネル幅</label>
+                <label className="input-label">Right Panel Width</label>
                 <input
                   type="number"
                   value={rightPanelWidth}
@@ -497,7 +497,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 />
               </div>
               <div>
-                <label className="input-label">下パネル高さ</label>
+                <label className="input-label">Bottom Panel Height</label>
                 <input
                   type="number"
                   value={bottomPanelHeight}
@@ -510,15 +510,15 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             </div>
             <div className="mt-3">
               <button onClick={handleResetLayout} className="btn btn-ghost text-xs">
-                レイアウトをリセット
+                Reset Layout
               </button>
             </div>
           </section>
         </div>
 
         <div className="modal-footer flex justify-end gap-2">
-          <button onClick={onClose} className="btn btn-ghost">キャンセル</button>
-          <button onClick={handleSave} className="btn btn-success">保存</button>
+          <button onClick={onClose} className="btn btn-ghost">Cancel</button>
+          <button onClick={handleSave} className="btn btn-success">Save</button>
         </div>
       </div>
     </div>

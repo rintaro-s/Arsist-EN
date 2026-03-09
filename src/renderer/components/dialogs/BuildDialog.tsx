@@ -52,14 +52,14 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     if (!isLicensing) return null;
 
     const summary =
-      'Unityのライセンス認証で停止しました。Unity Hubでサインイン/ライセンス有効化後、再度ビルドしてください。';
+      'Build stopped due to Unity licensing. Please sign in to Unity Hub and activate license, then rebuild.';
 
     const guidance = [
       '--- Suggested Fix (Unity Licensing) ---',
-      '1) Unity Hub を起動してサインインする',
-      '2) Hub の Licenses(ライセンス) で、このPCに Unity を有効化する',
-      '3) 一度 Unity Editor をGUIで起動してから（初回の認証/同意）、Arsist から再ビルドする',
-      '4) プロキシ/社内ネットワークの場合は Unity の認証サーバーへ到達できるか確認する',
+      '1) Launch Unity Hub and sign in',
+      '2) In Hub Licenses, activate Unity for this PC',
+      '3) Launch Unity Editor GUI once (for initial auth/consent), then rebuild from Arsist',
+      '4) If using proxy/corporate network, verify access to Unity auth servers',
     ].join('\n');
 
     return { summary, guidance };
@@ -147,7 +147,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     if (!window.electronAPI || !project) return;
     
     if (!unityPath || !outputPath) {
-      addNotification({ type: 'error', message: 'Unity パスと出力先を設定してください' });
+      addNotification({ type: 'error', message: 'Please set Unity path and output directory' });
       return;
     }
 
@@ -170,13 +170,13 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
       ].join('\n');
 
       setErrorModal({
-        summary: helpful?.summary || 'Unityビルドがエラーで停止しました。詳細をコピーして共有できます。',
+        summary: helpful?.summary || 'Unity build stopped with error. You can copy details to share.',
         details,
       });
 
       addNotification({
         type: 'error',
-        message: `ビルド失敗: ${errorText}`,
+        message: `Build failed: ${errorText}`,
       });
     };
 
@@ -219,7 +219,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         addBuildLog(`[Arsist] ✓ Build successful: ${buildResult.outputPath}`);
         addNotification({ 
           type: 'success', 
-          message: `ビルド完了: ${buildResult.outputPath}` 
+          message: `Build completed: ${buildResult.outputPath}` 
         });
       } else {
         const errorText = typeof buildResult.error === 'string' && buildResult.error
@@ -248,7 +248,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   const handleSaveAndBuild = async () => {
     await saveProject();
     if (useProjectStore.getState().isDirty) {
-      addNotification({ type: 'error', message: '保存に失敗したためビルドを開始できませんでした' });
+      addNotification({ type: 'error', message: 'Failed to save, cannot start build' });
       return;
     }
     setShowUnsavedConfirm(false);
@@ -265,10 +265,10 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     const result = await window.electronAPI.unity.cancelBuild();
     if (result?.success) {
       addBuildLog('[Arsist] Build cancel requested');
-      addNotification({ type: 'info', message: 'ビルドキャンセルを要求しました' });
+      addNotification({ type: 'info', message: 'Build cancellation requested' });
       return;
     }
-    addNotification({ type: 'error', message: result?.error || 'ビルドキャンセルに失敗しました' });
+    addNotification({ type: 'error', message: result?.error || 'Failed to cancel build' });
   };
 
   return (
@@ -277,7 +277,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         <div className="modal max-w-2xl" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header flex items-center justify-between">
-          <span>ビルド設定</span>
+          <span>Build Settings</span>
           <button onClick={onClose} className="btn-icon" disabled={isBuilding}>
             <X size={18} />
           </button>
@@ -288,7 +288,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
           {/* Unity Path */}
           <div className="mb-6">
             <label className="input-label flex items-center gap-2">
-              Unity パス
+              Unity Path
               {unityValid === true && <CheckCircle size={14} className="text-green-500" />}
               {unityValid === false && <AlertCircle size={14} className="text-red-500" />}
             </label>
@@ -316,7 +316,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
 
           {/* Target Device */}
           <div className="mb-6">
-            <label className="input-label">ターゲットデバイス</label>
+            <label className="input-label">Target Device</label>
             <div className="grid grid-cols-2 gap-2">
               {devices.map(device => (
                 <button
@@ -342,7 +342,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
 
           {/* Output Path */}
           <div className="mb-6">
-            <label className="input-label">出力先</label>
+            <label className="input-label">Output Directory</label>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -364,7 +364,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
 
           {/* Options */}
           <div className="mb-6">
-            <label className="input-label">オプション</label>
+            <label className="input-label">Options</label>
             <div className="space-y-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -383,7 +383,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
           {isBuilding && (
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">ビルド進捗</span>
+                <span className="text-sm font-medium">Build Progress</span>
                 <span className="text-sm text-arsist-muted">{buildProgress}%</span>
               </div>
               <div className="progress-bar">
@@ -399,7 +399,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
           {/* Build Log */}
           {buildLogs.length > 0 && (
             <div>
-              <label className="input-label">ビルドログ</label>
+              <label className="input-label">Build Log</label>
               <div className="h-40 overflow-y-auto bg-arsist-bg rounded-lg p-2 font-mono text-xs">
                 {buildLogs.map((log, i) => (
                   <div 
@@ -426,14 +426,14 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
               onClick={handleCancelBuild}
               className="btn btn-danger"
             >
-              ビルドキャンセル
+              Cancel Build
             </button>
           ) : (
             <button 
               onClick={onClose}
               className="btn btn-ghost"
             >
-              閉じる
+              Close
             </button>
           )}
           <button
@@ -444,12 +444,12 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
             {isBuilding ? (
               <>
                 <div className="spinner" />
-                ビルド中...
+                Building...
               </>
             ) : (
               <>
                 <Play size={18} />
-                ビルド開始
+                Start Build
               </>
             )}
           </button>
@@ -461,25 +461,25 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         <div className="modal-overlay" style={{ zIndex: 1001 }}>
           <div className="modal max-w-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header flex items-center justify-between">
-              <span>未保存の変更があります</span>
+              <span>Unsaved Changes</span>
               <button onClick={() => setShowUnsavedConfirm(false)} className="btn-icon">
                 <X size={18} />
               </button>
             </div>
             <div className="modal-body">
               <p className="text-sm text-arsist-muted">
-                ビルド前に保存しますか？
+                Save before building?
               </p>
             </div>
             <div className="modal-footer flex justify-end gap-2">
               <button onClick={() => setShowUnsavedConfirm(false)} className="btn btn-ghost">
-                キャンセル
+                Cancel
               </button>
               <button onClick={handleBuildWithoutSave} className="btn btn-secondary">
-                保存せずビルド
+                Build Without Saving
               </button>
               <button onClick={handleSaveAndBuild} className="btn btn-primary">
-                保存してビルド
+                Save and Build
               </button>
             </div>
           </div>
@@ -489,7 +489,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
       {/* BuildDialogのオーバーレイより後に描画して最前面に出す */}
       {errorModal && (
         <ErrorDialog
-          title="ビルドエラー"
+          title="Build Error"
           summary={errorModal.summary}
           details={errorModal.details}
           onClose={() => setErrorModal(null)}

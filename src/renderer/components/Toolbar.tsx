@@ -53,10 +53,10 @@ export function Toolbar() {
       {/* Left: Project + View tabs */}
       <div className="flex items-center gap-1">
         <div className="flex items-center gap-0.5 pr-2 border-r border-arsist-border">
-          <IconBtn icon={<Plus size={16} />} tip="新規プロジェクト" onClick={() => setShowNewProjectDialog(true)} />
-          <IconBtn icon={<FolderOpen size={16} />} tip="プロジェクトを開く" onClick={handleOpenProject} />
+          <IconBtn icon={<Plus size={16} />} tip="New Project" onClick={() => setShowNewProjectDialog(true)} />
+          <IconBtn icon={<FolderOpen size={16} />} tip="Open Project" onClick={handleOpenProject} />
           {isDirty && (
-            <IconBtn icon={<Save size={16} />} tip="保存" className="text-arsist-warning" onClick={() => saveProject()} />
+            <IconBtn icon={<Save size={16} />} tip="Save" className="text-arsist-warning" onClick={() => saveProject()} />
           )}
         </div>
 
@@ -95,21 +95,21 @@ export function Toolbar() {
         {currentView === 'scene' && (
           <>
             <div className="flex items-center bg-arsist-bg rounded p-0.5 gap-0.5">
-              <ToolBtn icon={<Move size={15} />} active={transformMode === 'translate'} onClick={() => setTransformMode('translate')} tip="移動" />
-              <ToolBtn icon={<RotateCw size={15} />} active={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')} tip="回転" />
-              <ToolBtn icon={<Maximize2 size={15} />} active={transformMode === 'scale'} onClick={() => setTransformMode('scale')} tip="スケール" />
+              <ToolBtn icon={<Move size={15} />} active={transformMode === 'translate'} onClick={() => setTransformMode('translate')} tip="Translate" />
+              <ToolBtn icon={<RotateCw size={15} />} active={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')} tip="Rotate" />
+              <ToolBtn icon={<Maximize2 size={15} />} active={transformMode === 'scale'} onClick={() => setTransformMode('scale')} tip="Scale" />
             </div>
             <div className="w-px h-5 bg-arsist-border" />
             <div className="flex items-center bg-arsist-bg rounded p-0.5 gap-0.5">
-              <ToolBtn icon={<Grid3X3 size={15} />} active={showGrid} onClick={() => setShowGrid(!showGrid)} tip="グリッド" />
-              <ToolBtn icon={<Axis3D size={15} />} active={showAxes} onClick={() => setShowAxes(!showAxes)} tip="軸" />
-              <ToolBtn icon={<Magnet size={15} />} active={snapToGrid} onClick={() => setSnapToGrid(!snapToGrid)} tip="スナップ" />
+              <ToolBtn icon={<Grid3X3 size={15} />} active={showGrid} onClick={() => setShowGrid(!showGrid)} tip="Grid" />
+              <ToolBtn icon={<Axis3D size={15} />} active={showAxes} onClick={() => setShowAxes(!showAxes)} tip="Axes" />
+              <ToolBtn icon={<Magnet size={15} />} active={snapToGrid} onClick={() => setSnapToGrid(!snapToGrid)} tip="Snap" />
             </div>
           </>
         )}
 
         {currentView === 'ui' && (
-          <span className="text-[11px] text-arsist-muted">UI要素を左パネルから追加 / キャンバス上で編集</span>
+          <span className="text-[11px] text-arsist-muted">Add UI elements from the left panel / edit on the canvas</span>
         )}
 
         {currentView === 'dataflow' && (
@@ -117,22 +117,22 @@ export function Toolbar() {
         )}
 
         {currentView === 'script' && (
-          <span className="text-[11px] text-arsist-muted">JavaScript (Jint) • 左パネルからスクリプト追加 / 右パネルでトリガー設定</span>
+          <span className="text-[11px] text-arsist-muted">JavaScript (Jint) • Add scripts from the left panel / configure triggers on the right panel</span>
         )}
       </div>
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
-        <IconBtn icon={<Server size={16} />} tip="MCP サーバー" onClick={() => setShowMCPDialog(true)} />
-        <IconBtn icon={<Eye size={16} />} tip="プレビュー" onClick={() => setShowPreviewDialog(true)} />
-        <IconBtn icon={<Settings size={16} />} tip="設定" onClick={() => setShowSettingsDialog(true)} />
+        <IconBtn icon={<Server size={16} />} tip="MCP Server" onClick={() => setShowMCPDialog(true)} />
+        <IconBtn icon={<Eye size={16} />} tip="Preview" onClick={() => setShowPreviewDialog(true)} />
+        <IconBtn icon={<Settings size={16} />} tip="Settings" onClick={() => setShowSettingsDialog(true)} />
         <button
           onClick={() => setShowBuildDialog(true)}
           className="btn btn-success text-xs h-7 px-3"
           disabled={!project}
         >
           <Download size={14} />
-          <span>ビルド</span>
+          <span>Build</span>
         </button>
       </div>
     </div>

@@ -1,6 +1,6 @@
 /**
- * ScriptEditor — JavaScript スクリプトエディタ
- * Jint ベースの動的スクリプトシステム用エディタ
+ * ScriptEditor — JavaScript script editor
+ * Jint-based editor for the dynamic scripting system
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
@@ -12,7 +12,7 @@ import { useUIStore } from '../../stores/uiStore';
 import type { ScriptTriggerType, ScriptData } from '../../../shared/types';
 
 // ========================================
-// ScriptEditor (メインビュー)
+// ScriptEditor (main view)
 // ========================================
 
 export function ScriptEditor() {
@@ -42,7 +42,7 @@ export function ScriptEditor() {
     if (!script || !dirty) return;
     updateScript(script.id, { code });
     setDirty(false);
-    addConsoleLog({ type: 'info', message: `スクリプト「${script.name}」を保存しました` });
+    addConsoleLog({ type: 'info', message: `Saved script "${script.name}"` });
   }, [script, code, dirty]);
 
   const handleExportBundle = () => {
@@ -52,7 +52,7 @@ export function ScriptEditor() {
       setExportCopied(true);
       setTimeout(() => setExportCopied(false), 2000);
     });
-    addConsoleLog({ type: 'info', message: `スクリプトバンドル (${bundle.scripts.length}件) をクリップボードにコピーしました` });
+    addConsoleLog({ type: 'info', message: `Copied script bundle (${bundle.scripts.length} items) to clipboard` });
   };
 
   const handleTabKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -79,8 +79,8 @@ export function ScriptEditor() {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center text-arsist-muted gap-3">
         <Zap size={40} className="opacity-20" />
-        <p className="text-sm">スクリプトがありません</p>
-        <p className="text-xs opacity-60">左パネルの「+」から新規スクリプトを作成</p>
+        <p className="text-sm">No scripts yet</p>
+        <p className="text-xs opacity-60">Use “+” in the left panel to create one</p>
       </div>
     );
   }
@@ -89,21 +89,21 @@ export function ScriptEditor() {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center text-arsist-muted gap-3">
         <Zap size={40} className="opacity-20" />
-        <p className="text-sm">スクリプトを選択してください</p>
+        <p className="text-sm">Select a script</p>
       </div>
     );
   }
 
   return (
     <div className="w-full h-full flex flex-col bg-arsist-bg text-arsist-text overflow-hidden">
-      {/* ヘッダー */}
+      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-arsist-border bg-arsist-surface shrink-0">
         <div className="flex items-center gap-2">
           <Zap size={14} className="text-arsist-accent" />
           <span className="text-sm font-medium truncate max-w-[240px]">{script.name}</span>
-          {dirty && <span className="text-[10px] text-arsist-warning bg-arsist-warning/10 px-1.5 py-0.5 rounded">未保存</span>}
+          {dirty && <span className="text-[10px] text-arsist-warning bg-arsist-warning/10 px-1.5 py-0.5 rounded">Unsaved</span>}
           {!script.enabled && (
-            <span className="text-[10px] text-arsist-muted bg-arsist-hover px-1.5 py-0.5 rounded">無効</span>
+            <span className="text-[10px] text-arsist-muted bg-arsist-hover px-1.5 py-0.5 rounded">Disabled</span>
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -117,27 +117,27 @@ export function ScriptEditor() {
             }`}
           >
             <Play size={12} />
-            <span>保存 (Ctrl+S)</span>
+            <span>Save (Ctrl+S)</span>
           </button>
           <button
             onClick={handleExportBundle}
             className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-arsist-hover hover:bg-arsist-active text-arsist-text transition-colors"
           >
             {exportCopied ? <CheckCircle size={12} className="text-green-400" /> : <Download size={12} />}
-            <span>{exportCopied ? 'コピー済み' : 'バンドル出力'}</span>
+            <span>{exportCopied ? 'Copied' : 'Export Bundle'}</span>
           </button>
         </div>
       </div>
 
-      {/* APIリファレンス (折りたたみ) */}
+      {/* API Reference (collapsible) */}
       <ApiQuickRef />
 
-      {/* コードエリア */}
+      {/* Code area */}
       <div className="flex-1 overflow-hidden relative">
         <div className="absolute inset-0 flex">
-          {/* 行番号 */}
+          {/* Line numbers */}
           <LineNumbers code={code} />
-          {/* テキストエリア */}
+          {/* Textarea */}
           <textarea
             ref={textareaRef}
             className="flex-1 bg-transparent resize-none outline-none font-mono text-sm leading-6 text-arsist-text p-3 pl-0 overflow-auto"
@@ -153,10 +153,10 @@ export function ScriptEditor() {
         </div>
       </div>
 
-      {/* フッター */}
+      {/* Footer */}
       <div className="flex items-center justify-between px-3 py-1.5 border-t border-arsist-border bg-arsist-surface shrink-0 text-[10px] text-arsist-muted">
-        <span>JavaScript (Jint) • IL2CPP/XREAL/Quest 対応</span>
-        <span>{code.split('\n').length} 行 / {code.length} 文字</span>
+        <span>JavaScript (Jint) • Works with IL2CPP / XREAL / Quest</span>
+        <span>{code.split('\n').length} lines / {code.length} chars</span>
       </div>
     </div>
   );
@@ -189,10 +189,10 @@ function TriggerBadge({ trigger }: { trigger: ScriptData['trigger'] }) {
     event: <MousePointer size={10} />,
   };
   const labels: Record<ScriptTriggerType, string> = {
-    onStart: '起動時',
-    onUpdate: '毎フレーム',
-    interval: `${trigger.type === 'interval' ? (Number(trigger.value ?? 1000) / 1000).toFixed(1) : '?'}秒毎`,
-    event: `イベント: ${trigger.value ?? '未設定'}`,
+    onStart: 'On Start',
+    onUpdate: 'Every Frame',
+    interval: `${trigger.type === 'interval' ? (Number(trigger.value ?? 1000) / 1000).toFixed(1) : '?'}s interval`,
+    event: `Event: ${trigger.value ?? 'Unset'}`,
   };
   return (
     <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-arsist-accent/10 text-arsist-accent border border-arsist-accent/20">
@@ -203,7 +203,7 @@ function TriggerBadge({ trigger }: { trigger: ScriptData['trigger'] }) {
 }
 
 // ========================================
-// API クイックリファレンス
+// API quick reference
 // ========================================
 
 const API_SECTIONS = [
@@ -261,7 +261,7 @@ function ApiQuickRef() {
         className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-arsist-muted hover:text-arsist-text transition-colors"
       >
         <Info size={12} />
-        <span>API リファレンス</span>
+        <span>API Reference</span>
         <span className="ml-auto text-[10px] opacity-50">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
@@ -286,7 +286,7 @@ function ApiQuickRef() {
 }
 
 // ========================================
-// ScriptInspector (右パネル用)
+// ScriptInspector (right panel)
 // ========================================
 
 export function ScriptInspector() {
@@ -302,7 +302,7 @@ export function ScriptInspector() {
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center text-arsist-muted text-[11px]">
             <Zap size={24} className="mx-auto mb-2 opacity-20" />
-            <p>スクリプトを選択</p>
+            <p>Select a script</p>
           </div>
         </div>
       </div>
@@ -310,9 +310,9 @@ export function ScriptInspector() {
   }
 
   const handleRemove = () => {
-    if (!window.confirm(`「${script.name}」を削除しますか？`)) return;
+    if (!window.confirm(`Delete "${script.name}"?`)) return;
     removeScript(script.id);
-    addConsoleLog({ type: 'warning', message: `スクリプト「${script.name}」を削除しました` });
+    addConsoleLog({ type: 'warning', message: `Deleted script "${script.name}"` });
   };
 
   return (
@@ -325,8 +325,8 @@ export function ScriptInspector() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
-        {/* 名前 */}
-        <Field label="スクリプト名">
+        {/* Name */}
+        <Field label="Script Name">
           <input
             className="input text-sm"
             value={script.name}
@@ -334,8 +334,8 @@ export function ScriptInspector() {
           />
         </Field>
 
-        {/* 説明 */}
-        <Field label="説明 (任意)">
+        {/* Description */}
+        <Field label="Description (optional)">
           <textarea
             className="input text-xs resize-none"
             rows={2}
@@ -344,9 +344,9 @@ export function ScriptInspector() {
           />
         </Field>
 
-        {/* 有効/無効 */}
+        {/* Enabled toggle */}
         <div className="flex items-center justify-between">
-          <span className="input-label mb-0">有効</span>
+          <span className="input-label mb-0">Enabled</span>
           <button
             onClick={() => updateScript(script.id, { enabled: !script.enabled })}
             className={`relative w-10 h-5 rounded-full transition-colors ${script.enabled ? 'bg-arsist-accent' : 'bg-arsist-border'}`}
@@ -357,9 +357,9 @@ export function ScriptInspector() {
 
         <div className="h-px bg-arsist-border" />
 
-        {/* トリガー設定 */}
+        {/* Trigger settings */}
         <div>
-          <label className="input-label">トリガー</label>
+          <label className="input-label">Trigger</label>
           <div className="space-y-2">
             {(['onStart', 'onUpdate', 'interval', 'event'] as ScriptTriggerType[]).map((t) => (
               <label key={t} className="flex items-center gap-2 cursor-pointer">
@@ -380,10 +380,10 @@ export function ScriptInspector() {
             ))}
           </div>
 
-          {/* interval 値 */}
+          {/* interval value */}
           {script.trigger.type === 'interval' && (
             <div className="mt-2">
-              <label className="input-label">間隔 (ミリ秒)</label>
+              <label className="input-label">Interval (ms)</label>
               <input
                 type="number"
                 min={100}
@@ -397,14 +397,14 @@ export function ScriptInspector() {
             </div>
           )}
 
-          {/* event 値 */}
+          {/* event value */}
           {script.trigger.type === 'event' && (
             <div className="mt-2">
-              <label className="input-label">イベント名</label>
+              <label className="input-label">Event Name</label>
               <input
                 type="text"
                 className="input text-xs font-mono"
-                placeholder="例: btn_refresh"
+                placeholder="e.g., btn_refresh"
                 value={String(script.trigger.value ?? '')}
                 onChange={(e) =>
                   updateScript(script.id, { trigger: { type: 'event', value: e.target.value } })
@@ -416,11 +416,11 @@ export function ScriptInspector() {
 
         <div className="h-px bg-arsist-border" />
 
-        {/* メタ情報 */}
+        {/* Meta info */}
         <div className="space-y-1 text-[10px] text-arsist-muted">
           <p>ID: <span className="font-mono text-arsist-text/60 break-all">{script.id}</span></p>
-          <p>作成: {new Date(script.createdAt).toLocaleString('ja-JP')}</p>
-          <p>更新: {new Date(script.updatedAt).toLocaleString('ja-JP')}</p>
+          <p>Created: {new Date(script.createdAt).toLocaleString()}</p>
+          <p>Updated: {new Date(script.updatedAt).toLocaleString()}</p>
         </div>
       </div>
     </div>
@@ -455,13 +455,13 @@ export function ScriptFileList() {
         </button>
       </div>
 
-      {/* 新規追加入力 */}
+        {/* New script input */}
       {adding && (
         <div className="px-2 py-2 border-b border-arsist-border bg-arsist-hover flex gap-1">
           <input
             autoFocus
             className="input text-xs flex-1"
-            placeholder="スクリプト名"
+            placeholder="Script name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
@@ -495,7 +495,7 @@ export function ScriptFileList() {
         {scripts.length === 0 && (
           <div className="text-center py-6 text-arsist-muted text-[11px]">
             <Zap size={20} className="mx-auto mb-1.5 opacity-30" />
-            <p>「+」から作成</p>
+            <p>Use “+” to create a script</p>
           </div>
         )}
       </div>
@@ -518,10 +518,10 @@ function TriggerIcon({ type }: { type: ScriptTriggerType }) {
 
 function TriggerOption({ type }: { type: ScriptTriggerType }) {
   const labels: Record<ScriptTriggerType, { name: string; desc: string }> = {
-    onStart: { name: 'onStart', desc: 'アプリ起動時に1回実行' },
-    onUpdate: { name: 'onUpdate', desc: '毎フレーム実行 (高頻度)' },
-    interval: { name: 'interval', desc: '指定間隔で繰り返し実行' },
-    event: { name: 'event', desc: 'イベント発火時に実行' },
+    onStart: { name: 'onStart', desc: 'Runs once when the app starts' },
+    onUpdate: { name: 'onUpdate', desc: 'Runs every frame (high frequency)' },
+    interval: { name: 'interval', desc: 'Runs repeatedly at the specified interval' },
+    event: { name: 'event', desc: 'Runs when the event fires' },
   };
   const info = labels[type];
   return (
