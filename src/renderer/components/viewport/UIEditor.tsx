@@ -59,6 +59,23 @@ export function UIEditor() {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const fitCanvasToViewport = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || !layout) return;
+
+    const padding = 32;
+    const availableWidth = Math.max(1, container.clientWidth - padding * 2);
+    const availableHeight = Math.max(1, container.clientHeight - padding * 2);
+    const fitZoom = Math.min(
+      availableWidth / resolution.width,
+      availableHeight / resolution.height,
+      1,
+    );
+
+    setZoom(Math.max(0.1, Math.min(3, fitZoom)));
+    setPan({ x: 0, y: 0 });
+  }, [layout, resolution.width, resolution.height]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !spacePressed) {
@@ -92,6 +109,16 @@ export function UIEditor() {
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
   }, []);
+
+  useEffect(() => {
+    if (!layout) return;
+
+    fitCanvasToViewport();
+
+    const handleResize = () => fitCanvasToViewport();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [layout?.id, resolution.width, resolution.height, fitCanvasToViewport]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -225,9 +252,8 @@ export function UIEditor() {
   );
 
   const resetView = useCallback(() => {
-    setZoom(0.5);
-    setPan({ x: 0, y: 0 });
-  }, []);
+    fitCanvasToViewport();
+  }, [fitCanvasToViewport]);
 
   if (!layout) {
     return (
@@ -293,7 +319,7 @@ export function UIEditor() {
         onClick={handleCanvasClick}
       >
         <div
-          className="w-full h-full"
+          className="relative w-full h-full"
           data-canvas-bg="true"
           style={{
             backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px)',
@@ -308,7 +334,7 @@ export function UIEditor() {
               width: resolution.width,
               height: resolution.height,
               transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transformOrigin: '0 0',
+              transformOrigin: '50% 50%',
               borderRadius: 8,
               overflow: 'hidden',
               backgroundColor: '#000000',

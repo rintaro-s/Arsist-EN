@@ -232,7 +232,8 @@ function createWindow() {
         mainWindow.webContents.openDevTools();
     }
     else {
-        mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+        // __dirname points to dist/main/main in production; renderer lives at dist/renderer
+        mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
     }
     mainWindow.on('closed', () => {
         mainWindow = null;
