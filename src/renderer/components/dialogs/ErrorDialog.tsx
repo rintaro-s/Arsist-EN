@@ -10,7 +10,7 @@ interface ErrorDialogProps {
   onClose: () => void;
 }
 
-export function ErrorDialog({ title = 'エラー', summary, details, onClose }: ErrorDialogProps) {
+export function ErrorDialog({ title = 'Error', summary, details, onClose }: ErrorDialogProps) {
   const { addNotification } = useUIStore();
   const [copied, setCopied] = useState(false);
 
@@ -25,10 +25,10 @@ export function ErrorDialog({ title = 'エラー', summary, details, onClose }: 
     try {
       await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
-      addNotification({ type: 'success', message: 'エラー内容をコピーしました' });
+      addNotification({ type: 'success', message: 'Error details copied to clipboard' });
       setTimeout(() => setCopied(false), 1500);
     } catch (e) {
-      addNotification({ type: 'error', message: `コピーに失敗しました: ${String(e)}` });
+      addNotification({ type: 'error', message: `Failed to copy: ${String(e)}` });
     }
   };
 
@@ -52,7 +52,7 @@ export function ErrorDialog({ title = 'エラー', summary, details, onClose }: 
 
           {details && (
             <div>
-              <div className="text-xs text-arsist-muted mb-2">詳細（コピー対象）</div>
+              <div className="text-xs text-arsist-muted mb-2">Details (copy target)</div>
               <textarea
                 readOnly
                 className="input w-full h-48 font-mono text-xs"
@@ -65,9 +65,9 @@ export function ErrorDialog({ title = 'エラー', summary, details, onClose }: 
         <div className="modal-footer flex justify-end gap-2">
           <button className="btn btn-secondary" onClick={handleCopy}>
             {copied ? <CheckCircle size={18} /> : <Copy size={18} />}
-            <span className="ml-2">コピー</span>
+            <span className="ml-2">Copy</span>
           </button>
-          <button className="btn" onClick={onClose}>閉じる</button>
+          <button className="btn" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>

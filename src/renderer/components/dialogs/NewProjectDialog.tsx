@@ -256,8 +256,8 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
                 </h4>
                 <p className="text-xs text-arsist-muted">
                   {selectedDevice === 'Meta_Quest'
-                    ? 'Meta XR SDK（sdk/quest）• Unity 2022.3 LTS+ • OpenXR準拠'
-                    : 'XREAL One SDK 3.1.0 • Unity 2022.3.20f1 LTS • OpenXR準拠'}
+                    ? 'Meta XR SDK (sdk/quest) • Unity 2022.3 LTS+ • OpenXR-compliant'
+                    : 'XREAL One SDK 3.1.0 • Unity 2022.3.20f1 LTS • OpenXR-compliant'}
                 </p>
               </div>
             </div>

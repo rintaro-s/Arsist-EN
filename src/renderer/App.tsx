@@ -109,7 +109,7 @@ export default function App() {
   }, [project?.id]);
 
   useEffect(() => {
-    // メニューイベントのリスナー設定
+    // Set up menu event listeners
     if (window.electronAPI) {
       window.electronAPI.menu.onNewProject(() => {
         setShowNewProjectDialog(true);
@@ -134,7 +134,7 @@ export default function App() {
       window.electronAPI.menu.onViewChange((view) => {
         if (view === '3d') setCurrentView('scene');
         else if (view === '2d') setCurrentView('ui');
-        else if (view === 'dataflow') setCurrentView('dataflow');
+        else if (view === 'dataflow') setCurrentView('ui');
         else if (view === 'script') setCurrentView('script');
       });
 

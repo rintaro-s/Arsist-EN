@@ -57,7 +57,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
 
   const handleStart = async () => {
     if (!window.electronAPI?.mcp || !project?.path) {
-      setMessage({ type: 'error', text: 'プロジェクトが読み込まれていません' });
+      setMessage({ type: 'error', text: 'Project is not loaded' });
       return;
     }
 
@@ -67,13 +67,13 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
     try {
       const result = await window.electronAPI.mcp.start(project.path);
       if (result.success) {
-        setMessage({ type: 'success', text: 'MCPサーバーを起動しました' });
+        setMessage({ type: 'success', text: 'MCP server started' });
         await refreshStatus();
       } else {
-        setMessage({ type: 'error', text: result.message || '起動に失敗しました' });
+        setMessage({ type: 'error', text: result.message || 'Failed to start server' });
       }
     } catch (error) {
-      setMessage({ type: 'error', text: `エラー: ${(error as Error).message}` });
+      setMessage({ type: 'error', text: `Error: ${(error as Error).message}` });
     } finally {
       setIsLoading(false);
     }
@@ -88,13 +88,13 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
     try {
       const result = await window.electronAPI.mcp.stop();
       if (result.success) {
-        setMessage({ type: 'success', text: 'MCPサーバーを停止しました' });
+        setMessage({ type: 'success', text: 'MCP server stopped' });
         await refreshStatus();
       } else {
-        setMessage({ type: 'error', text: result.message || '停止に失敗しました' });
+        setMessage({ type: 'error', text: result.message || 'Failed to stop server' });
       }
     } catch (error) {
-      setMessage({ type: 'error', text: `エラー: ${(error as Error).message}` });
+      setMessage({ type: 'error', text: `Error: ${(error as Error).message}` });
     } finally {
       setIsLoading(false);
     }
@@ -117,7 +117,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
         <div className="flex items-center justify-between px-4 py-3 border-b border-arsist-border">
           <div className="flex items-center gap-2">
             <Server size={18} className="text-arsist-accent" />
-            <h2 className="text-base font-semibold text-arsist-text">MCP サーバー設定</h2>
+            <h2 className="text-base font-semibold text-arsist-text">MCP Server Settings</h2>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-arsist-hover rounded transition-colors text-arsist-muted">
             <X size={18} />
@@ -129,12 +129,12 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
           {/* Status */}
           <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-arsist-text">サーバー状態</h3>
+              <h3 className="text-sm font-medium text-arsist-text">Server Status</h3>
               <div className={`flex items-center gap-2 text-xs font-medium px-2 py-1 rounded ${
                 status.running ? 'bg-green-500/10 text-green-400' : 'bg-arsist-hover text-arsist-muted'
               }`}>
                 <div className={`w-2 h-2 rounded-full ${status.running ? 'bg-green-400' : 'bg-arsist-muted'}`} />
-                {status.running ? '起動中' : '停止中'}
+                {status.running ? 'Running' : 'Stopped'}
               </div>
             </div>
 
@@ -164,7 +164,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
                   className="btn btn-success text-xs px-3 py-1.5 flex items-center gap-1.5"
                 >
                   <Power size={14} />
-                  起動
+                  Start
                 </button>
               ) : (
                 <button
@@ -173,7 +173,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
                   className="btn btn-danger text-xs px-3 py-1.5 flex items-center gap-1.5"
                 >
                   <Power size={14} />
-                  停止
+                  Stop
                 </button>
               )}
             </div>
@@ -193,13 +193,13 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
           {status.running && clientConfig?.config && (
             <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-arsist-text">クライアント設定</h3>
+                <h3 className="text-sm font-medium text-arsist-text">Client Configuration</h3>
                 <button
                   onClick={handleCopyConfig}
                   className="text-xs px-2 py-1 bg-arsist-hover hover:bg-arsist-active rounded transition-colors flex items-center gap-1.5 text-arsist-muted hover:text-arsist-text"
                 >
                   {copied ? <CheckCircle2 size={12} className="text-green-400" /> : <Copy size={12} />}
-                  {copied ? 'コピー済み' : 'コピー'}
+                  {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
 
@@ -214,7 +214,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
           {/* Tools List */}
           {status.running && (
             <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
-              <h3 className="text-sm font-medium text-arsist-text mb-3">利用可能なツール (17)</h3>
+              <h3 className="text-sm font-medium text-arsist-text mb-3">Available Tools (17)</h3>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {[
                   'ir_get_project',
@@ -245,10 +245,10 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
 
           {/* Info */}
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
-            <p className="font-medium mb-1">ℹ️ MCPサーバーについて</p>
+            <p className="font-medium mb-1">ℹ️ About MCP Server</p>
             <p className="text-blue-200/80">
-              AIエージェント（Claude Desktop等）がプロジェクトIRを直接編集できるようにするためのModel Context Protocol サーバーです。
-              起動後、上記の設定をClaude Desktopの設定ファイルに追加することで、AIと会話しながらモデル配置・UI構築・DataFlow編集が可能になります。
+              Model Context Protocol server that allows AI agents (such as Claude Desktop) to directly edit the project IR.
+              After starting, add the above configuration to Claude Desktop's settings file to enable model placement, UI construction, and DataFlow editing while conversing with AI.
             </p>
           </div>
         </div>
@@ -256,7 +256,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
         {/* Footer */}
         <div className="border-t border-arsist-border px-4 py-3 flex justify-end">
           <button onClick={onClose} className="btn btn-secondary text-xs px-4 py-1.5">
-            閉じる
+            Close
           </button>
         </div>
       </div>

@@ -41,7 +41,7 @@ function VRMModel({
       (gltf: any) => {
         const vrmInstance = gltf.userData.vrm;
         if (vrmInstance) {
-          // VRMUtils.rotateVRM0 を使用してモデルの向きを調整
+          // Adjust model orientation using VRMUtils.rotateVRM0
           VRMUtils.rotateVRM0(vrmInstance);
           setVrm(vrmInstance);
           setError(null);
@@ -185,19 +185,19 @@ export function VRMViewer(props: VRMViewerProps) {
 
     const normalized = modelPath.replace(/\\/g, '/');
 
-    // 絶対パス（/path または C:/path）
+    // Absolute path (/path or C:/path)
     if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) {
       return toArsistFileUrl(normalized);
     }
 
-    // プロジェクト相対パス（例: assets/Models/foo.vrm）
+    // Project-relative path (e.g., assets/Models/foo.vrm)
     if (projectPath) {
       const base = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
       const rel = normalized.replace(/^\/+/, '');
       return toArsistFileUrl(`${base}/${rel}`);
     }
 
-    // フォールバック
+    // Fallback
     return toArsistFileUrl(normalized);
   };
 

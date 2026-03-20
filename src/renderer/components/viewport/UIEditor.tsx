@@ -1,10 +1,10 @@
 /**
- * UIEditor — Material Design風UIデザインエディタ
+ * UIEditor — Material Design-style UI Design Editor
  *
- * - キャンバスは固定解像度
- * - ズームは表示倍率のみ変更（要素と枠を同じ倍率で拡大縮小）
- * - ドラッグ/リサイズはキャンバス座標で動作
- * - 画像はプロジェクトAssetsへインポート
+ * - Canvas has fixed resolution
+ * - Zoom only changes display scale (elements and frames scaled proportionally)
+ * - Drag/resize operations work in canvas coordinates
+ * - Images imported to project Assets
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
@@ -258,7 +258,7 @@ export function UIEditor() {
   if (!layout) {
     return (
       <div className="w-full h-full flex items-center justify-center text-arsist-muted text-sm bg-[#121212]">
-        左パネルからUIレイアウトを選択してください
+        Select a UI layout from the left panel
       </div>
     );
   }
@@ -269,8 +269,8 @@ export function UIEditor() {
     <div className="w-full h-full flex flex-col overflow-hidden bg-[#121212]">
       <div className="h-14 bg-[#1e1e1e] border-b border-[#2d2d2d] flex items-center px-4 gap-3 shrink-0">
         <div className="flex items-center gap-1 bg-[#2d2d2d] rounded-lg p-1">
-          <ToolButton icon={<MousePointer2 size={18} />} label="選択" active={tool === 'select'} onClick={() => setTool('select')} />
-          <ToolButton icon={<Hand size={18} />} label="パン" active={tool === 'pan'} onClick={() => setTool('pan')} />
+          <ToolButton icon={<MousePointer2 size={18} />} label="Select" active={tool === 'select'} onClick={() => setTool('select')} />
+          <ToolButton icon={<Hand size={18} />} label="Pan" active={tool === 'pan'} onClick={() => setTool('pan')} />
         </div>
 
         <div className="w-px h-8 bg-[#2d2d2d]" />
@@ -285,7 +285,7 @@ export function UIEditor() {
           <button
             onClick={() => setZoom((z) => Math.max(0.1, z - 0.1))}
             className="w-8 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] flex items-center justify-center text-[#e0e0e0] transition-colors"
-            title="ズームアウト"
+            title="Zoom out"
           >
             <ZoomOut size={16} />
           </button>
@@ -295,7 +295,7 @@ export function UIEditor() {
           <button
             onClick={() => setZoom((z) => Math.min(3, z + 0.1))}
             className="w-8 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] flex items-center justify-center text-[#e0e0e0] transition-colors"
-            title="ズームイン"
+            title="Zoom in"
           >
             <ZoomIn size={16} />
           </button>
@@ -303,7 +303,7 @@ export function UIEditor() {
             onClick={resetView}
             className="ml-2 px-3 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] text-xs text-[#e0e0e0] transition-colors"
           >
-            リセット
+            Reset
           </button>
         </div>
       </div>
@@ -376,7 +376,7 @@ export function UIEditor() {
 }
 
 /* ════════════════════════════════════════
-   ツールボタン
+   Tool Button
    ════════════════════════════════════════ */
 interface ToolButtonProps {
   icon: React.ReactNode;
@@ -413,7 +413,7 @@ function AddButton({ icon, label, onClick }: AddButtonProps) {
     <button
       onClick={onClick}
       className="px-3 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] flex items-center gap-2 text-sm text-[#e0e0e0] transition-colors"
-      title={`${label}を追加`}
+      title={`Add ${label}`}
     >
       {icon}
       <span className="text-xs">{label}</span>
@@ -422,7 +422,7 @@ function AddButton({ icon, label, onClick }: AddButtonProps) {
 }
 
 /* ════════════════════════════════════════
-   キャンバスレンダラー
+   Canvas Renderer
    ════════════════════════════════════════ */
 interface CanvasRendererProps {
   element: UIElement;
@@ -449,7 +449,7 @@ function CanvasRenderer({ element, selectedId, onSelect, onUpdate, projectPath, 
 }
 
 /* ════════════════════════════════════════
-   要素レンダラー
+   Element Renderer
    ════════════════════════════════════════ */
 interface ElementRendererProps {
   element: UIElement;
@@ -480,7 +480,7 @@ function ElementRenderer({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [startRect, setStartRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
 
-  // ── 表示テキスト ──
+  // ── Display text ──
   const displayText = (): string => {
     if (element.bind?.key && boundValue != null) {
       const raw = String(boundValue);
@@ -489,7 +489,7 @@ function ElementRenderer({
     return element.content || '';
   };
 
-  // ── スタイル計算 ──
+  // ── Style calculation ──
   const containerStyle = (): React.CSSProperties => {
     const s = element.style;
     const css: React.CSSProperties = {
@@ -532,13 +532,13 @@ function ElementRenderer({
     return css;
   };
 
-  // ── クリック選択 ──
+  // ── Click selection ──
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onSelect(element.id);
   };
 
-  // ── ドラッグ移動 ──
+  // ── Drag move ──
   const handleMouseDown = (e: React.MouseEvent) => {
     if (tool !== 'select' || element.style.position !== 'absolute') return;
     if ((e.target as HTMLElement).dataset?.resizeHandle) return;
@@ -625,7 +625,7 @@ function ElementRenderer({
     };
   }, [isDragging, isResizing, resizeHandle, dragStart, startRect, element, onUpdate, zoom]);
 
-  // ── リサイズハンドル ──
+  // ── Resize handles ──
   const handleResizeMouseDown = (e: React.MouseEvent, handle: string) => {
     e.stopPropagation();
     e.preventDefault();
@@ -643,13 +643,13 @@ function ElementRenderer({
   };
 
   const toArsistFileUrl = (projectPath: string, assetPath: string) => {
-    // 絶対パスを構築（バックスラッシュをスラッシュに統一）
+    // Build absolute path (unify backslashes to forward slashes)
     const absPath = `${projectPath}/${assetPath}`.replace(/\\/g, '/');
-    // Windows ドライブレター (C: など) の場合は arsist-file://C:/... 形式
+    // For Windows drive letter (C: etc.), use arsist-file://C:/... format
     if (/^[A-Za-z]:/.test(absPath)) {
       return `arsist-file://${absPath}`;
     }
-    // Unix パスは arsist-file:///... 形式
+    // Unix path is arsist-file:///... format
     return `arsist-file:///${absPath}`;
   };
 
@@ -672,7 +672,7 @@ function ElementRenderer({
     }
   };
 
-  // ── 要素コンテンツ ──
+  // ── Element content ──
   const renderContent = () => {
     switch (element.type) {
       case 'Text':
@@ -706,7 +706,7 @@ function ElementRenderer({
               <div className="w-full h-full flex flex-col items-center justify-center gap-2" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
                 <ImageIcon size={32} style={{ color: '#616161' }} />
                 <span className="text-xs" style={{ color: '#9e9e9e' }}>
-                  {isSelected ? 'クリックで画像をインポート' : '画像なし'}
+                  {isSelected ? 'Click to import image' : 'No image'}
                 </span>
               </div>
             )}
@@ -726,7 +726,7 @@ function ElementRenderer({
         return (
           <input
             type="text"
-            placeholder="入力フィールド"
+            placeholder="Input field"
             className="w-full px-3 py-2 rounded text-sm"
             style={{
               backgroundColor: 'rgba(255,255,255,0.08)',
@@ -782,7 +782,7 @@ function ElementRenderer({
     }
   };
 
-  // ── Panel は子をレンダリング ──
+  // ── Panel renders children ──
   if (element.type === 'Panel') {
     return (
       <div ref={elementRef} style={containerStyle()} onClick={handleClick} onMouseDown={handleMouseDown} className="relative">
@@ -812,7 +812,7 @@ function ElementRenderer({
 }
 
 /* ════════════════════════════════════════
-   選択オーバーレイ
+   Selection overlay
    ════════════════════════════════════════ */
 interface SelectionOverlayProps {
   onResizeStart: (e: React.MouseEvent, handle: string) => void;

@@ -57,7 +57,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         setVersionDetected(validation.version);
       }
 
-      // XREAL SDK状態（設定画面で見えるようにする）
+      // XREAL SDK status (visible on settings screen)
       try {
         const api: any = window.electronAPI as any;
         if (api.sdk?.xrealStatus) {
@@ -70,7 +70,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         setXrealSdkStatus({ exists: false, error: String((e as any)?.message || e) });
       }
 
-      // Quest SDK状態
+      // Quest SDK status
       try {
         const api: any = window.electronAPI as any;
         if (api.sdk?.questStatus) {
@@ -83,7 +83,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         setQuestSdkStatus({ exists: false, error: String((e as any)?.message || e) });
       }
 
-      // バンドル済み依存
+      // Bundled dependencies
       try {
         const api: any = window.electronAPI as any;
         if (api.sdk?.bundledDeps) {
@@ -100,19 +100,19 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
   const guessUnityExeFromSelected = async (selectedPath: string): Promise<string> => {
     const api: any = window.electronAPI as any;
-    // 既にファイルっぽいパスならそのまま
+    // If it's already a file-like path, keep it as is
     if (selectedPath.endsWith('/Editor/Unity') || selectedPath.endsWith('Unity.exe') || selectedPath.includes('Unity.app')) {
       return selectedPath;
     }
 
-    // ディレクトリ（例: ~/Unity/Hub/Editor/6000.0.61f1）を選んだ場合に補完
+    // Complete if directory (e.g., ~/Unity/Hub/Editor/6000.0.61f1) was selected
     const linuxCandidate = `${selectedPath}/Editor/Unity`;
     const winCandidate = `${selectedPath}\\Editor\\Unity.exe`;
     const macCandidate = `${selectedPath}/Unity.app/Contents/MacOS/Unity`;
 
     const hasExists = typeof api?.fs?.exists === 'function';
     if (!hasExists) {
-      // preloadが古い等でexistsが無い場合でも落ちないようにする
+      // Fail gracefully if preload is old and exists is not available
       addNotification({
         type: 'warning',
         message: 'Cannot verify Unity executable (Electron API may be outdated). Guessed path entered.',
@@ -125,7 +125,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       return !!r?.exists;
     };
 
-    // Linux/Windows/MacOSの順で確認
+    // Check in order: Linux/Windows/macOS
     if (await exists(linuxCandidate)) return linuxCandidate;
     if (await exists(winCandidate)) return winCandidate;
     if (await exists(macCandidate)) return macCandidate;
@@ -134,7 +134,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   };
 
   const parseUnityVersionFromPath = (p: string): string | null => {
-    // HubのEditorディレクトリ名を拾う（例: 6000.0.61f1 / 2022.3.20f1）
+    // Extract Hub Editor directory name (e.g., 6000.0.61f1 / 2022.3.20f1)
     const m = p.match(/(\d+\.\d+\.\d+(?:f\d+)?)/);
     return m ? m[1] : null;
   };
@@ -142,11 +142,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const handleSelectUnityPath = async () => {
     if (!window.electronAPI) return;
 
-    // まず「バージョンフォルダ」を選べるようにディレクトリ選択（Linuxの実運用で分かりやすい）
+    // First allow selecting 'version folder' via directory selection (clearer for Linux operations)
     const pickedDir = await window.electronAPI.fs.selectDirectory();
     let picked = pickedDir;
 
-    // ディレクトリがキャンセルされた場合はファイル選択にフォールバック
+    // Fall back to file selection if directory is cancelled
     if (!picked) {
       const file = await window.electronAPI.fs.selectFile([
         { name: 'Unity', extensions: ['exe', 'app', 'Unity'] },
@@ -162,10 +162,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     const validation = await window.electronAPI.unity.validate();
     if (validation?.version) {
       setVersionDetected(validation.version);
-      // 手入力されていないなら自動で埋める
+      // Auto-fill if not manually entered
       if (!unityVersion.trim()) setUnityVersion(validation.version);
     } else {
-      // validateが取れない場合はディレクトリ名から推測
+      // Infer from directory name if validate is not available
       const v = parseUnityVersionFromPath(resolved);
       if (v && !unityVersion.trim()) setUnityVersion(v);
     }
@@ -330,7 +330,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                       value={unityManualLicenseFile}
                       onChange={(e) => setUnityManualLicenseFile(e.target.value)}
                       className="input flex-1"
-                      placeholder="例: /home/<user>/.local/share/unity3d/Unity/Unity_lic.ulf"
+                      placeholder="Example: /home/<user>/.local/share/unity3d/Unity/Unity_lic.ulf"
                     />
                     <button onClick={handleSelectManualLicenseFile} className="btn btn-secondary">
                       <FolderOpen size={16} />

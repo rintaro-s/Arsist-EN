@@ -15,8 +15,8 @@ interface PreviewDialogProps {
 type PreviewMode = 'user' | 'orbit';
 
 /* ================================================================
- * 簡易 UIElementRenderer（プレビュー専用）
- * UIEditor.tsx の ElementRenderer とは独立した軽量版
+ * Lightweight UIElementRenderer (preview-only)
+ * Independent lightweight version from UIEditor.tsx ElementRenderer
  * ================================================================ */
 function SimpleUIRenderer({ element }: { element: UIElement }) {
   let storeCtx: { data: Record<string, unknown> } | null = null;
@@ -120,7 +120,7 @@ function spacingToCss(s?: { top: number; right: number; bottom: number; left: nu
 }
 
 /* ================================================================
- * メインダイアログ
+ * Main Dialog
  * ================================================================ */
 export function PreviewDialog({ onClose }: PreviewDialogProps) {
   const { project, currentSceneId, selectedObjectIds, selectObjects, projectPath } = useProjectStore();
@@ -243,7 +243,7 @@ function PreviewContent({
         <div className="modal-header flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Eye size={18} className="text-arsist-accent" />
-            <span>フルプレビュー</span>
+            <span>Full Preview</span>
           </div>
           <button onClick={onClose} className="btn-icon"><X size={18} /></button>
         </div>
@@ -253,17 +253,17 @@ function PreviewContent({
           <div className="flex items-center justify-between gap-2 text-xs text-arsist-muted">
             <div className="flex items-center gap-2">
               <button className={`btn btn-secondary text-xs ${mode === 'user' ? 'border-arsist-accent' : ''}`} onClick={() => setMode('user')}>
-                <Monitor size={14} /> ユーザー視点
+                <Monitor size={14} /> User View
               </button>
               <button className={`btn btn-secondary text-xs ${mode === 'orbit' ? 'border-arsist-accent' : ''}`} onClick={() => setMode('orbit')}>
-                <Compass size={14} /> オービット
+                <Compass size={14} /> Orbit
               </button>
               <button className={`btn btn-secondary text-xs ${showUHD ? 'border-arsist-accent' : ''}`} onClick={() => setShowUHD(!showUHD)}>
-                UHD表示
+                Show UHD
               </button>
             </div>
             <button className={`btn btn-secondary text-xs ${autoUpdateData ? 'border-arsist-accent' : ''}`} onClick={() => setAutoUpdateData(!autoUpdateData)}>
-              <Zap size={14} /> {autoUpdateData ? 'ライブ' : 'スタティック'}
+              <Zap size={14} /> {autoUpdateData ? 'Live' : 'Static'}
             </button>
           </div>
 
@@ -301,7 +301,7 @@ function PreviewContent({
         </div>
 
         <div className="modal-footer flex justify-end gap-2">
-          <button className="btn" onClick={onClose}>閉じる</button>
+          <button className="btn" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>
@@ -309,7 +309,7 @@ function PreviewContent({
 }
 
 /* ================================================================
- * 3D プレビューシーン
+ * 3D Preview Scene
  * ================================================================ */
 function PreviewScene({
   objects,

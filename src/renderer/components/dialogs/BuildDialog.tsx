@@ -310,7 +310,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
               </button>
             </div>
             <p className="text-xs text-arsist-muted mt-1">
-              Unity 2022.3.20f1 LTS 以上を推奨
+              Recommended: Unity 2022.3.20f1 LTS or later
             </p>
           </div>
 
@@ -486,7 +486,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         </div>
       )}
 
-      {/* BuildDialogのオーバーレイより後に描画して最前面に出す */}
+      {/* Render after BuildDialog overlay to appear at front */}
       {errorModal && (
         <ErrorDialog
           title="Build Error"

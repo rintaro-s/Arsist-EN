@@ -72,7 +72,7 @@ export function UICanvas() {
     }
   }, [selectUIElement]);
 
-  // ツールバー用の要素追加
+  // Add element for toolbar
   const handleAddElement = (type: UIElement['type']) => {
     addUIElement(selectedUIElementId, { type });
   };
@@ -81,7 +81,7 @@ export function UICanvas() {
     <div className="w-full h-full flex flex-col overflow-hidden">
       {/* UI Toolbar */}
       <div className="h-10 bg-arsist-surface border-b border-arsist-border flex items-center px-4 gap-2">
-        <span className="text-xs text-arsist-muted mr-2">要素追加:</span>
+        <span className="text-xs text-arsist-muted mr-2">Add element:</span>
         <ToolButton icon={<Square size={16} />} label="Panel" onClick={() => handleAddElement('Panel')} />
         <ToolButton icon={<Type size={16} />} label="Text" onClick={() => handleAddElement('Text')} />
         <ToolButton icon={<MousePointer size={16} />} label="Button" onClick={() => handleAddElement('Button')} />
@@ -185,13 +185,13 @@ export function UIElementRenderer({
   const boundValue = useDataValue(element.bind?.key || '');
   
   const toArsistFileUrl = (projectPath: string, assetPath: string) => {
-    // 絶対パスを構築（バックスラッシュをスラッシュに統一）
+    // Build absolute path (unify backslashes to forward slashes)
     const absPath = `${projectPath}/${assetPath}`.replace(/\\/g, '/');
-    // Windows ドライブレター (C: など) の場合は arsist-file://C:/... 形式
+    // For Windows drive letter (C: etc.), use arsist-file://C:/... format
     if (/^[A-Za-z]:/.test(absPath)) {
       return `arsist-file://${absPath}`;
     }
-    // Unix パスは arsist-file:///... 形式
+    // Unix path is arsist-file:///... format
     return `arsist-file:///${absPath}`;
   };
   

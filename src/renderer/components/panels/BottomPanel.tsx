@@ -1,9 +1,7 @@
 /**
- * BottomPanel — コンソール + DataStoreモニター
+ * BottomPanel — Console Monitor
  */
 import { useUIStore } from '../../stores/uiStore';
-import { useProjectStore } from '../../stores/projectStore';
-import { useDataStore } from '../../stores/dataStoreContext';
 import { Trash2 } from 'lucide-react';
 
 export function BottomPanel() {
@@ -11,22 +9,20 @@ export function BottomPanel() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-arsist-surface">
-      {/* タブ */}
+      {/* Tabs */}
       <div className="h-7 flex items-center border-b border-arsist-border px-2 gap-1 shrink-0">
         <TabBtn label="Console" active={bottomTab === 'console'} onClick={() => setBottomTab('console')} />
-        <TabBtn label="DataStore" active={bottomTab === 'datastore'} onClick={() => setBottomTab('datastore')} />
 
         {bottomTab === 'console' && (
-          <button onClick={clearConsoleLogs} className="ml-auto btn-icon p-0.5" title="クリア">
+          <button onClick={clearConsoleLogs} className="ml-auto btn-icon p-0.5" title="Clear">
             <Trash2 size={12} />
           </button>
         )}
       </div>
 
-      {/* コンテンツ */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto font-mono text-[11px]">
         {bottomTab === 'console' && <ConsoleView logs={consoleLogs} buildLogs={buildLogs} />}
-        {bottomTab === 'datastore' && <DataStoreView />}
       </div>
     </div>
   );
@@ -64,51 +60,8 @@ function ConsoleView({ logs, buildLogs }: { logs: { type: string; message: strin
         </div>
       ))}
       {allLogs.length === 0 && (
-        <div className="text-arsist-muted text-center py-3">ログなし</div>
+        <div className="text-arsist-muted text-center py-3">No logs</div>
       )}
-    </div>
-  );
-}
-
-function DataStoreView() {
-  const { project } = useProjectStore();
-
-  let storeCtx: { data: Record<string, unknown> } | null = null;
-  try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    storeCtx = useDataStore();
-  } catch {
-    // DataStoreProvider 外の場合
-  }
-
-  const sources = project?.dataFlow.dataSources || [];
-  const transforms = project?.dataFlow.transforms || [];
-  const keys = [...sources.map((s) => s.storeAs), ...transforms.map((t) => t.storeAs)];
-  const data = storeCtx?.data || {};
-
-  return (
-    <div className="p-2">
-      <table className="w-full">
-        <thead>
-          <tr className="text-[10px] text-arsist-muted uppercase">
-            <th className="text-left py-1 pr-2">Key</th>
-            <th className="text-left py-1">Value</th>
-          </tr>
-        </thead>
-        <tbody>
-          {keys.map((key) => (
-            <tr key={key} className="border-t border-arsist-border/30">
-              <td className="py-0.5 pr-2 text-arsist-accent">{key}</td>
-              <td className="py-0.5 text-arsist-text">{data[key] != null ? JSON.stringify(data[key]) : <span className="text-arsist-muted">—</span>}</td>
-            </tr>
-          ))}
-          {keys.length === 0 && (
-            <tr>
-              <td colSpan={2} className="text-arsist-muted text-center py-3">DataSource を追加するとキーが表示されます</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
     </div>
   );
 }

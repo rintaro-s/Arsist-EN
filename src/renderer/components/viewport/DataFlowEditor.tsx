@@ -1,13 +1,13 @@
 /**
- * DataFlowEditor — データパイプライン設定
+ * DataFlowEditor — Data pipeline configuration
  *
- * 3層構造:
- * 左: DataSource（入力元）
- * 中: Transform（データ加工）
- * 右: DataStore（出力変数）
+ * Three-layer structure:
+ * Left: DataSource (input source)
+ * Middle: Transform (data processing)
+ * Right: DataStore (output variables)
  *
- * EditorUI.txt準拠：
- * - DataSourceがデータ取得 → DataStore格納
+ * Compliant with EditorUI.txt:
+ * - DataSource retrieves data → Store in DataStore
  * - TransformがDataStore値を読込 → 計算結果を別の変数に格納
  * - UIがDataStoreをbindで参照（読取専用）
  */

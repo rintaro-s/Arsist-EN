@@ -14,40 +14,40 @@ import {
 
 type FileType = 'html' | 'css' | 'js';
 
-// デフォルトのテンプレート
+// Default template
 const DEFAULT_HTML = `<!-- Arsist UI - HTML -->
-<!-- このファイルでUIの構造を定義します -->
+<!-- Define the UI structure in this file -->
 <div class="hud-container" data-arsist-root="true" data-arsist-type="Panel">
   <header class="hud-header">
     <h1 class="title" data-arsist-type="Text">AR Application</h1>
   </header>
   
   <main class="hud-main">
-    <!-- メインコンテンツ -->
+    <!-- Main content -->
     <div class="info-panel" data-arsist-type="Panel">
-      <h2 data-arsist-type="Text">情報パネル</h2>
-      <p data-arsist-type="Text">ここに動的なコンテンツを表示</p>
+      <h2 data-arsist-type="Text">Information Panel</h2>
+      <p data-arsist-type="Text">Display dynamic content here</p>
     </div>
   </main>
   
   <footer class="hud-footer">
-    <button class="btn-action" data-arsist-type="Button" onclick="onAction()">アクション</button>
-    <button class="btn-secondary" data-arsist-type="Button" onclick="onSettings()">設定</button>
+    <button class="btn-action" data-arsist-type="Button" onclick="onAction()">Action</button>
+    <button class="btn-secondary" data-arsist-type="Button" onclick="onSettings()">Settings</button>
   </footer>
 </div>
 `;
 
 const DEFAULT_CSS = `/* Arsist UI - CSS */
-/* ARグラス向けのスタイル定義 */
+/* Style definitions for AR glasses */
 
-/* ベース設定 */
+/* Base settings */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-/* HUDコンテナ */
+/* HUD container */
 .hud-container {
   width: 100%;
   height: 100%;
@@ -58,7 +58,7 @@ const DEFAULT_CSS = `/* Arsist UI - CSS */
   background: transparent;
 }
 
-/* ヘッダー */
+/* Header */
 .hud-header {
   display: flex;
   justify-content: space-between;
@@ -74,7 +74,7 @@ const DEFAULT_CSS = `/* Arsist UI - CSS */
   letter-spacing: 0.5px;
 }
 
-/* メインエリア */
+/* Main area */
 .hud-main {
   flex: 1;
   display: flex;
@@ -103,7 +103,7 @@ const DEFAULT_CSS = `/* Arsist UI - CSS */
   color: rgba(255, 255, 255, 0.8);
 }
 
-/* フッター */
+/* Footer */
 .hud-footer {
   display: flex;
   justify-content: center;
@@ -113,7 +113,7 @@ const DEFAULT_CSS = `/* Arsist UI - CSS */
   backdrop-filter: blur(10px);
 }
 
-/* ボタン */
+/* Buttons */
 .btn-action {
   background: #4ec9b0;
   color: #1e1e1e;
@@ -149,31 +149,31 @@ const DEFAULT_CSS = `/* Arsist UI - CSS */
 `;
 
 const DEFAULT_JS = `// Arsist UI - JavaScript
-// UIのロジックを定義します
+// Define UI logic
 
-// 初期化
+// Initialize
 function init() {
   console.log('AR UI initialized');
 }
 
-// アクションボタン
+// Action buttons
 function onAction() {
   console.log('Action button clicked');
-  // カスタムアクションを実装
+  // Implement custom action
   
-  // 例: Unity/Arsist Engineにイベント送信
+  // Example: Send event to Unity/Arsist Engine
   if (window.ArsistBridge) {
     window.ArsistBridge.sendEvent('action', { type: 'click' });
   }
 }
 
-// 設定ボタン
+// Settings button
 function onSettings() {
   console.log('Settings button clicked');
-  // 設定画面を表示
+  // Display settings dialog
 }
 
-// データバインディング用ヘルパー
+// Data binding helper
 function bindData(selector, value) {
   const el = document.querySelector(selector);
   if (el) {
@@ -181,13 +181,13 @@ function bindData(selector, value) {
   }
 }
 
-// Arsist Engine からのデータ受信
+// Receive data from Arsist Engine
 window.onArsistData = function(data) {
   console.log('Received data from engine:', data);
-  // データに基づいてUIを更新
+  // Update UI based on data
 };
 
-// 初期化実行
+// Initialize on startup
 document.addEventListener('DOMContentLoaded', init);
 `;
 
@@ -232,7 +232,7 @@ export function CodeEditor() {
   if (!project) {
     return (
       <div className="w-full h-full flex items-center justify-center text-arsist-muted text-sm">
-        プロジェクトを開いてください
+        Please open a project
       </div>
     );
   }
@@ -268,7 +268,7 @@ export function CodeEditor() {
   const handleContentChange = (content: string) => {
     const result = setUICode(activeFile, content);
     if (!result.success) {
-      addNotification({ type: 'error', message: `GUI同期に失敗しました: ${result.error}` });
+      addNotification({ type: 'error', message: `Failed to sync GUI: ${result.error}` });
     }
   };
 
@@ -331,9 +331,9 @@ export function CodeEditor() {
     }
 
     // NOTE:
-    // - エディタ側では「HTML断片」を入力として扱う。
-    // - プレビュー/Unity WebView実行用に <html> 等でラップする。
-    // - JSは new Function で実行し、構文エラーもcatchして表示する。
+    // - Editor treats 'HTML fragment' as input.
+    // - Wrap with <html> etc. for preview/Unity WebView execution.
+    // - Execute JS with new Function and catch/display syntax errors.
 
     const cssSafe = css;
     const htmlSafe = html;
@@ -380,11 +380,11 @@ export function CodeEditor() {
               el.style.zIndex = '9999';
               document.body.appendChild(el);
             }
-            el.textContent = 'プレビューできません\\n\\n' + text;
+            el.textContent = 'Preview not available\\n\\n' + text;
           } catch (_) {}
         }
 
-        // preview用 ArsistBridge（Unity実機ではネイティブ側が注入する想定）
+        // ArsistBridge for preview (expected to be injected by native side on Unity device)
         if (!window.ArsistBridge) {
           var memory = {};
           window.ArsistBridge = {
@@ -422,7 +422,7 @@ export function CodeEditor() {
           showErrorOverlay('UnhandledPromiseRejection\\n' + msg);
         });
 
-        // ユーザーJS実行（構文エラーも捕捉）
+        // Execute user JS (catch syntax errors)
         try {
           var userJs = "\\n" + ${JSON.stringify(js)} + "\\n";
           (new Function(userJs))();
@@ -441,10 +441,10 @@ export function CodeEditor() {
 
   return (
     <div className="w-full h-full flex flex-col bg-arsist-bg">
-      {/* ヘッダー */}
+      {/* Header */}
       <div className="h-10 bg-arsist-surface border-b border-arsist-border flex items-center justify-between px-3">
         <div className="flex items-center gap-1">
-          {/* ファイルタブ */}
+          {/* File tabs */}
           {fileTabs.map(file => (
             <button
               key={file.type}
@@ -466,57 +466,57 @@ export function CodeEditor() {
             onClick={() => {
               const result = syncUIFromCode();
               if (!result.success) {
-                addNotification({ type: 'error', message: `GUI同期に失敗しました: ${result.error}` });
+                addNotification({ type: 'error', message: `Failed to sync GUI: ${result.error}` });
               } else {
-                addNotification({ type: 'success', message: 'GUIに反映しました' });
+                addNotification({ type: 'success', message: 'Reflected to GUI' });
               }
             }}
             className="btn-icon"
-            title="コードをGUIに反映"
+            title="Apply code to GUI"
           >
             <ChevronRight size={16} />
           </button>
           <button
             onClick={() => {
               syncCodeFromUI();
-              addNotification({ type: 'success', message: 'GUIからHTMLを更新しました' });
+              addNotification({ type: 'success', message: 'Updated HTML from GUI' });
             }}
             className="btn-icon"
-            title="GUIをコードに反映"
+            title="Apply GUI to code"
           >
             <RefreshCw size={16} />
           </button>
           <button
             onClick={handleCopy}
             className="btn-icon"
-            title="コピー"
+            title="Copy"
           >
             {copied ? <Check size={16} className="text-arsist-success" /> : <Copy size={16} />}
           </button>
           <button
             onClick={() => setShowPreview(!showPreview)}
             className={`btn-icon ${showPreview ? 'text-arsist-accent' : ''}`}
-            title="プレビュー表示"
+            title="Show preview"
           >
             <Eye size={16} />
           </button>
         </div>
       </div>
 
-      {/* メインエリア */}
+      {/* Main area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* コードエディタ */}
+        {/* Code editor */}
         <div className={`${showPreview ? 'w-1/2' : 'w-full'} flex flex-col border-r border-arsist-border`}>
-          {/* エディタツールバー */}
+          {/* Editor toolbar */}
           <div className="h-8 bg-arsist-hover border-b border-arsist-border flex items-center justify-between px-3 text-xs text-arsist-muted">
             <span>
-              {activeFile === 'html' && 'HTML - UI構造を定義'}
-              {activeFile === 'css' && 'CSS - スタイルを定義'}
-              {activeFile === 'js' && 'JavaScript - ロジックを定義'}
+              {activeFile === 'html' && 'HTML - Define UI structure'}
+              {activeFile === 'css' && 'CSS - Define styles'}
+              {activeFile === 'js' && 'JavaScript - Define logic'}
             </span>
           </div>
 
-          {/* テキストエリア */}
+          {/* Text area */}
           <div className="flex-1 overflow-hidden">
             <textarea
               value={activeContent}
@@ -530,20 +530,20 @@ export function CodeEditor() {
             />
           </div>
 
-          {/* ステータスバー */}
+          {/* Status bar */}
           <div className="h-6 bg-arsist-hover border-t border-arsist-border flex items-center px-3 text-[10px] text-arsist-muted">
-            <span>行数: {activeContent.split('\n').length}</span>
+            <span>Lines: {activeContent.split('\n').length}</span>
             <span className="mx-2">|</span>
-            <span>文字数: {activeContent.length}</span>
+            <span>Characters: {activeContent.length}</span>
           </div>
         </div>
 
-        {/* プレビュー */}
+        {/* Preview */}
         {showPreview && (
           <div className="w-1/2 flex flex-col">
             <div className="h-8 bg-arsist-hover border-b border-arsist-border flex items-center px-3 text-xs text-arsist-muted">
               <Eye size={12} className="mr-2" />
-              <span>プレビュー (1920x1080)</span>
+              <span>Preview (1920x1080)</span>
             </div>
             <div className="flex-1 overflow-hidden bg-arsist-bg p-4">
               <div 
@@ -560,7 +560,7 @@ export function CodeEditor() {
                 {previewError && (
                   <div className="absolute inset-0 p-4 pointer-events-none">
                     <div className="pointer-events-none bg-black/80 border border-arsist-border rounded p-3 text-xs text-red-300 whitespace-pre-wrap max-h-full overflow-auto">
-                      <div className="font-medium mb-2">プレビューできません</div>
+                      <div className="font-medium mb-2">Preview not available</div>
                       {previewError}
                     </div>
                   </div>

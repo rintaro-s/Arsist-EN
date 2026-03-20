@@ -116,7 +116,7 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
           </div>
           <div className="p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border text-center">
             <Activity size={20} className="text-arsist-accent mx-auto mb-1" />
-            <p className="text-xs text-arsist-muted">Data Flow</p>
+            <p className="text-xs text-arsist-muted">Script Automation</p>
           </div>
         </div>
 

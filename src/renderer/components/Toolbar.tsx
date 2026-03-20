@@ -1,7 +1,6 @@
 import {
   Box,
   Layout,
-  Database,
   Move,
   RotateCw,
   Maximize2,
@@ -76,12 +75,6 @@ export function Toolbar() {
             onClick={() => setCurrentView('ui')}
           />
           <ViewTab
-            icon={<Database size={15} />}
-            label="Data"
-            active={currentView === 'dataflow'}
-            onClick={() => setCurrentView('dataflow')}
-          />
-          <ViewTab
             icon={<Zap size={15} />}
             label="Script"
             active={currentView === 'script'}
@@ -110,10 +103,6 @@ export function Toolbar() {
 
         {currentView === 'ui' && (
           <span className="text-[11px] text-arsist-muted">Add UI elements from the left panel / edit on the canvas</span>
-        )}
-
-        {currentView === 'dataflow' && (
-          <span className="text-[11px] text-arsist-muted">DataSource → Transform → DataStore</span>
         )}
 
         {currentView === 'script' && (

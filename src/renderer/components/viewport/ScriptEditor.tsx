@@ -211,42 +211,42 @@ const API_SECTIONS = [
     label: 'api',
     color: '#4ec9b0',
     items: [
-      { sig: "api.get(url, callback)", desc: "HTTP GETリクエスト。callback(responseText)" },
-      { sig: "api.post(url, body, callback)", desc: "HTTP POSTリクエスト。callback(responseText)" },
+      { sig: "api.get(url, callback)", desc: "HTTP GET request. callback receives responseText" },
+      { sig: "api.post(url, body, callback)", desc: "HTTP POST request. callback receives responseText" },
     ],
   },
   {
     label: 'ui',
     color: '#569cd6',
     items: [
-      { sig: "ui.setText(id, text)", desc: "UI要素のテキストを変更" },
-      { sig: "ui.setVisibility(id, bool)", desc: "表示/非表示切り替え" },
-      { sig: "ui.setColor(id, '#RRGGBB')", desc: "テキスト色を変更" },
-      { sig: "ui.setAlpha(id, 0.0~1.0)", desc: "透明度を変更" },
+      { sig: "ui.setText(id, text)", desc: "Change UI element text" },
+      { sig: "ui.setVisibility(id, bool)", desc: "Toggle visibility" },
+      { sig: "ui.setColor(id, '#RRGGBB')", desc: "Change text color" },
+      { sig: "ui.setAlpha(id, 0.0~1.0)", desc: "Change opacity" },
     ],
   },
   {
     label: 'event',
     color: '#e9c46a',
     items: [
-      { sig: "event.emit(name, payload)", desc: "イベントを発火" },
-      { sig: "event.on(name, callback)", desc: "イベントを購読" },
+      { sig: "event.emit(name, payload)", desc: "Emit an event" },
+      { sig: "event.on(name, callback)", desc: "Subscribe to an event" },
     ],
   },
   {
     label: 'store',
     color: '#f4a261',
     items: [
-      { sig: "store.get(key)", desc: "永続データを取得" },
-      { sig: "store.set(key, value)", desc: "永続データを保存" },
+      { sig: "store.get(key)", desc: "Get persistent data" },
+      { sig: "store.set(key, value)", desc: "Save persistent data" },
     ],
   },
   {
     label: 'log / error',
     color: '#9e9e9e',
     items: [
-      { sig: "log(message)", desc: "デバッグログ出力" },
-      { sig: "error(message)", desc: "エラーログ出力" },
+      { sig: "log(message)", desc: "Debug log output" },
+      { sig: "error(message)", desc: "Error log output" },
     ],
   },
 ];
@@ -428,7 +428,7 @@ export function ScriptInspector() {
 }
 
 // ========================================
-// ScriptFileList (左パネル用)
+// ScriptFileList (for left panel)
 // ========================================
 
 export function ScriptFileList() {
@@ -443,7 +443,7 @@ export function ScriptFileList() {
     addScript(name);
     setNewName('');
     setAdding(false);
-    addConsoleLog({ type: 'info', message: `スクリプト「${name}」を作成しました` });
+    addConsoleLog({ type: 'info', message: `Script '${name}' created successfully` });
   };
 
   return (

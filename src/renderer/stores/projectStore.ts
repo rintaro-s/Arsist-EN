@@ -1,9 +1,9 @@
 /**
  * Arsist Engine — Project Store
- * プロジェクト中間表現 (IR) の状態管理
+ * Project Intermediate Representation (IR) state management.
  *
- * DataSource → DataStore → UI の3層構造。
- * ロジックグラフやコードエディタは存在しない。
+ * Three-layer structure: DataSource → DataStore → UI.
+ * Logic graph and code editor do not exist.
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -22,7 +22,7 @@ import type {
 } from '../../shared/types';
 
 // ========================================
-// Store 型定義
+// Store type definitions
 // ========================================
 
 interface ProjectState {
@@ -45,7 +45,7 @@ interface ProjectState {
   // Script
   currentScriptId: string | null;
 
-  // --- プロジェクトライフサイクル ---
+  // --- Project Lifecycle ---
   createProject: (options: CreateProjectOptions) => Promise<void>;
   loadProject: (path: string) => Promise<void>;
   saveProject: () => Promise<void>;
@@ -104,7 +104,7 @@ interface CreateProjectOptions {
 }
 
 // ========================================
-// Store 実装
+// Store implementation
 // ========================================
 
 export const useProjectStore = create<ProjectState>()(
@@ -121,7 +121,7 @@ export const useProjectStore = create<ProjectState>()(
     currentScriptId: null,
 
     // ========================================
-    // プロジェクトライフサイクル
+    // Project lifecycle
     // ========================================
 
     createProject: async (options) => {
@@ -339,14 +339,14 @@ export const useProjectStore = create<ProjectState>()(
     removeUILayout: (layoutId) => {
       set((s) => {
         if (!s.project) return;
-        // UHD保護：最低1つのUHDレイアウトは残す
+        // UHD protection: always keep at least one UHD layout
         const layout = s.project.uiLayouts.find((l) => l.id === layoutId);
         if (!layout) return;
         if (layout.scope === 'uhd') {
           const uhdCount = s.project.uiLayouts.filter((l) => l.scope === 'uhd').length;
-          if (uhdCount <= 1) return; // 最後の1つは削除不可
+          if (uhdCount <= 1) return; // Cannot delete the last one
         }
-        // Canvas参照を持つSceneObjectがあれば、そのcanvasSettingsをクリア
+        // If a SceneObject has Canvas reference, clear its canvasSettings
         for (const scene of s.project.scenes) {
           for (const obj of scene.objects) {
             if (obj.type === 'canvas' && obj.canvasSettings?.layoutId === layoutId) {
@@ -575,7 +575,7 @@ export const useProjectStore = create<ProjectState>()(
           id: uuidv4(),
           name,
           trigger: { type: 'onStart' },
-          code: `// ${name}\n// 利用可能なAPI: api, ui, event, store, log\n\nlog('${name} 開始');`,
+          code: `// ${name}\n// Available APIs: api, ui, event, store, log\n\nlog('${name} started');`,
           enabled: true,
           description: '',
           createdAt: new Date().toISOString(),

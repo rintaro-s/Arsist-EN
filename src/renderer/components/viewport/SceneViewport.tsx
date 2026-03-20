@@ -17,17 +17,17 @@ import type { SceneObject } from '../../../shared/types';
 import { Eye, HelpCircle, Box, Circle, Square, Cylinder } from 'lucide-react';
 import { VRMViewer } from './VRMViewer';
 
-// 原点軸表示
+// Origin axis display
 function OriginAxes() {
   return (
     <group>
-      {/* X軸 (赤) */}
+      {/* X-axis (red) */}
       <Line points={[[0, 0, 0], [2, 0, 0]]} color="#f14c4c" lineWidth={2} />
       <Line points={[[1.8, 0.1, 0], [2, 0, 0], [1.8, -0.1, 0]]} color="#f14c4c" lineWidth={2} />
-      {/* Y軸 (緑) */}
+      {/* Y-axis (green) */}
       <Line points={[[0, 0, 0], [0, 2, 0]]} color="#4ec9b0" lineWidth={2} />
       <Line points={[[-0.1, 1.8, 0], [0, 2, 0], [0.1, 1.8, 0]]} color="#4ec9b0" lineWidth={2} />
-      {/* Z軸 (青) */}
+      {/* Z-axis (blue) */}
       <Line points={[[0, 0, 0], [0, 0, 2]]} color="#569cd6" lineWidth={2} />
       <Line points={[[0, 0.1, 1.8], [0, 0, 2], [0, -0.1, 1.8]]} color="#569cd6" lineWidth={2} />
     </group>
@@ -37,18 +37,18 @@ function OriginAxes() {
 function StartPoseMarker() {
   return (
     <group>
-      {/* 原点 */}
+      {/* Origin */}
       <mesh position={[0, 0, 0]}>
         <sphereGeometry args={[0.06, 16, 16]} />
         <meshStandardMaterial color={'#ffffff'} emissive={'#ffffff'} emissiveIntensity={0.4} />
       </mesh>
 
-      {/* 前方( +Z ) の目印 */}
+      {/* Forward (+Z) marker */}
       <Line points={[[0, 0, 0], [0, 0, 1]]} color="#ffffff" lineWidth={2} />
       <Line points={[[0, 0, 1], [0.08, 0, 0.9]]} color="#ffffff" lineWidth={2} />
       <Line points={[[0, 0, 1], [-0.08, 0, 0.9]]} color="#ffffff" lineWidth={2} />
 
-      {/* 1mスケール */}
+      {/* 1m scale */}
       <Line points={[[0, 0, 0], [1, 0, 0]]} color="#f14c4c" lineWidth={2} />
       <Text position={[1.05, 0.02, 0]} fontSize={0.15} color="#f14c4c" anchorX="left" anchorY="middle">
         1m
@@ -100,40 +100,40 @@ export function SceneViewport() {
 
   return (
     <div className="w-full h-full relative">
-      {/* 3Dシーンツールバー */}
+      {/* 3D Scene toolbar */}
       <div className="absolute top-2 left-2 z-10 flex items-center gap-1 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-1">
-        <span className="px-2 text-xs text-arsist-muted">追加:</span>
+        <span className="px-2 text-xs text-arsist-muted">Add:</span>
         <button
           onClick={() => handleAddObject('primitive', 'cube')}
           className="btn-icon"
-          title="Cube追加"
+          title="Add Cube"
         >
           <Box size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'sphere')}
           className="btn-icon"
-          title="Sphere追加"
+          title="Add Sphere"
         >
           <Circle size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'plane')}
           className="btn-icon"
-          title="Plane追加"
+          title="Add Plane"
         >
           <Square size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'cylinder')}
           className="btn-icon"
-          title="Cylinder追加"
+          title="Add Cylinder"
         >
           <Cylinder size={16} />
         </button>
       </div>
 
-      {/* カメラ情報パネル */}
+      {/* Camera info panel */}
       <div className="absolute top-2 right-2 z-10 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-2 text-xs">
         <div className="flex items-center gap-2 text-arsist-muted mb-1">
           <Eye size={12} />
@@ -153,55 +153,55 @@ export function SceneViewport() {
         </div>
       </div>
 
-      {/* ヘルプボタン */}
+      {/* Help button */}
       <button
         onClick={() => setShowHelp(!showHelp)}
         className="absolute bottom-2 right-2 z-10 btn-icon bg-arsist-surface/90 backdrop-blur border border-arsist-border"
-        title="操作ヘルプ"
+        title="Operation help"
       >
         <HelpCircle size={16} />
       </button>
 
-      {/* 操作ヘルプパネル */}
+      {/* Operation help panel */}
       {showHelp && (
         <div className="absolute bottom-12 right-2 z-10 bg-arsist-surface/95 backdrop-blur border border-arsist-border rounded-lg p-3 text-xs w-64">
-          <h4 className="font-medium text-arsist-text mb-2">操作方法</h4>
+          <h4 className="font-medium text-arsist-text mb-2">Operation guide</h4>
           <div className="space-y-1 text-arsist-muted">
             <div className="flex justify-between">
-              <span>回転</span>
-              <span className="kbd">左ドラッグ</span>
+              <span>Rotate</span>
+              <span className="kbd">Left drag</span>
             </div>
             <div className="flex justify-between">
-              <span>パン</span>
-              <span className="kbd">右ドラッグ</span>
+              <span>Pan</span>
+              <span className="kbd">Right drag</span>
             </div>
             <div className="flex justify-between">
-              <span>ズーム</span>
-              <span className="kbd">スクロール</span>
+              <span>Zoom</span>
+              <span className="kbd">Scroll</span>
             </div>
             <div className="flex justify-between">
-              <span>移動モード</span>
+              <span>Move mode</span>
               <span className="kbd">W</span>
             </div>
             <div className="flex justify-between">
-              <span>回転モード</span>
+              <span>Rotate mode</span>
               <span className="kbd">E</span>
             </div>
             <div className="flex justify-between">
-              <span>スケールモード</span>
+              <span>Scale mode</span>
               <span className="kbd">R</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 選択中オブジェクト情報 */}
+      {/* Selected object info */}
       {selectedObjectIds.length > 0 && currentScene && (
         <div className="absolute bottom-2 left-2 z-10 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-2 text-xs">
           <span className="text-arsist-accent">
-            {currentScene.objects.find(o => o.id === selectedObjectIds[0])?.name || 'オブジェクト'}
+            {currentScene.objects.find(o => o.id === selectedObjectIds[0])?.name || 'Object'}
           </span>
-          <span className="text-arsist-muted ml-2">選択中</span>
+          <span className="text-arsist-muted ml-2">Selected</span>
         </div>
       )}
 
@@ -234,13 +234,13 @@ export function SceneViewport() {
         />
         <hemisphereLight args={['#606060', '#404040', 0.5]} />
 
-        {/* 原点軸 */}
+        {/* Origin axis */}
         {showAxes && <OriginAxes />}
 
-        {/* 6DoFのときは開始位置（原点）を必ず見える化 */}
+        {/* For 6DoF, always visualize the start position (origin) */}
         {trackingMode === '6dof' && <StartPoseMarker />}
 
-        {/* グリッド */}
+        {/* Grid */}
         {showGrid && (
           <Grid
             args={[20, 20]}
@@ -257,7 +257,7 @@ export function SceneViewport() {
           />
         )}
 
-        {/* ARモードガイド */}
+        {/* AR mode guide */}
         {presentationMode === 'floating_screen' && (
           <mesh position={[0, 0, 2]}>
             <planeGeometry args={[1.6, 0.9]} />
@@ -271,7 +271,7 @@ export function SceneViewport() {
           </mesh>
         )}
 
-        {/* シーンオブジェクト */}
+        {/* Scene objects */}
         <Suspense fallback={null}>
           {currentScene?.objects.map(obj => {
             if (obj.type === 'vrm') {

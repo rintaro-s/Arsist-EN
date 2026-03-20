@@ -1,6 +1,6 @@
 /**
  * Arsist Engine — UI Store
- * エディタ状態管理 (プロジェクトIRとは無関係な純粋UI状態)
+ * Editor state management (pure UI state independent of project IR)
  */
 import { create } from 'zustand';
 
@@ -16,7 +16,7 @@ interface UIState {
   currentView: ViewType;
   setCurrentView: (view: ViewType) => void;
 
-  // ダイアログ
+  // Dialogs
   showNewProjectDialog: boolean;
   showBuildDialog: boolean;
   showSettingsDialog: boolean;
@@ -28,7 +28,7 @@ interface UIState {
   setShowPreviewDialog: (show: boolean) => void;
   setShowMCPDialog: (show: boolean) => void;
 
-  // パネルサイズ
+  // Panel sizes
   leftPanelWidth: number;
   rightPanelWidth: number;
   bottomPanelHeight: number;
@@ -36,7 +36,7 @@ interface UIState {
   setRightPanelWidth: (w: number) => void;
   setBottomPanelHeight: (h: number) => void;
 
-  // 3D ビューポート
+  // 3D Viewport
   showGrid: boolean;
   showAxes: boolean;
   snapToGrid: boolean;
@@ -49,7 +49,7 @@ interface UIState {
   setTransformMode: (m: 'translate' | 'rotate' | 'scale') => void;
   setTransformSpace: (s: 'local' | 'world') => void;
 
-  // ビルド
+  // Build
   buildProgress: number;
   buildMessage: string;
   buildLogs: string[];
@@ -59,22 +59,22 @@ interface UIState {
   clearBuildLogs: () => void;
   setIsBuilding: (b: boolean) => void;
 
-  // コンソール
+  // Console
   consoleLogs: ConsoleLog[];
   addConsoleLog: (log: Omit<ConsoleLog, 'time'>) => void;
   clearConsoleLogs: () => void;
 
-  // 通知（addConsoleLog のラッパー）
+  // Notifications (wrapper for addConsoleLog)
   addNotification: (note: { type: string; message: string }) => void;
 
-  // ボトムパネルタブ
-  bottomTab: 'console' | 'datastore';
-  setBottomTab: (tab: 'console' | 'datastore') => void;
+  // Bottom panel tab
+  bottomTab: 'console';
+  setBottomTab: (tab: 'console') => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
   currentView: 'scene',
-  setCurrentView: (view) => set({ currentView: view }),
+  setCurrentView: (view) => set({ currentView: view === 'dataflow' ? 'ui' : view }),
 
   showNewProjectDialog: false,
   showBuildDialog: false,
@@ -116,7 +116,7 @@ export const useUIStore = create<UIState>((set) => ({
   setIsBuilding: (b) => set({ isBuilding: b }),
 
   consoleLogs: [
-    { type: 'info', message: 'Arsist Engine 起動完了', time: new Date().toLocaleTimeString() },
+    { type: 'info', message: 'Arsist Engine started', time: new Date().toLocaleTimeString() },
   ],
   addConsoleLog: (log) =>
     set((s) => ({

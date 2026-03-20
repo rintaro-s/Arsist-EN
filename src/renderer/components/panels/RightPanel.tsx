@@ -1,8 +1,8 @@
 /**
- * RightPanel — ビュー別プロパティインスペクター
- * Scene: Object Inspector (Transform, Material, Canvas設定)
- * UI: Element Inspector (スタイル, Bind, レイアウト)
- * DataFlow: Source / Transform 設定
+ * RightPanel — View-specific Property Inspector
+ * Scene: Object Inspector (Transform, Material, Canvas settings)
+ * UI: Element Inspector (Style, Bind, Layout)
+ * DataFlow: Source / Transform settings
  */
 import React from 'react';
 import { useProjectStore } from '../../stores/projectStore';
@@ -17,14 +17,13 @@ export function RightPanel() {
     <div className="h-full flex flex-col overflow-hidden">
       {currentView === 'scene' && <ObjectInspector />}
       {currentView === 'ui' && <UIInspector />}
-      {currentView === 'dataflow' && <DataFlowInspector />}
       {currentView === 'script' && <ScriptInspector />}
     </div>
   );
 }
 
 /* ════════════════════════════════════════
-   Project AR Settings (オブジェクト未選択時に表示)
+   Project AR Settings (displayed when no object selected)
    ════════════════════════════════════════ */
 
 function ProjectARSettings() {
@@ -225,7 +224,7 @@ function ObjectInspector() {
           </div>
         )}
 
-        {/* VRM Capabilities (VRMタイプの場合のみ表示) */}
+        {/* VRM Capabilities (shown only for VRM type) */}
         {obj.type === 'vrm' && <VRMCapabilitiesPanel assetId={obj.assetId} modelPath={obj.modelPath} />}
 
         {/* Delete */}

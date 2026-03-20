@@ -1,8 +1,8 @@
 /**
- * LeftPanel — ビュー別の階層/リスト表示
- * Scene: オブジェクト階層 + Canvas追加
- * UI: UHD / Canvas レイアウト + 要素ツリー
- * DataFlow: DataSource / Transform 一覧
+ * LeftPanel — View-specific hierarchy/list display
+ * Scene: Object hierarchy + Canvas addition
+ * UI: UHD / Canvas layouts + element tree
+ * DataFlow: DataSource / Transform list
  */
 import { useState, useRef, useEffect } from 'react';
 import {
@@ -22,7 +22,6 @@ export function LeftPanel() {
     <div className="h-full flex flex-col overflow-hidden">
       {currentView === 'scene' && <SceneHierarchy />}
       {currentView === 'ui' && <UIHierarchy />}
-      {currentView === 'dataflow' && <DataFlowList />}
       {currentView === 'script' && <ScriptFileList />}
     </div>
   );
@@ -146,7 +145,7 @@ function SceneHierarchy() {
           );
         })}
         {(!scene || scene.objects.length === 0) && (
-          <Empty icon={<Box size={20} />} text="+ ボタンでオブジェクト追加" />
+          <Empty icon={<Box size={20} />} text="Click + to add an object" />
         )}
       </div>
     </div>
@@ -186,9 +185,9 @@ function UIHierarchy() {
         <span>UI Layouts</span>
       </div>
 
-      {/* UHD セクション */}
+      {/* UHD Section */}
       <LayoutSection
-        label="UHD (常時表示)"
+        label="UHD (Always Visible)"
         layouts={uhdLayouts}
         currentId={currentUILayoutId}
         onSelect={setCurrentUILayout}
@@ -197,9 +196,9 @@ function UIHierarchy() {
         minCount={1}
       />
 
-      {/* Canvas セクション */}
+      {/* Canvas Section */}
       <LayoutSection
-        label="Canvas (3D空間)"
+        label="Canvas (3D Space)"
         layouts={canvasLayouts}
         currentId={currentUILayoutId}
         onSelect={setCurrentUILayout}
@@ -208,10 +207,10 @@ function UIHierarchy() {
         minCount={0}
       />
 
-      {/* 要素追加ツールバー */}
+      {/* Element Creation Toolbar */}
       {layout && (
         <div className="px-2 py-1.5 border-b border-arsist-border bg-arsist-hover flex items-center gap-1 flex-wrap">
-          <span className="text-[10px] text-arsist-muted mr-1">追加:</span>
+          <span className="text-[10px] text-arsist-muted mr-1">Add:</span>
           {(['Panel', 'Text', 'Button', 'Image', 'Input', 'Slider', 'Gauge', 'Graph'] as const).map((t) => (
             <button
               key={t}
@@ -222,10 +221,10 @@ function UIHierarchy() {
         </div>
       )}
 
-      {/* 要素ツリー */}
+      {/* Element Tree */}
       <div className="flex-1 overflow-y-auto p-1.5">
         {layout ? renderTree(layout.root) : (
-          <Empty icon={<Layout size={20} />} text="レイアウトを選択してください" />
+          <Empty icon={<Layout size={20} />} text="Select a layout" />
         )}
       </div>
     </div>
@@ -258,7 +257,7 @@ function LayoutSection({ label, layouts, currentId, onSelect, onAdd, onRemove, m
                 <button
                   onClick={(e) => { e.stopPropagation(); onRemove(l.id); }}
                   className="opacity-0 group-hover:opacity-100 text-arsist-muted hover:text-arsist-error transition-opacity p-0.5"
-                  title="削除"
+                  title="Delete"
                 ><Trash2 size={11} /></button>
               )}
             </div>
@@ -300,7 +299,7 @@ function DataFlowList() {
             <button onClick={(e) => { e.stopPropagation(); removeDataSource(ds.id); }} className="text-arsist-muted hover:text-arsist-error shrink-0"><Trash2 size={11} /></button>
           </div>
         ))}
-        {sources.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">DataFlowエディタから追加</div>}
+        {sources.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">Add from DataFlow editor</div>}
       </div>
 
       <div className="px-2 py-1 border-b border-t border-arsist-border bg-arsist-hover">
@@ -318,7 +317,7 @@ function DataFlowList() {
             <button onClick={(e) => { e.stopPropagation(); removeTransform(tf.id); }} className="text-arsist-muted hover:text-arsist-error shrink-0"><Trash2 size={11} /></button>
           </div>
         ))}
-        {transforms.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">DataFlowエディタから追加</div>}
+        {transforms.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">Add from DataFlow editor</div>}
       </div>
     </div>
   );
