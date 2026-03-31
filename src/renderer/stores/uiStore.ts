@@ -22,11 +22,13 @@ interface UIState {
   showSettingsDialog: boolean;
   showPreviewDialog: boolean;
   showMCPDialog: boolean;
+  showSetupWizard: boolean;
   setShowNewProjectDialog: (show: boolean) => void;
   setShowBuildDialog: (show: boolean) => void;
   setShowSettingsDialog: (show: boolean) => void;
   setShowPreviewDialog: (show: boolean) => void;
   setShowMCPDialog: (show: boolean) => void;
+  setShowSetupWizard: (show: boolean) => void;
 
   // Panel sizes
   leftPanelWidth: number;
@@ -81,11 +83,13 @@ export const useUIStore = create<UIState>((set) => ({
   showSettingsDialog: false,
   showPreviewDialog: false,
   showMCPDialog: false,
+  showSetupWizard: false,
   setShowNewProjectDialog: (show) => set({ showNewProjectDialog: show }),
   setShowBuildDialog: (show) => set({ showBuildDialog: show }),
   setShowSettingsDialog: (show) => set({ showSettingsDialog: show }),
   setShowPreviewDialog: (show) => set({ showPreviewDialog: show }),
   setShowMCPDialog: (show) => set({ showMCPDialog: show }),
+  setShowSetupWizard: (show) => set({ showSetupWizard: show }),
 
   leftPanelWidth: 260,
   rightPanelWidth: 300,

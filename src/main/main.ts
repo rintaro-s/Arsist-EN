@@ -41,6 +41,7 @@ const store = new Store({
     },
     defaultOutputPath: '',
     defaultProjectPath: '',
+    sdkDir: '',
   },
 });
 
@@ -390,6 +391,11 @@ ipcMain.handle('unity:build', async (_, buildConfig) => {
     mainWindow?.webContents.send('unity:build-log', log);
   });
 
+  const configuredSdkDir = store.get('sdkDir') as string | undefined;
+  if (configuredSdkDir && configuredSdkDir.trim()) {
+    unityBuilder.setSdkDir(configuredSdkDir.trim());
+  }
+
   return await unityBuilder.build({
     ...buildConfig,
     unityVersion: buildConfig?.unityVersion || unityVersion,
@@ -496,10 +502,33 @@ ipcMain.handle('fs:exists', async (_, filePath: string) => {
   }
 });
 
+ipcMain.handle('sdk:get-dir', async () => {
+  return store.get('sdkDir') || '';
+});
+
+ipcMain.handle('sdk:set-dir', async (_, sdkDir: string) => {
+  store.set('sdkDir', sdkDir);
+  return { success: true };
+});
+
+function resolveConfiguredSdkDir(): string {
+  const configured = store.get('sdkDir') as string | undefined;
+  if (configured && configured.trim()) return configured.trim();
+  // Packaged app: electron-builder copies sdk/ into resources/
+  if (process.resourcesPath) {
+    const packed = path.join(process.resourcesPath, 'sdk');
+    if (fs.pathExistsSync(packed)) return packed;
+  }
+  // Dev: source tree relative to cwd or __dirname
+  const cwdSdk = path.join(process.cwd(), 'sdk');
+  if (fs.pathExistsSync(cwdSdk)) return cwdSdk;
+  return path.join(__dirname, '../../..', 'sdk');
+}
+
 ipcMain.handle('sdk:xreal-status', async () => {
   try {
-    const repoRoot = path.join(__dirname, '../../..');
-    const pkgJsonPath = path.join(repoRoot, 'sdk', 'com.xreal.xr', 'package', 'package.json');
+    const sdkRoot = resolveConfiguredSdkDir();
+    const pkgJsonPath = path.join(sdkRoot, 'com.xreal.xr', 'package', 'package.json');
     if (!await fs.pathExists(pkgJsonPath)) {
       return { exists: false, path: pkgJsonPath };
     }
@@ -513,8 +542,7 @@ ipcMain.handle('sdk:xreal-status', async () => {
 
 ipcMain.handle('sdk:quest-status', async () => {
   try {
-    const repoRoot = path.join(__dirname, '../../..');
-    const questDir = path.join(repoRoot, 'sdk', 'quest');
+    const questDir = path.join(resolveConfiguredSdkDir(), 'quest');
     if (!await fs.pathExists(questDir)) {
       return { exists: false, path: questDir, error: 'sdk/quest directory not found' };
     }
@@ -537,8 +565,7 @@ ipcMain.handle('sdk:quest-status', async () => {
 
 ipcMain.handle('sdk:bundled-deps', async () => {
   try {
-    const repoRoot = path.join(__dirname, '../../..');
-    const sdkDir = path.join(repoRoot, 'sdk');
+    const sdkDir = resolveConfiguredSdkDir();
     const deps: Array<{ name: string; path: string; exists: boolean; description: string }> = [];
 
     // UniVRM
@@ -546,18 +573,18 @@ ipcMain.handle('sdk:bundled-deps', async () => {
     const vrmPkg = vrmGlob.find((f) => /^UniVRM.*\.unitypackage$/i.test(f));
     deps.push({
       name: 'UniVRM',
-      path: vrmPkg ? `sdk/${vrmPkg}` : 'sdk/UniVRM-*.unitypackage',
+      path: vrmPkg ? path.join(sdkDir, vrmPkg) : path.join(sdkDir, 'UniVRM-*.unitypackage'),
       exists: !!vrmPkg,
-      description: 'VRMアバター読み込み用パッケージ',
+      description: 'VRM avatar loading package',
     });
 
     // JKG-M3 (font)
     const jkgPkg = vrmGlob.find((f) => /^JKG-M3\.unitypackage$/i.test(f));
     deps.push({
-      name: 'JKG-M3 (フォント)',
-      path: jkgPkg ? `sdk/${jkgPkg}` : 'sdk/JKG-M3.unitypackage',
+      name: 'JKG-M3 (Font)',
+      path: jkgPkg ? path.join(sdkDir, jkgPkg) : path.join(sdkDir, 'JKG-M3.unitypackage'),
       exists: !!jkgPkg,
-      description: '日本語フォント用Unityパッケージ',
+      description: 'Japanese font Unity package',
     });
 
     // nupkg (Jint scripting)
@@ -566,16 +593,16 @@ ipcMain.handle('sdk:bundled-deps', async () => {
     const jintPkg = nupkgFiles.find((f) => /^jint.*\.nupkg$/i.test(f));
     const esprimaPkg = nupkgFiles.find((f) => /^esprima.*\.nupkg$/i.test(f));
     deps.push({
-      name: 'Jint (スクリプトエンジン)',
-      path: jintPkg ? `sdk/nupkg/${jintPkg}` : 'sdk/nupkg/jint.*.nupkg',
+      name: 'Jint (Scripting Engine)',
+      path: jintPkg ? path.join(nupkgDir, jintPkg) : path.join(nupkgDir, 'jint.*.nupkg'),
       exists: !!jintPkg,
-      description: 'JavaScript実行エンジン (.NET)',
+      description: 'JavaScript execution engine (.NET)',
     });
     deps.push({
-      name: 'Esprima (パーサー)',
-      path: esprimaPkg ? `sdk/nupkg/${esprimaPkg}` : 'sdk/nupkg/esprima.*.nupkg',
+      name: 'Esprima (Parser for Jint)',
+      path: esprimaPkg ? path.join(nupkgDir, esprimaPkg) : path.join(nupkgDir, 'esprima.*.nupkg'),
       exists: !!esprimaPkg,
-      description: 'JavaScriptパーサー (Jint依存)',
+      description: 'JavaScript parser (Jint dependency)',
     });
 
     return { deps };

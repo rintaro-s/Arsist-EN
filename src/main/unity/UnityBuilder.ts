@@ -43,6 +43,7 @@ export interface BuildProgress {
 
 export class UnityBuilder extends EventEmitter {
   private unityPath: string;
+  private sdkDir: string = '';
   private currentProcess: ChildProcess | null = null;
   private unityTemplatePath: string;
   private buildInProgress = false;
@@ -64,23 +65,42 @@ export class UnityBuilder extends EventEmitter {
   constructor(unityPath: string) {
     super();
     this.unityPath = unityPath;
-    this.unityTemplatePath = path.join(__dirname, '../../..', 'UnityBackend', 'ArsistBuilder');
+    // Initial value; will be overridden by resolveUnityTemplatePath() at build/validate time
+    this.unityTemplatePath = this.resolveUnityTemplatePathSync();
+  }
+
+  private resolveUnityTemplatePathSync(): string {
+    const candidates = this.buildUnityTemplateCandidates();
+    for (const p of candidates) {
+      try {
+        if (fs.pathExistsSync(p)) return p;
+      } catch { /* ignore */ }
+    }
+    return candidates[0];
+  }
+
+  private buildUnityTemplateCandidates(): string[] {
+    const candidates: string[] = [];
+    // 1) Packaged app: resources/ (electron-builder extraResources)
+    if (process.resourcesPath) {
+      candidates.push(path.join(process.resourcesPath, 'UnityBackend', 'ArsistBuilder'));
+    }
+    // 2) Dev: cwd
+    candidates.push(path.join(process.cwd(), 'UnityBackend', 'ArsistBuilder'));
+    // 3) app.getAppPath()
+    try {
+      const appPath = app.getAppPath();
+      candidates.push(path.join(appPath, 'UnityBackend', 'ArsistBuilder'));
+      candidates.push(path.join(path.dirname(appPath), 'UnityBackend', 'ArsistBuilder'));
+    } catch { /* ignore */ }
+    // 4) Relative from __dirname (dist/main/main/unity -> ../../../../)
+    candidates.push(path.join(__dirname, '../../../..', 'UnityBackend', 'ArsistBuilder'));
+    candidates.push(path.join(__dirname, '../../..', 'UnityBackend', 'ArsistBuilder'));
+    return candidates;
   }
 
   private resolveUnityTemplatePath(): { path: string | null; searched: string[] } {
-    const searched: string[] = [];
-
-    const cwd = process.cwd();
-    searched.push(path.join(cwd, 'UnityBackend', 'ArsistBuilder'));
-
-    try {
-      const appPath = app.getAppPath();
-      searched.push(path.join(appPath, 'UnityBackend', 'ArsistBuilder'));
-    } catch {
-      // ignore
-    }
-
-    searched.push(path.join(__dirname, '../../../..', 'UnityBackend', 'ArsistBuilder'));
+    const searched = this.buildUnityTemplateCandidates();
 
     for (const p of searched) {
       if (fs.pathExistsSync(p)) {
@@ -95,6 +115,12 @@ export class UnityBuilder extends EventEmitter {
     const searched: string[] = [];
 
     const candidates: string[] = [];
+
+    // 1) Packaged: process.resourcesPath IS the "repo root" equivalent
+    if (process.resourcesPath) {
+      candidates.push(process.resourcesPath);
+    }
+
     candidates.push(process.cwd());
 
     try {
@@ -116,6 +142,9 @@ export class UnityBuilder extends EventEmitter {
       if (fs.pathExistsSync(path.join(root, 'sdk')) && fs.pathExistsSync(path.join(root, 'Adapters'))) {
         return { path: root, searched };
       }
+      if (fs.pathExistsSync(path.join(root, 'UnityBackend'))) {
+        return { path: root, searched };
+      }
       if (fs.pathExistsSync(path.join(root, 'package.json')) && fs.pathExistsSync(path.join(root, 'UnityBackend'))) {
         return { path: root, searched };
       }
@@ -130,6 +159,19 @@ export class UnityBuilder extends EventEmitter {
 
   setUnityPath(unityPath: string): void {
     this.unityPath = unityPath;
+  }
+
+  setSdkDir(sdkDir: string): void {
+    this.sdkDir = sdkDir;
+  }
+
+  private resolveSdkDir(): string {
+    if (this.sdkDir && this.sdkDir.trim()) return this.sdkDir.trim();
+    const resolvedRepo = this.resolveRepoRoot();
+    if (resolvedRepo.path) return path.join(resolvedRepo.path, 'sdk');
+    // Final fallback: packaged resources or cwd
+    if (process.resourcesPath) return path.join(process.resourcesPath, 'sdk');
+    return path.join(process.cwd(), 'sdk');
   }
 
   /**
@@ -720,11 +762,8 @@ export class UnityBuilder extends EventEmitter {
   }
 
   private async resolveUniVRMUnityPackagePath(): Promise<string | null> {
-    const resolvedRepo = this.resolveRepoRoot();
     const roots = [
-      resolvedRepo.path ? path.join(resolvedRepo.path, 'sdk') : null,
-      path.join(process.cwd(), 'sdk'),
-      'E:\\GITS\\Arsist\\sdk',
+      this.resolveSdkDir(),
     ].filter((p): p is string => !!p);
 
     for (const root of roots) {
@@ -829,11 +868,8 @@ export class UnityBuilder extends EventEmitter {
       { id: 'system.runtime.compilerservices.unsafe',  version: '6.0.0', dll: 'System.Runtime.CompilerServices.Unsafe.dll' },
     ];
 
-    // ローカル nupkg の探索ルート（resolveRepoRoot でリポジトリルートを取得）
-    const resolvedRepo   = this.resolveRepoRoot();
-    const localNupkgDir  = resolvedRepo.path
-      ? path.join(resolvedRepo.path, 'sdk', 'nupkg')
-      : path.join(process.cwd(), 'sdk', 'nupkg');
+    // ローカル nupkg の探索ルート
+    const localNupkgDir = path.join(this.resolveSdkDir(), 'nupkg');
 
     const tmpDir = path.join(pluginsDir, '_dl_tmp');
     await fs.ensureDir(tmpDir);
@@ -1145,14 +1181,7 @@ export class UnityBuilder extends EventEmitter {
   }
 
   private async integrateXrealSdk(unityProjectPath: string): Promise<void> {
-    const resolvedRepo = this.resolveRepoRoot();
-    if (!resolvedRepo.path) {
-      throw new Error(
-        `XREAL SDK not found (repo root not detected).\nSearched:\n- ${resolvedRepo.searched.join('\n- ')}`
-      );
-    }
-
-    const sdkSourceDir = path.join(resolvedRepo.path, 'sdk', 'com.xreal.xr', 'package');
+    const sdkSourceDir = path.join(this.resolveSdkDir(), 'com.xreal.xr', 'package');
     const sdkPackageJson = path.join(sdkSourceDir, 'package.json');
 
     if (!await fs.pathExists(sdkPackageJson)) {
@@ -1203,14 +1232,7 @@ export class UnityBuilder extends EventEmitter {
   }
 
   private async integrateQuestSdk(unityProjectPath: string): Promise<void> {
-    const resolvedRepo = this.resolveRepoRoot();
-    if (!resolvedRepo.path) {
-      throw new Error(
-        `Quest SDK not found (repo root not detected).\nSearched:\n- ${resolvedRepo.searched.join('\n- ')}`
-      );
-    }
-
-    const questSdkDir = path.join(resolvedRepo.path, 'sdk', 'quest');
+    const questSdkDir = path.join(this.resolveSdkDir(), 'quest');
     if (!await fs.pathExists(questSdkDir)) {
       throw new Error(`Quest SDK directory not found: ${questSdkDir}`);
     }
@@ -1254,7 +1276,7 @@ export class UnityBuilder extends EventEmitter {
     }
 
     // Quest SDKサンプル準拠の最低依存を補完
-    const questSampleDependencies = await this.readQuestSampleDependencies(resolvedRepo.path);
+    const questSampleDependencies = await this.readQuestSampleDependencies(this.resolveSdkDir());
     this.applyQuestRequiredDependencies(dependencies, questSampleDependencies);
 
     manifest.dependencies = dependencies;
@@ -1262,13 +1284,13 @@ export class UnityBuilder extends EventEmitter {
 
     const names = copiedPackages.map((p) => `${p.id} -> ${p.fileName}`).join(', ');
     const physics2d = dependencies['com.unity.modules.physics2d'] || '(missing)';
-    await this.applyQuestXrBootstrap(unityProjectPath, resolvedRepo.path);
+    await this.applyQuestXrBootstrap(unityProjectPath, this.resolveSdkDir());
     this.emit('log', `[Arsist] Embedded Quest SDK packages: ${names} (manifest.json updated)`);
     this.emit('log', `[Arsist] Quest dependencies ensured (physics2d=${physics2d})`);
   }
 
-  private async applyQuestXrBootstrap(unityProjectPath: string, repoRoot: string): Promise<void> {
-    const sampleRoot = path.join(repoRoot, 'sdk', 'quest', 'Unity-InteractionSDK-Samples');
+  private async applyQuestXrBootstrap(unityProjectPath: string, sdkDirResolved: string): Promise<void> {
+    const sampleRoot = path.join(sdkDirResolved, 'quest', 'Unity-InteractionSDK-Samples');
     if (!await fs.pathExists(sampleRoot)) {
       this.emit('log', `[Arsist] Quest XR bootstrap skipped: sample root not found (${sampleRoot})`);
       return;
@@ -1297,10 +1319,9 @@ export class UnityBuilder extends EventEmitter {
     this.emit('log', '[Arsist] Quest XR bootstrap assets/settings applied (Assets/XR + ProjectSettings XR files)');
   }
 
-  private async readQuestSampleDependencies(repoRoot: string): Promise<Record<string, string> | null> {
+  private async readQuestSampleDependencies(sdkDirResolved: string): Promise<Record<string, string> | null> {
     const sampleManifestPath = path.join(
-      repoRoot,
-      'sdk',
+      sdkDirResolved,
       'quest',
       'Unity-InteractionSDK-Samples',
       'Packages',
@@ -1428,6 +1449,93 @@ export class UnityBuilder extends EventEmitter {
     }
 
     return null;
+  }
+
+  private findWindowsExecutablePathSync(fileName: string, env: NodeJS.ProcessEnv): string | null {
+    if (process.platform !== 'win32') return null;
+
+    const dirs: string[] = [];
+    const seen = new Set<string>();
+    const pushDir = (dir?: string | null) => {
+      if (!dir) return;
+      const normalized = path.resolve(dir);
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      dirs.push(normalized);
+    };
+
+    const pathEntries = (env.PATH || '').split(';').filter(Boolean);
+    pathEntries.forEach((entry) => pushDir(entry));
+
+    const systemRoot = env.SystemRoot || 'C:\\Windows';
+    const programFiles = env.ProgramW6432 || env.ProgramFiles || 'C:\\Program Files';
+    const programFilesX86 = env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const localAppData = env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+
+    [
+      path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'),
+      path.join(systemRoot, 'SysWOW64', 'WindowsPowerShell', 'v1.0'),
+      path.join(programFiles, 'PowerShell', '7'),
+      path.join(programFilesX86, 'PowerShell', '7'),
+      path.join(localAppData, 'Programs', 'PowerShell', '7'),
+      path.join(localAppData, 'Microsoft', 'WindowsApps'),
+    ].forEach((entry) => pushDir(entry));
+
+    [
+      path.join(programFiles, 'PowerShell'),
+      path.join(programFilesX86, 'PowerShell'),
+      path.join(localAppData, 'Programs', 'PowerShell'),
+    ].forEach((root) => {
+      if (!fs.existsSync(root)) return;
+      try {
+        const entries = fs.readdirSync(root, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+          .sort()
+          .reverse();
+        entries.forEach((entry) => pushDir(path.join(root, entry)));
+      } catch {
+        // ignore
+      }
+    });
+
+    for (const dir of dirs) {
+      const candidate = path.join(dir, fileName);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private ensureWindowsShellAvailability(env: NodeJS.ProcessEnv): void {
+    if (process.platform !== 'win32') return;
+
+    const pathSep = ';';
+    const prependPathDir = (dir: string) => {
+      const currentPath = env.PATH || '';
+      const entries = currentPath.split(pathSep).filter(Boolean);
+      const normalizedEntries = new Set(entries.map((entry) => entry.toLowerCase()));
+      if (normalizedEntries.has(dir.toLowerCase())) return;
+      env.PATH = currentPath ? `${dir}${pathSep}${currentPath}` : dir;
+    };
+
+    const systemRoot = env.SystemRoot || 'C:\\Windows';
+    const cmdPath = path.join(systemRoot, 'System32', 'cmd.exe');
+    if (!env.ComSpec && fs.existsSync(cmdPath)) {
+      env.ComSpec = cmdPath;
+    }
+
+    const powershellPath = this.findWindowsExecutablePathSync('powershell.exe', env);
+    if (powershellPath) {
+      prependPathDir(path.dirname(powershellPath));
+      this.emit('log', `[Arsist] Windows PowerShell resolved: ${powershellPath}`);
+      return;
+    }
+
+    this.emit('log', '[Arsist] WARNING: powershell.exe could not be resolved for Unity.');
   }
 
   /**
@@ -1589,6 +1697,8 @@ export class UnityBuilder extends EventEmitter {
           // ignore
         }
       }
+
+      this.ensureWindowsShellAvailability(env);
 
       if (options?.manualLicenseFile) {
         env.UNITY_LICENSE_FILE = options.manualLicenseFile;
@@ -1874,7 +1984,11 @@ export class UnityBuilder extends EventEmitter {
 
   private async resolveAdapterDir(targetDevice: string): Promise<string | null> {
     const resolvedRepo = this.resolveRepoRoot();
-    const adaptersRoot = resolvedRepo.path ? path.join(resolvedRepo.path, 'Adapters') : path.join(__dirname, '../../..', 'Adapters');
+    const adaptersRoot = resolvedRepo.path
+      ? path.join(resolvedRepo.path, 'Adapters')
+      : process.resourcesPath
+        ? path.join(process.resourcesPath, 'Adapters')
+        : path.join(__dirname, '../../..', 'Adapters');
     if (!await fs.pathExists(adaptersRoot)) return null;
 
     const direct = path.join(adaptersRoot, targetDevice);

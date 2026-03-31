@@ -21,6 +21,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [unityVersion, setUnityVersion] = useState('');
   const [unityManualLicenseFile, setUnityManualLicenseFile] = useState('');
   const [defaultOutputPath, setDefaultOutputPath] = useState('');
+  const [sdkDir, setSdkDir] = useState('');
   const [versionDetected, setVersionDetected] = useState<string | null>(null);
   const [unityCandidates, setUnityCandidates] = useState<string[]>([]);
   const [detectingUnity, setDetectingUnity] = useState(false);
@@ -52,6 +53,12 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         setDefaultOutputPath(storedOutputPath);
       }
 
+      const api: any = window.electronAPI as any;
+      if (typeof api?.sdk?.getDir === 'function') {
+        const storedSdkDir = await api.sdk.getDir();
+        if (storedSdkDir) setSdkDir(storedSdkDir);
+      }
+
       const validation = await window.electronAPI.unity.validate();
       if (validation?.version) {
         setVersionDetected(validation.version);
@@ -59,7 +66,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
       // XREAL SDK status (visible on settings screen)
       try {
-        const api: any = window.electronAPI as any;
         if (api.sdk?.xrealStatus) {
           const s = await api.sdk.xrealStatus();
           setXrealSdkStatus(s);
@@ -72,7 +78,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
       // Quest SDK status
       try {
-        const api: any = window.electronAPI as any;
         if (api.sdk?.questStatus) {
           const s = await api.sdk.questStatus();
           setQuestSdkStatus(s);
@@ -85,7 +90,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
       // Bundled dependencies
       try {
-        const api: any = window.electronAPI as any;
         if (api.sdk?.bundledDeps) {
           const result = await api.sdk.bundledDeps();
           if (result?.deps) setBundledDeps(result.deps);
@@ -222,6 +226,14 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     }
   };
 
+  const handleSelectSdkDir = async () => {
+    if (!window.electronAPI) return;
+    const picked = await window.electronAPI.fs.selectDirectory();
+    if (picked) {
+      setSdkDir(picked);
+    }
+  };
+
   const handleSelectManualLicenseFile = async () => {
     if (!window.electronAPI) return;
     const file = await window.electronAPI.fs.selectFile([
@@ -240,6 +252,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     await window.electronAPI.store.set('unityVersion', unityVersion.trim());
     await window.electronAPI.store.set('unityManualLicenseFile', unityManualLicenseFile.trim());
     await window.electronAPI.store.set('defaultOutputPath', defaultOutputPath);
+    const sdkApi: any = window.electronAPI as any;
+    if (typeof sdkApi?.sdk?.setDir === 'function') {
+      await sdkApi.sdk.setDir(sdkDir.trim());
+    }
     await window.electronAPI.store.set('layoutSettings', {
       leftPanelWidth,
       rightPanelWidth,
@@ -354,6 +370,33 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 <p className="text-xs text-arsist-muted mt-1">
                   Builds will only run on this version or higher
                 </p>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">SDK Directory</h3>
+            <div className="space-y-2 text-xs">
+              <div className="text-arsist-muted">
+                Root directory containing SDK files (<span className="font-mono">com.xreal.xr/</span>, <span className="font-mono">quest/</span>, <span className="font-mono">nupkg/</span>, etc.).
+                Leave blank to use the default <span className="font-mono">sdk/</span> folder next to the app.
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={sdkDir}
+                  onChange={(e) => setSdkDir(e.target.value)}
+                  className="input flex-1"
+                  placeholder="(default: sdk/ next to app)"
+                />
+                <button onClick={handleSelectSdkDir} className="btn btn-secondary">
+                  <FolderOpen size={16} />
+                </button>
+                {sdkDir && (
+                  <button onClick={() => setSdkDir('')} className="btn btn-ghost text-xs">
+                    Clear
+                  </button>
+                )}
               </div>
             </div>
           </section>

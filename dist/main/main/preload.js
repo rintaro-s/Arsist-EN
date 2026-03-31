@@ -53,6 +53,8 @@ const electronAPI = {
     },
     // SDK状態
     sdk: {
+        getDir: () => electron_1.ipcRenderer.invoke('sdk:get-dir'),
+        setDir: (sdkDir) => electron_1.ipcRenderer.invoke('sdk:set-dir', sdkDir),
         xrealStatus: () => electron_1.ipcRenderer.invoke('sdk:xreal-status'),
         questStatus: () => electron_1.ipcRenderer.invoke('sdk:quest-status'),
         bundledDeps: () => electron_1.ipcRenderer.invoke('sdk:bundled-deps'),

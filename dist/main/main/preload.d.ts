@@ -28,6 +28,8 @@ declare const electronAPI: {
         exists: (filePath: string) => Promise<any>;
     };
     sdk: {
+        getDir: () => Promise<any>;
+        setDir: (sdkDir: string) => Promise<any>;
         xrealStatus: () => Promise<any>;
         questStatus: () => Promise<any>;
         bundledDeps: () => Promise<any>;

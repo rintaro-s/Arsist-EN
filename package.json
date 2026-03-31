@@ -79,6 +79,28 @@
       "dist/**/*",
       "node_modules/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "UnityBackend",
+        "to": "UnityBackend",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "Adapters",
+        "to": "Adapters",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "sdk",
+        "to": "sdk",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "scripts",
+        "to": "scripts",
+        "filter": ["**/*"]
+      }
+    ],
     "mac": {
       "target": "dmg"
     },

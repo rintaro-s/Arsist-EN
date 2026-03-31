@@ -31,16 +31,21 @@ export interface BuildProgress {
 }
 export declare class UnityBuilder extends EventEmitter {
     private unityPath;
+    private sdkDir;
     private currentProcess;
     private unityTemplatePath;
     private buildInProgress;
     private lastLogFile;
     private isLicensingNoise;
     constructor(unityPath: string);
+    private resolveUnityTemplatePathSync;
+    private buildUnityTemplateCandidates;
     private resolveUnityTemplatePath;
     private resolveRepoRoot;
     getUnityPath(): string;
     setUnityPath(unityPath: string): void;
+    setSdkDir(sdkDir: string): void;
+    private resolveSdkDir;
     /**
      * Unity実行環境の検証
      */
@@ -112,6 +117,8 @@ export declare class UnityBuilder extends EventEmitter {
      * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
      */
     private detectAndroidSdkPath;
+    private findWindowsExecutablePathSync;
+    private ensureWindowsShellAvailability;
     /**
      * Unityプロジェクトの ProjectSettings/AndroidExternalToolsSettings.asset を生成し、
      * JDK / Android SDK / NDK パスを書き込む。

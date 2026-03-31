@@ -37,6 +37,7 @@ export declare class AdapterManager {
     private adaptersDir;
     private adaptersCache;
     constructor();
+    private static resolveAdaptersDir;
     /**
      * 利用可能なすべてのアダプターを取得
      */

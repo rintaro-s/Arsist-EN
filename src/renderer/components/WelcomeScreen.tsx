@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Plus, FolderOpen, Glasses, Activity, Layout, Box } from 'lucide-react';
+import { Plus, FolderOpen, Glasses, Settings2 } from 'lucide-react';
 import { useProjectStore } from '../stores/projectStore';
+import { useUIStore } from '../stores/uiStore';
 
 interface WelcomeScreenProps {
   onNewProject: () => void;
@@ -8,6 +9,7 @@ interface WelcomeScreenProps {
 
 export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
   const loadProject = useProjectStore((s) => s.loadProject);
+  const setShowSetupWizard = useUIStore((s) => s.setShowSetupWizard);
   const [recent, setRecent] = useState<string[]>([]);
 
   useEffect(() => {
@@ -104,44 +106,26 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
           </div>
         )}
 
-        {/* Features */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          <div className="p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border text-center">
-            <Box size={20} className="text-arsist-primary mx-auto mb-1" />
-            <p className="text-xs text-arsist-muted">3D Scene Editing</p>
-          </div>
-          <div className="p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border text-center">
-            <Layout size={20} className="text-arsist-warning mx-auto mb-1" />
-            <p className="text-xs text-arsist-muted">UI/HUD Design</p>
-          </div>
-          <div className="p-3 bg-arsist-surface/50 rounded-lg border border-arsist-border text-center">
-            <Activity size={20} className="text-arsist-accent mx-auto mb-1" />
-            <p className="text-xs text-arsist-muted">Script Automation</p>
-          </div>
-        </div>
-
-        {/* Supported Devices */}
-        <div className="bg-arsist-surface/50 rounded-lg p-4 border border-arsist-border">
-          <h4 className="text-xs font-medium text-arsist-muted mb-3">Supported Devices</h4>
-          <div className="flex flex-wrap gap-2">
-            {['XREAL One', 'XREAL Air 2', 'Rokid Max', 'VITURE One'].map((device) => (
-              <span
-                key={device}
-                className="px-2 py-1 bg-arsist-hover rounded text-xs"
-              >
-                {device}
-              </span>
-            ))}
-            <span className="px-2 py-1 bg-arsist-bg rounded text-xs text-arsist-muted">
-              + More Coming
-            </span>
-          </div>
+        {/* Setup Wizard CTA */}
+        <div className="mb-6">
+          <button
+            onClick={() => setShowSetupWizard(true)}
+            className="w-full p-6 bg-arsist-accent/10 rounded-lg border-2 border-arsist-accent hover:bg-arsist-accent/20 transition-all group"
+          >
+            <div className="flex items-center gap-3 justify-center">
+              <Settings2 size={24} className="text-arsist-accent group-hover:scale-110 transition-transform" />
+              <div className="text-left">
+                <h3 className="font-semibold text-arsist-accent mb-0.5">Setup Wizard</h3>
+                <p className="text-xs text-arsist-muted">Configure Unity, SDK, and build settings</p>
+              </div>
+            </div>
+          </button>
         </div>
 
         {/* Quick Start Hint */}
-        <div className="mt-4 text-center">
+        <div className="text-center">
           <p className="text-xs text-arsist-muted">
-            <span className="kbd">Ctrl+N</span> New | <span className="kbd">Ctrl+O</span> Open | <span className="kbd">Ctrl+,</span> Settings
+            <span className="kbd">Ctrl+N</span> New · <span className="kbd">Ctrl+O</span> Open · <span className="kbd">Ctrl+,</span> Settings
           </p>
         </div>
       </div>

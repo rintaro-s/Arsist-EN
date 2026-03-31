@@ -27,8 +27,8 @@ Arsist is a cross-platform development engine for AR glasses. Built with Electro
 
 ### Supported Target Devices
 
-- ✅ XREAL One / One Pro
-- ✅ Meta Quest (Quest 2, Quest 3, Quest Pro)
+- XREAL One / One Pro
+- Meta Quest (Quest 2, Quest 3, Quest Pro)
 
 ## Quick Start
 
@@ -99,6 +99,8 @@ sdk/
    - `com.meta.xr.sdk.core-XX.X.X.tgz` (required)
    - `com.meta.xr.mrutilitykit-XX.X.X.tgz` (optional)
 3. Place them in `sdk/quest/`
+
+(Downloading in .tgz format may be difficult.)
 
 **Optional - Quest Sample Bootstrap:**
 - If you have Unity-InteractionSDK-Samples, place the entire folder in `sdk/quest/`

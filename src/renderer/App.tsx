@@ -7,6 +7,7 @@ import { NewProjectDialog } from './components/dialogs/NewProjectDialog';
 import { SettingsDialog } from './components/dialogs/SettingsDialog';
 import { PreviewDialog } from './components/dialogs/PreviewDialog';
 import { MCPDialog } from './components/dialogs/MCPDialog';
+import { SetupWizard } from './components/dialogs/SetupWizard';
 import { useProjectStore } from './stores/projectStore';
 import { useUIStore } from './stores/uiStore';
 import { DataStoreProvider } from './stores/dataStoreContext';
@@ -91,13 +92,28 @@ export default function App() {
     showSettingsDialog,
     showPreviewDialog,
     showMCPDialog,
+    showSetupWizard,
     setShowNewProjectDialog,
     setShowBuildDialog,
     setShowSettingsDialog,
     setShowPreviewDialog,
     setShowMCPDialog,
+    setShowSetupWizard,
     setCurrentView 
   } = useUIStore();
+
+  // Auto-show wizard on first launch (no Unity path configured yet)
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    (async () => {
+      try {
+        const completed = await window.electronAPI.store.get('setupWizardCompleted');
+        if (completed) return;
+        const unityPath = await window.electronAPI.unity.getPath();
+        if (!unityPath) setShowSetupWizard(true);
+      } catch { /* ignore */ }
+    })();
+  }, []);
 
   useEffect(() => {
     if (!project) return;
@@ -174,6 +190,10 @@ export default function App() {
 
         {showMCPDialog && (
           <MCPDialog onClose={() => setShowMCPDialog(false)} />
+        )}
+
+        {showSetupWizard && (
+          <SetupWizard onClose={() => setShowSetupWizard(false)} />
         )}
       </div>
     </DataStoreProvider>

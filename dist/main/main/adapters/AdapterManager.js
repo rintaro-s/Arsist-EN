@@ -45,7 +45,28 @@ class AdapterManager {
     adaptersDir;
     adaptersCache = new Map();
     constructor() {
-        this.adaptersDir = path.join(__dirname, '../../..', 'Adapters');
+        this.adaptersDir = AdapterManager.resolveAdaptersDir();
+    }
+    static resolveAdaptersDir() {
+        const candidates = [];
+        // 1) Packaged app: electron-builder copies Adapters/ into resources/
+        if (process.resourcesPath) {
+            candidates.push(path.join(process.resourcesPath, 'Adapters'));
+        }
+        // 2) Dev / source tree
+        candidates.push(path.join(process.cwd(), 'Adapters'));
+        // 3) Relative from __dirname (dist/main/main -> ../../../)
+        candidates.push(path.join(__dirname, '../../..', 'Adapters'));
+        candidates.push(path.join(__dirname, '../../../..', 'Adapters'));
+        for (const p of candidates) {
+            try {
+                if (fs.pathExistsSync(p))
+                    return p;
+            }
+            catch { /* ignore */ }
+        }
+        // fallback to first candidate even if not yet present
+        return candidates[0] ?? path.join(__dirname, '../../..', 'Adapters');
     }
     /**
      * 利用可能なすべてのアダプターを取得
