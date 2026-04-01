@@ -36,6 +36,7 @@ export declare class UnityBuilder extends EventEmitter {
     private unityTemplatePath;
     private buildInProgress;
     private lastLogFile;
+    private preparedAndroidSdkPath;
     private isLicensingNoise;
     constructor(unityPath: string);
     private resolveUnityTemplatePathSync;
@@ -117,6 +118,11 @@ export declare class UnityBuilder extends EventEmitter {
      * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
      */
     private detectAndroidSdkPath;
+    private detectAndroidSdkPathCandidate;
+    private getAndroidSdkMirrorPath;
+    private isPathUnderWindowsProtectedRoot;
+    private isDirectoryWritable;
+    private prepareWritableAndroidSdkPath;
     private findWindowsExecutablePathSync;
     private ensureWindowsShellAvailability;
     /**

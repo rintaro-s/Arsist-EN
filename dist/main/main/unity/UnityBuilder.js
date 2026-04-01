@@ -53,6 +53,7 @@ class UnityBuilder extends events_1.EventEmitter {
     unityTemplatePath;
     buildInProgress = false;
     lastLogFile = null;
+    preparedAndroidSdkPath = null;
     isLicensingNoise(text) {
         const s = text || '';
         return (/Access token is unavailable/i.test(s) ||
@@ -1259,6 +1260,15 @@ class UnityBuilder extends events_1.EventEmitter {
      * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
      */
     async detectAndroidSdkPath() {
+        const detected = await this.detectAndroidSdkPathCandidate();
+        if (!detected)
+            return null;
+        if (process.platform !== 'win32') {
+            return detected;
+        }
+        return await this.prepareWritableAndroidSdkPath(detected);
+    }
+    async detectAndroidSdkPathCandidate() {
         // 1) Unity 付属 Android SDK を最優先
         try {
             const unityDir = path.dirname(this.unityPath);
@@ -1291,6 +1301,75 @@ class UnityBuilder extends events_1.EventEmitter {
                 return candidate;
         }
         return null;
+    }
+    getAndroidSdkMirrorPath(sourceSdkPath) {
+        const unityVersion = path.basename(path.dirname(path.dirname(this.unityPath))) || 'unknown-unity';
+        const sourceKey = sourceSdkPath
+            .replace(/[:\\/]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 120) || 'sdk';
+        return path.join(electron_1.app.getPath('userData'), 'android-sdk-cache', unityVersion, sourceKey);
+    }
+    isPathUnderWindowsProtectedRoot(targetPath, env) {
+        if (process.platform !== 'win32')
+            return false;
+        const normalizedTarget = path.resolve(targetPath).toLowerCase();
+        const protectedRoots = [
+            env.ProgramW6432,
+            env.ProgramFiles,
+            env['ProgramFiles(x86)'],
+            'C:\\Program Files',
+            'C:\\Program Files (x86)',
+        ]
+            .filter((entry) => !!entry)
+            .map((entry) => path.resolve(entry).toLowerCase());
+        return protectedRoots.some((root) => normalizedTarget === root || normalizedTarget.startsWith(`${root}${path.sep}`.toLowerCase()));
+    }
+    async isDirectoryWritable(dirPath) {
+        const probePath = path.join(dirPath, `.arsist-write-test-${process.pid}-${Date.now()}.tmp`);
+        try {
+            await fs.writeFile(probePath, '');
+            await fs.remove(probePath);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    async prepareWritableAndroidSdkPath(sourceSdkPath) {
+        if (this.preparedAndroidSdkPath) {
+            return this.preparedAndroidSdkPath;
+        }
+        const shouldMirror = this.isPathUnderWindowsProtectedRoot(sourceSdkPath, process.env)
+            || !await this.isDirectoryWritable(sourceSdkPath);
+        if (!shouldMirror) {
+            this.preparedAndroidSdkPath = sourceSdkPath;
+            return sourceSdkPath;
+        }
+        const mirrorPath = this.getAndroidSdkMirrorPath(sourceSdkPath);
+        const markerPath = path.join(mirrorPath, '.arsist-sdk-source');
+        let needsCopy = true;
+        if (await fs.pathExists(mirrorPath) && await fs.pathExists(markerPath)) {
+            try {
+                const existingMarker = (await fs.readFile(markerPath, 'utf8')).trim();
+                if (existingMarker === sourceSdkPath) {
+                    needsCopy = false;
+                }
+            }
+            catch {
+                needsCopy = true;
+            }
+        }
+        if (needsCopy) {
+            this.emit('log', `[Arsist] Mirroring Android SDK to writable location: ${mirrorPath}`);
+            await fs.remove(mirrorPath);
+            await fs.ensureDir(path.dirname(mirrorPath));
+            await fs.copy(sourceSdkPath, mirrorPath, { overwrite: true, errorOnExist: false });
+            await fs.writeFile(markerPath, sourceSdkPath, 'utf8');
+        }
+        this.preparedAndroidSdkPath = mirrorPath;
+        this.emit('log', `[Arsist] Android SDK prepared: ${mirrorPath}`);
+        return mirrorPath;
     }
     findWindowsExecutablePathSync(fileName, env) {
         if (process.platform !== 'win32')
