@@ -121,6 +121,8 @@ sdk/
 
 **For Japanese text rendering (optional):**
 
+https://font.cutegirl.jp/jk-font-medium.html
+
 1. Place `JKG-M3.unitypackage` in `sdk/`
 2. Place `JKG-M_3.ttf` in `sdk/`
 
