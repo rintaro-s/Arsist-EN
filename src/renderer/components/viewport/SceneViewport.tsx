@@ -16,6 +16,7 @@ import { useUIStore } from '../../stores/uiStore';
 import type { SceneObject } from '../../../shared/types';
 import { Eye, HelpCircle, Box, Circle, Square, Cylinder } from 'lucide-react';
 import { VRMViewer } from './VRMViewer';
+import { useT } from '../../i18n';
 
 // Origin axis display
 function OriginAxes() {
@@ -35,6 +36,7 @@ function OriginAxes() {
 }
 
 function StartPoseMarker() {
+  const t = useT();
   return (
     <group>
       {/* Origin */}
@@ -55,13 +57,14 @@ function StartPoseMarker() {
       </Text>
 
       <Text position={[0, 0.22, 0]} fontSize={0.16} color="#ffffff" anchorX="center" anchorY="middle">
-        Start (0,0,0) m
+        {t('scene.startMarker')}
       </Text>
     </group>
   );
 }
 
 export function SceneViewport() {
+  const t = useT();
   const { showGrid, showAxes, transformMode, transformSpace, setTransformMode } = useUIStore();
   const { project, currentSceneId, selectedObjectIds, selectObjects, updateObject, addObject } = useProjectStore();
   const [cameraPos, setCameraPos] = useState({ x: 5, y: 5, z: 5 });
@@ -102,32 +105,32 @@ export function SceneViewport() {
     <div className="w-full h-full relative">
       {/* 3D Scene toolbar */}
       <div className="absolute top-2 left-2 z-10 flex items-center gap-1 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-1">
-        <span className="px-2 text-xs text-arsist-muted">Add:</span>
+        <span className="px-2 text-xs text-arsist-muted">{t('scene.addLabel')}</span>
         <button
           onClick={() => handleAddObject('primitive', 'cube')}
           className="btn-icon"
-          title="Add Cube"
+          title={t('scene.addCube')}
         >
           <Box size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'sphere')}
           className="btn-icon"
-          title="Add Sphere"
+          title={t('scene.addSphere')}
         >
           <Circle size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'plane')}
           className="btn-icon"
-          title="Add Plane"
+          title={t('scene.addPlane')}
         >
           <Square size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'cylinder')}
           className="btn-icon"
-          title="Add Cylinder"
+          title={t('scene.addCylinder')}
         >
           <Cylinder size={16} />
         </button>
@@ -137,7 +140,7 @@ export function SceneViewport() {
       <div className="absolute top-2 right-2 z-10 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-2 text-xs">
         <div className="flex items-center gap-2 text-arsist-muted mb-1">
           <Eye size={12} />
-          <span>Camera</span>
+          <span>{t('scene.camera')}</span>
         </div>
         <div className="font-mono text-arsist-text">
           <span className="text-red-400">X</span>: {cameraPos.x.toFixed(1)} 
@@ -147,9 +150,9 @@ export function SceneViewport() {
           <span className="text-blue-400">Z</span>: {cameraPos.z.toFixed(1)}
         </div>
         <div className="mt-2 text-[10px] text-arsist-muted">
-          <div>Tracking: <span className="text-arsist-text">{trackingMode.toUpperCase()}</span></div>
-          <div>Mode: <span className="text-arsist-text">{presentationMode.replace('_', ' ')}</span></div>
-          <div>Units: <span className="text-arsist-text">1 = 1m</span></div>
+          <div>{t('scene.trackingLabel')}: <span className="text-arsist-text">{trackingMode.toUpperCase()}</span></div>
+          <div>{t('scene.modeLabel')}: <span className="text-arsist-text">{presentationMode.replace('_', ' ')}</span></div>
+          <div>{t('scene.unitsLabel')}: <span className="text-arsist-text">1 = 1m</span></div>
         </div>
       </div>
 
@@ -157,7 +160,7 @@ export function SceneViewport() {
       <button
         onClick={() => setShowHelp(!showHelp)}
         className="absolute bottom-2 right-2 z-10 btn-icon bg-arsist-surface/90 backdrop-blur border border-arsist-border"
-        title="Operation help"
+        title={t('scene.operationHelp')}
       >
         <HelpCircle size={16} />
       </button>
@@ -165,30 +168,30 @@ export function SceneViewport() {
       {/* Operation help panel */}
       {showHelp && (
         <div className="absolute bottom-12 right-2 z-10 bg-arsist-surface/95 backdrop-blur border border-arsist-border rounded-lg p-3 text-xs w-64">
-          <h4 className="font-medium text-arsist-text mb-2">Operation guide</h4>
+          <h4 className="font-medium text-arsist-text mb-2">{t('scene.operationGuide')}</h4>
           <div className="space-y-1 text-arsist-muted">
             <div className="flex justify-between">
-              <span>Rotate</span>
-              <span className="kbd">Left drag</span>
+              <span>{t('scene.rotate')}</span>
+              <span className="kbd">{t('scene.leftDrag')}</span>
             </div>
             <div className="flex justify-between">
-              <span>Pan</span>
-              <span className="kbd">Right drag</span>
+              <span>{t('scene.pan')}</span>
+              <span className="kbd">{t('scene.rightDrag')}</span>
             </div>
             <div className="flex justify-between">
-              <span>Zoom</span>
-              <span className="kbd">Scroll</span>
+              <span>{t('scene.zoom')}</span>
+              <span className="kbd">{t('scene.scroll')}</span>
             </div>
             <div className="flex justify-between">
-              <span>Move mode</span>
+              <span>{t('scene.moveMode')}</span>
               <span className="kbd">W</span>
             </div>
             <div className="flex justify-between">
-              <span>Rotate mode</span>
+              <span>{t('scene.rotateMode')}</span>
               <span className="kbd">E</span>
             </div>
             <div className="flex justify-between">
-              <span>Scale mode</span>
+              <span>{t('scene.scaleMode')}</span>
               <span className="kbd">R</span>
             </div>
           </div>
@@ -199,9 +202,9 @@ export function SceneViewport() {
       {selectedObjectIds.length > 0 && currentScene && (
         <div className="absolute bottom-2 left-2 z-10 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-2 text-xs">
           <span className="text-arsist-accent">
-            {currentScene.objects.find(o => o.id === selectedObjectIds[0])?.name || 'Object'}
+            {currentScene.objects.find(o => o.id === selectedObjectIds[0])?.name || t('scene.object')}
           </span>
-          <span className="text-arsist-muted ml-2">Selected</span>
+          <span className="text-arsist-muted ml-2">{t('scene.selected')}</span>
         </div>
       )}
 

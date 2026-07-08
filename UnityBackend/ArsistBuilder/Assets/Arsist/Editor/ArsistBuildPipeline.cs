@@ -1766,7 +1766,7 @@ namespace Arsist.Builder
             //  ├── AR Session
             //  └── XREAL Session Config
 
-            bool isXreal = !string.IsNullOrEmpty(_targetDevice) && _targetDevice.ToLower().Contains("xreal");
+            bool isXreal = IsXrealTargetDevice();
 
             GameObject rigRoot = null;
             if (isXreal)
@@ -1835,18 +1835,27 @@ namespace Arsist.Builder
                 EnsureQuestOvrManager(xrOrigin);
             }
 
-            // AR Session (AR Foundation) - XREAL のみ必要
+            // XREAL: AR Session + SDK の安定化コンポーネントをリグに付与
             if (rigRoot != null)
             {
+                // AR Session (AR Foundation) — XREAL の AR 機能に必要。
+                // SDK のサンプルAR シーンは ARSession に加えて ARInputManager を持つ。
                 var arSessionGO = new GameObject("AR Session");
                 arSessionGO.transform.SetParent(rigRoot.transform);
                 TryAddComponentByTypeName(arSessionGO, "UnityEngine.XR.ARFoundation.ARSession");
+                TryAddComponentByTypeName(arSessionGO, "UnityEngine.XR.ARFoundation.ARInputManager");
 
-                var xrealConfigGO = new GameObject("XREAL Session Config");
-                xrealConfigGO.transform.SetParent(rigRoot.transform);
-                // SDK固有型は不明なため、名前候補でbest-effort追加
-                TryAddComponentByTypeName(xrealConfigGO, "XREALSessionConfig");
-                TryAddComponentByTypeName(xrealConfigGO, "XrealSessionConfig");
+                // 実 XREAL SDK(Unity.XR.XREAL) の安定化コンポーネントをリグルートへ付与する。
+                // 以前は存在しない架空型 "XREALSessionConfig"/"XrealSessionConfig" を best-effort
+                // 追加していたが、SDK にそのような型は無く、何の効果も無かった。
+                //   XREALSessionManager           : pause/resume・DoF切替を跨いだカメラポーズの
+                //                                    キャッシュ、Recenter、Menu 処理（手組みリグに
+                //                                    欠けていた「安定化ロジック」の本体）。
+                //   XREALTrackingModeChangeListener: DoF切替中に暗転マスクを出して「飛び」を隠す。
+                // これらは SingletonMonoBehaviour 等で自己初期化するため、bare 追加でも中核機能は働く。
+                // SDK 未導入環境では TryAddComponentByTypeName が best-effort でスキップする。
+                TryAddComponentByTypeName(rigRoot, "Unity.XR.XREAL.XREALSessionManager");
+                TryAddComponentByTypeName(rigRoot, "Unity.XR.XREAL.XREALTrackingModeChangeListener");
             }
 
             Debug.Log(isXreal ? "[Arsist] XREAL_Rig created" : "[Arsist] XR Origin created");
@@ -3562,10 +3571,42 @@ ScriptedImporter:
                     {
                         problems.Add($"Failed to validate Graphics APIs: {e.Message}");
                     }
+
+                    // XREAL Loader が実際に有効化されているか（fail-loud）。
+                    // XREAL ビルドなのに XREAL Loader が Active Loaders に無いと、
+                    // 実行時にトラッキング/描画が起動せず「動くけど挙動がびみょい」原因になる。
+                    // SDK が導入済み（xrealSdkExists）なのに割当が失敗しているなら明示エラーにする。
+                    try
+                    {
+                        const string xrealLoaderTypeName = "Unity.XR.XREAL.XREALXRLoader";
+                        var generalSettings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+                        var manager = generalSettings != null ? generalSettings.Manager : null;
+                        if (generalSettings == null || manager == null)
+                        {
+                            problems.Add("XREAL build: XR General/Manager Settings (Android) are missing. XREAL Loader could not be configured.");
+                        }
+                        else
+                        {
+                            var hasXrealLoader = manager.activeLoaders != null && manager.activeLoaders.Any(l =>
+                                l != null && string.Equals(l.GetType().FullName, xrealLoaderTypeName, StringComparison.Ordinal));
+                            if (!hasXrealLoader)
+                            {
+                                problems.Add("XREAL build: XREAL Loader (Unity.XR.XREAL.XREALXRLoader) is not active in XR Plug-in Management (Android).");
+                            }
+                            if (!generalSettings.InitManagerOnStart)
+                            {
+                                problems.Add("XREAL build: 'Initialize XR on Startup' is disabled (Android). XR will not start automatically.");
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        problems.Add($"XREAL build: failed to validate XR loader configuration: {e.Message}");
+                    }
                 }
                 else
                 {
-                    Debug.LogWarning("[Arsist] XREAL SDK not installed. Skipping Graphics API validation.");
+                    Debug.LogWarning("[Arsist] XREAL SDK not installed. Skipping XREAL Graphics API / Loader validation (build will use generic XR).");
                 }
             }
 
@@ -4170,6 +4211,13 @@ ScriptedImporter:
         {
             var normalizedTarget = (_targetDevice ?? string.Empty).Trim().ToLowerInvariant();
             return normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
+        }
+
+        /// <summary>ターゲットデバイスが XREAL 系かどうか（散在していた判定の共通化）。</summary>
+        private static bool IsXrealTargetDevice()
+        {
+            var normalizedTarget = (_targetDevice ?? string.Empty).Trim().ToLowerInvariant();
+            return normalizedTarget.Contains("xreal");
         }
 
         private static void ApplyQuestBuildBootstrap()

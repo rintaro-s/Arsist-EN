@@ -316,6 +316,19 @@ namespace Arsist.Adapters.XrealOne
                 UnityEngine.Rendering.GraphicsDeviceType.OpenGLES3
             });
 
+            // ステレオ描画を Single Pass Instanced に統一する。
+            // XREAL SDK 実体は XREALSettings.StereoRendering(=SinglePassInstanced) で
+            // ネイティブに渡すが、Unity 側の PlayerSettings も合わせておくことで
+            // 描画パスの不一致を防ぐ（Quest 側は既に Instancing 設定済み）。
+            try
+            {
+                PlayerSettings.stereoRenderingPath = StereoRenderingPath.Instancing;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to set stereoRenderingPath: {e.Message}");
+            }
+
             // === Input System ===
             // XREAL SDK 3.x は Input System を前提にする箇所があるため、可能なら Both にする
             TrySetActiveInputHandlingToBoth();
@@ -483,6 +496,11 @@ namespace Arsist.Adapters.XrealOne
                     settingsAsset = inst;
                 }
 
+                // SDK が意図する構成に合わせて XREALSettings のフィールドを設定する。
+                // (以前は空の設定を作るだけで、StereoRendering や InitialTrackingType が
+                //  プロジェクト設定に反映されず、XREAL の描画/トラッキングが最適でなかった)
+                ConfigureXrealSettingsFields(settingsAsset);
+
                 // Unity 版差異に備えて AddConfigObject のオーバーロードを reflection で呼ぶ
                 var ebsType = typeof(EditorBuildSettings);
                 var mi = ebsType.GetMethod(
@@ -523,6 +541,91 @@ namespace Arsist.Adapters.XrealOne
             {
                 Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to ensure XREALSettings config object: {e.Message}");
             }
+        }
+
+        /// <summary>
+        /// XREALSettings（SDKのScriptableObject）に、SDKが意図する値を reflection で設定する。
+        /// SDK側フィールド:
+        ///   StereoRendering (enum StereoRenderingMode)  -> SinglePassInstanced
+        ///   InitialTrackingType (enum TrackingType)     -> プロジェクトの trackingMode から map
+        /// SDKのバージョン差やフィールド有無に強いよう、存在するものだけ best-effort で設定する。
+        /// </summary>
+        private static void ConfigureXrealSettingsFields(UnityEngine.Object settingsAsset)
+        {
+            if (settingsAsset == null) return;
+            try
+            {
+                // ステレオ描画: SDK 既定と同じ SinglePassInstanced に統一（パフォーマンス最適）
+                SetEnumFieldByName(settingsAsset, "StereoRendering", "SinglePassInstanced");
+
+                // トラッキング種別: プロジェクトの arSettings.trackingMode を XREAL の enum に map
+                //   6dof        -> MODE_6DOF
+                //   3dof        -> MODE_3DOF
+                //   head_locked -> MODE_0DOF (頭固定HUDは0DoFが自然)
+                var trackingMode = ReadProjectTrackingMode();
+                string xrealTracking;
+                switch (trackingMode)
+                {
+                    case "3dof": xrealTracking = "MODE_3DOF"; break;
+                    case "head_locked": xrealTracking = "MODE_0DOF"; break;
+                    case "6dof":
+                    default: xrealTracking = "MODE_6DOF"; break;
+                }
+                SetEnumFieldByName(settingsAsset, "InitialTrackingType", xrealTracking);
+
+                Debug.Log($"[Arsist-{ADAPTER_ID}] XREALSettings configured (Stereo=SinglePassInstanced, Tracking={xrealTracking} from '{trackingMode}')");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to configure XREALSettings fields (best-effort): {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// public フィールド（enum型）を、enum値の名前で best-effort に設定する。
+        /// フィールドや enum 値が存在しない SDK バージョンでは静かにスキップする。
+        /// </summary>
+        private static void SetEnumFieldByName(object target, string fieldName, string enumValueName)
+        {
+            try
+            {
+                var fi = target.GetType().GetField(fieldName,
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (fi == null || !fi.FieldType.IsEnum) return;
+                if (!Enum.IsDefined(fi.FieldType, enumValueName)) return;
+                var value = Enum.Parse(fi.FieldType, enumValueName);
+                fi.SetValue(target, value);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] SetEnumFieldByName({fieldName}={enumValueName}) failed: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 生成された manifest.json から arSettings.trackingMode を読む（"6dof"/"3dof"/"head_locked"）。
+        /// Newtonsoft への依存を避けるため軽量な正規表現で抽出し、失敗時は "6dof" を返す。
+        /// </summary>
+        private static string ReadProjectTrackingMode()
+        {
+            try
+            {
+                var manifestPath = Path.Combine(Application.dataPath, "ArsistGenerated", "manifest.json");
+                if (!File.Exists(manifestPath)) return "6dof";
+                var text = File.ReadAllText(manifestPath);
+                var m = System.Text.RegularExpressions.Regex.Match(
+                    text, "\"trackingMode\"\\s*:\\s*\"(?<v>[^\"]+)\"");
+                if (m.Success)
+                {
+                    var v = m.Groups["v"].Value.Trim().ToLowerInvariant();
+                    if (v == "3dof" || v == "6dof" || v == "head_locked") return v;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to read trackingMode from manifest (default 6dof): {e.Message}");
+            }
+            return "6dof";
         }
 
         private static XRGeneralSettings GetXRGeneralSettingsForBuildTarget(BuildTargetGroup target)

@@ -50,6 +50,7 @@ const child_process_1 = require("child_process");
 const UnityBuilder_1 = require("./unity/UnityBuilder");
 const ProjectManager_1 = require("./project/ProjectManager");
 const AdapterManager_1 = require("./adapters/AdapterManager");
+const paths_1 = require("./platform/paths");
 // fetch() でローカルアセットを読めるようにする（dev/prod共通）
 electron_1.protocol.registerSchemesAsPrivileged([
     {
@@ -89,6 +90,54 @@ let mcpServerProcess = null;
 let mcpServerEnabled = false;
 let mcpServerPort = 0; // stdio transport なので不要だが、情報として保持
 const isDev = process.env.NODE_ENV === 'development';
+function getAppLang() {
+    try {
+        const v = store.get('language');
+        return v === 'en' ? 'en' : 'ja';
+    }
+    catch {
+        return 'ja';
+    }
+}
+const MENU_STRINGS = {
+    'menu.file': { en: 'File', ja: 'ファイル' },
+    'menu.newProject': { en: 'New Project', ja: '新規プロジェクト' },
+    'menu.openProject': { en: 'Open Project', ja: 'プロジェクトを開く' },
+    'menu.save': { en: 'Save', ja: '保存' },
+    'menu.saveAs': { en: 'Save As', ja: '名前を付けて保存' },
+    'menu.buildSettings': { en: 'Build Settings', ja: 'ビルド設定' },
+    'menu.build': { en: 'Build', ja: 'ビルド' },
+    'menu.settings': { en: 'Settings', ja: '設定' },
+    'menu.quit': { en: 'Quit', ja: '終了' },
+    'menu.edit': { en: 'Edit', ja: '編集' },
+    'menu.undo': { en: 'Undo', ja: '元に戻す' },
+    'menu.redo': { en: 'Redo', ja: 'やり直す' },
+    'menu.cut': { en: 'Cut', ja: '切り取り' },
+    'menu.copy': { en: 'Copy', ja: 'コピー' },
+    'menu.paste': { en: 'Paste', ja: '貼り付け' },
+    'menu.delete': { en: 'Delete', ja: '削除' },
+    'menu.selectAll': { en: 'Select All', ja: 'すべて選択' },
+    'menu.view': { en: 'View', ja: '表示' },
+    'menu.view3d': { en: '3D View', ja: '3Dビュー' },
+    'menu.view2d': { en: '2D Canvas View', ja: '2D Canvasビュー' },
+    'menu.viewDataflow': { en: 'DataFlow Editor', ja: 'DataFlowエディタ' },
+    'menu.viewScript': { en: 'Script Editor', ja: 'スクリプトエディタ' },
+    'menu.devtools': { en: 'Developer Tools', ja: '開発者ツール' },
+    'menu.help': { en: 'Help', ja: 'ヘルプ' },
+    'menu.docs': { en: 'Documentation', ja: 'ドキュメント' },
+    'menu.github': { en: 'GitHub Repository', ja: 'GitHubリポジトリ' },
+    'menu.about': { en: 'About Arsist', ja: 'Arsistについて' },
+    'dialog.selectProjectFolder': { en: 'Select project folder', ja: 'プロジェクトフォルダを選択' },
+    'about.detail': {
+        en: 'Cross-platform development engine for AR glasses.\n\nGenerate apps for different AR glasses (XREAL, Rokid, VITURE, etc.) from a single source.',
+        ja: 'ARグラス・クロスプラットフォーム開発エンジン\n\nXREAL, Rokid, VITURE等の異なるARグラス向けアプリを単一ソースから生成可能。',
+    },
+};
+function mt(key) {
+    const entry = MENU_STRINGS[key];
+    const lang = getAppLang();
+    return entry ? (entry[lang] ?? entry.en) : key;
+}
 // Linux向け：Vulkan周りの警告/不安定さを避ける（WebGLは通常OpenGL経由）
 if (process.platform === 'linux') {
     try {
@@ -100,10 +149,16 @@ if (process.platform === 'linux') {
     // ファイルダイアログのGTKエラー回避のため、portalを優先
     process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL = process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL || '1';
     process.env.GTK_USE_PORTAL = process.env.GTK_USE_PORTAL || '1';
-    // Wayland環境でGtkFileChooserNativeが不安定なケースがあるので、未指定ならX11ヒントを優先
-    process.env.ELECTRON_OZONE_PLATFORM_HINT = process.env.ELECTRON_OZONE_PLATFORM_HINT || 'x11';
+    // ozone-platform-hint の決定:
+    //   - ユーザーが明示指定していればそれを尊重
+    //   - 純粋なWayland環境ではX11を強制しない（XWaylandが無いとウィンドウ生成に失敗しうる）。
+    //     'auto' にしてElectronにセッションを判定させる。
+    //   - それ以外（X11/不明）は従来通りX11ヒントで安定側に倒す。
+    const ozoneHint = process.env.ELECTRON_OZONE_PLATFORM_HINT ||
+        ((0, paths_1.isWaylandSession)(process.env) ? 'auto' : 'x11');
+    process.env.ELECTRON_OZONE_PLATFORM_HINT = ozoneHint;
     try {
-        electron_1.app.commandLine.appendSwitch('ozone-platform-hint', process.env.ELECTRON_OZONE_PLATFORM_HINT);
+        electron_1.app.commandLine.appendSwitch('ozone-platform-hint', ozoneHint);
     }
     catch {
         // ignore
@@ -154,54 +209,25 @@ function compareUnityVersionsDesc(a, b) {
 }
 async function findUnityCandidates() {
     const details = [];
-    if (process.platform === 'linux') {
-        const home = os.homedir();
-        const hubEditorRoot = path.join(home, 'Unity', 'Hub', 'Editor');
-        if (await fs.pathExists(hubEditorRoot)) {
-            const entries = await fs.readdir(hubEditorRoot, { withFileTypes: true });
-            for (const ent of entries) {
-                if (!ent.isDirectory())
-                    continue;
-                const p = path.join(hubEditorRoot, ent.name, 'Editor', 'Unity');
-                if (await fs.pathExists(p))
-                    details.push({ path: p, version: ent.name });
-            }
-        }
-        // PATH上のUnityも候補に（見つからなければ無視）
-        const pathUnity = '/usr/bin/unity-editor';
-        if (await fs.pathExists(pathUnity))
-            details.push({ path: pathUnity });
-    }
-    if (process.platform === 'win32') {
-        const roots = [
-            path.join(process.env['ProgramFiles'] || 'C:/Program Files', 'Unity', 'Hub', 'Editor'),
-            path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Unity', 'Hub', 'Editor'),
-        ];
-        for (const root of roots) {
-            if (!await fs.pathExists(root))
+    const ctx = (0, paths_1.liveContext)(os.homedir());
+    // Hub-managed installs: <root>/<version>/Editor/<unityExe>
+    const exeRel = (0, paths_1.getUnityExeRelative)(ctx);
+    for (const root of (0, paths_1.getUnitySearchRoots)(ctx)) {
+        if (!await fs.pathExists(root))
+            continue;
+        const entries = await fs.readdir(root, { withFileTypes: true });
+        for (const ent of entries) {
+            if (!ent.isDirectory())
                 continue;
-            const entries = await fs.readdir(root, { withFileTypes: true });
-            for (const ent of entries) {
-                if (!ent.isDirectory())
-                    continue;
-                const p = path.join(root, ent.name, 'Editor', 'Unity.exe');
-                if (await fs.pathExists(p))
-                    details.push({ path: p, version: ent.name });
-            }
+            const p = path.join(root, ent.name, 'Editor', exeRel);
+            if (await fs.pathExists(p))
+                details.push({ path: path.normalize(p), version: ent.name });
         }
     }
-    if (process.platform === 'darwin') {
-        const hubEditorRoot = path.join('/Applications', 'Unity', 'Hub', 'Editor');
-        if (await fs.pathExists(hubEditorRoot)) {
-            const entries = await fs.readdir(hubEditorRoot, { withFileTypes: true });
-            for (const ent of entries) {
-                if (!ent.isDirectory())
-                    continue;
-                const p = path.join(hubEditorRoot, ent.name, 'Unity.app', 'Contents', 'MacOS', 'Unity');
-                if (await fs.pathExists(p))
-                    details.push({ path: p, version: ent.name });
-            }
-        }
+    // Explicit override (UNITY_PATH / ARSIST_UNITY_PATH) + distro/package installs.
+    for (const p of (0, paths_1.getUnityDirectCandidates)(ctx)) {
+        if (await fs.pathExists(p))
+            details.push({ path: p });
     }
     // 重複排除 + 新しい順に並べ替え
     const unique = new Map();
@@ -245,54 +271,54 @@ function createWindow() {
 function createMenu() {
     const template = [
         {
-            label: 'ファイル',
+            label: mt('menu.file'),
             submenu: [
-                { label: '新規プロジェクト', accelerator: 'CmdOrCtrl+N', click: () => handleNewProject() },
-                { label: 'プロジェクトを開く', accelerator: 'CmdOrCtrl+O', click: () => handleOpenProject() },
+                { label: mt('menu.newProject'), accelerator: 'CmdOrCtrl+N', click: () => handleNewProject() },
+                { label: mt('menu.openProject'), accelerator: 'CmdOrCtrl+O', click: () => handleOpenProject() },
                 { type: 'separator' },
-                { label: '保存', accelerator: 'CmdOrCtrl+S', click: () => mainWindow?.webContents.send('menu:save') },
-                { label: '名前を付けて保存', accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow?.webContents.send('menu:save-as') },
+                { label: mt('menu.save'), accelerator: 'CmdOrCtrl+S', click: () => mainWindow?.webContents.send('menu:save') },
+                { label: mt('menu.saveAs'), accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow?.webContents.send('menu:save-as') },
                 { type: 'separator' },
-                { label: 'ビルド設定', accelerator: 'CmdOrCtrl+Shift+B', click: () => mainWindow?.webContents.send('menu:build-settings') },
-                { label: 'ビルド', accelerator: 'CmdOrCtrl+B', click: () => mainWindow?.webContents.send('menu:build') },
+                { label: mt('menu.buildSettings'), accelerator: 'CmdOrCtrl+Shift+B', click: () => mainWindow?.webContents.send('menu:build-settings') },
+                { label: mt('menu.build'), accelerator: 'CmdOrCtrl+B', click: () => mainWindow?.webContents.send('menu:build') },
                 { type: 'separator' },
-                { label: '設定', accelerator: 'CmdOrCtrl+,', click: () => mainWindow?.webContents.send('menu:settings') },
+                { label: mt('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => mainWindow?.webContents.send('menu:settings') },
                 { type: 'separator' },
-                { label: '終了', accelerator: 'CmdOrCtrl+Q', click: () => electron_1.app.quit() },
+                { label: mt('menu.quit'), accelerator: 'CmdOrCtrl+Q', click: () => electron_1.app.quit() },
             ],
         },
         {
-            label: '編集',
+            label: mt('menu.edit'),
             submenu: [
-                { label: '元に戻す', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
-                { label: 'やり直す', accelerator: 'CmdOrCtrl+Shift+Z', role: 'redo' },
+                { label: mt('menu.undo'), accelerator: 'CmdOrCtrl+Z', role: 'undo' },
+                { label: mt('menu.redo'), accelerator: 'CmdOrCtrl+Shift+Z', role: 'redo' },
                 { type: 'separator' },
-                { label: '切り取り', accelerator: 'CmdOrCtrl+X', role: 'cut' },
-                { label: 'コピー', accelerator: 'CmdOrCtrl+C', role: 'copy' },
-                { label: '貼り付け', accelerator: 'CmdOrCtrl+V', role: 'paste' },
-                { label: '削除', accelerator: 'Delete', click: () => mainWindow?.webContents.send('menu:delete') },
+                { label: mt('menu.cut'), accelerator: 'CmdOrCtrl+X', role: 'cut' },
+                { label: mt('menu.copy'), accelerator: 'CmdOrCtrl+C', role: 'copy' },
+                { label: mt('menu.paste'), accelerator: 'CmdOrCtrl+V', role: 'paste' },
+                { label: mt('menu.delete'), accelerator: 'Delete', click: () => mainWindow?.webContents.send('menu:delete') },
                 { type: 'separator' },
-                { label: 'すべて選択', accelerator: 'CmdOrCtrl+A', role: 'selectAll' },
+                { label: mt('menu.selectAll'), accelerator: 'CmdOrCtrl+A', role: 'selectAll' },
             ],
         },
         {
-            label: '表示',
+            label: mt('menu.view'),
             submenu: [
-                { label: '3Dビュー', accelerator: 'F1', click: () => mainWindow?.webContents.send('menu:view', '3d') },
-                { label: '2D Canvasビュー', accelerator: 'F2', click: () => mainWindow?.webContents.send('menu:view', '2d') },
-                { label: 'DataFlowエディタ', accelerator: 'F3', click: () => mainWindow?.webContents.send('menu:view', 'dataflow') },
-                { label: 'スクリプトエディタ', accelerator: 'F4', click: () => mainWindow?.webContents.send('menu:view', 'script') },
+                { label: mt('menu.view3d'), accelerator: 'F1', click: () => mainWindow?.webContents.send('menu:view', '3d') },
+                { label: mt('menu.view2d'), accelerator: 'F2', click: () => mainWindow?.webContents.send('menu:view', '2d') },
+                { label: mt('menu.viewDataflow'), accelerator: 'F3', click: () => mainWindow?.webContents.send('menu:view', 'dataflow') },
+                { label: mt('menu.viewScript'), accelerator: 'F4', click: () => mainWindow?.webContents.send('menu:view', 'script') },
                 { type: 'separator' },
-                { label: '開発者ツール', accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
+                { label: mt('menu.devtools'), accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
             ],
         },
         {
-            label: 'ヘルプ',
+            label: mt('menu.help'),
             submenu: [
-                { label: 'ドキュメント', click: () => electron_1.shell.openExternal('https://arsist.dev/docs') },
-                { label: 'GitHubリポジトリ', click: () => electron_1.shell.openExternal('https://github.com/arsist') },
+                { label: mt('menu.docs'), click: () => electron_1.shell.openExternal('https://arsist.dev/docs') },
+                { label: mt('menu.github'), click: () => electron_1.shell.openExternal('https://github.com/arsist') },
                 { type: 'separator' },
-                { label: 'Arsistについて', click: () => showAboutDialog() },
+                { label: mt('menu.about'), click: () => showAboutDialog() },
             ],
         },
     ];
@@ -306,7 +332,7 @@ async function handleOpenProject() {
     try {
         const result = await showOpenDialogSafe({
             properties: ['openDirectory'],
-            title: 'プロジェクトフォルダを選択',
+            title: mt('dialog.selectProjectFolder'),
         });
         if (!result.canceled && result.filePaths.length > 0) {
             const projectPath = result.filePaths[0];
@@ -322,7 +348,7 @@ function showAboutDialog() {
         type: 'info',
         title: 'Arsist Engine',
         message: 'Arsist Engine v1.0.0',
-        detail: 'ARグラス・クロスプラットフォーム開発エンジン\n\nXREAL, Rokid, VITURE等の異なるARグラス向けアプリを単一ソースから生成可能。',
+        detail: mt('about.detail'),
     });
 }
 async function showOpenDialogSafe(options) {
@@ -348,6 +374,19 @@ async function showOpenDialogSafe(options) {
 // IPC Handlers
 // ========================================
 // プロジェクト管理
+electron_1.ipcMain.handle('app:set-language', async (_, lang) => {
+    const next = lang === 'en' ? 'en' : 'ja';
+    try {
+        store.set('language', next);
+    }
+    catch { /* ignore */ }
+    // Rebuild the native menu so its labels follow the selected UI language.
+    try {
+        createMenu();
+    }
+    catch { /* ignore */ }
+    return { success: true, lang: next };
+});
 electron_1.ipcMain.handle('project:create', async (_, options) => {
     if (!projectManager) {
         projectManager = new ProjectManager_1.ProjectManager();

@@ -336,9 +336,19 @@ class ArsistRemoteController:
 # 使用例
 # ========================================
 
+def _default_controller() -> "ArsistRemoteController":
+    """環境変数からデバイス接続先を解決する（ハードコード IP に依存しない）。
+    ARSIST_DEVICE_IP / ARSIST_DEVICE_PORT / ARSIST_DEVICE_PASSWORD。"""
+    import os
+    ip = os.environ.get("ARSIST_DEVICE_IP", "localhost")
+    port = int(os.environ.get("ARSIST_DEVICE_PORT", "8765"))
+    password = os.environ.get("ARSIST_DEVICE_PASSWORD") or None
+    return ArsistRemoteController(ip, port=port, password=password)
+
+
 def example_basic():
     """基本的な使用例"""
-    controller = ArsistRemoteController("192.168.1.100")
+    controller = _default_controller()
     
     try:
         if not controller.connect():
@@ -365,7 +375,7 @@ def example_basic():
 
 def example_emotions():
     """感情表現の例"""
-    controller = ArsistRemoteController("192.168.1.100")
+    controller = _default_controller()
     
     try:
         if not controller.connect():
@@ -384,7 +394,7 @@ def example_emotions():
 
 def example_animation_loop():
     """アニメーションループの例"""
-    controller = ArsistRemoteController("192.168.1.100")
+    controller = _default_controller()
     
     try:
         if not controller.connect():

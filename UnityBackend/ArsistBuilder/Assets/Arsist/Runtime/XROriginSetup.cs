@@ -47,17 +47,50 @@ namespace Arsist.Runtime
             StartCoroutine(InitializeXR());
         }
 
+        [Header("XR Initialization")]
+        [Tooltip("XRディスプレイの起動を待つ最大秒数。XREAL SDKの初期化は環境により遅れるため固定待ちにしない。")]
+        [SerializeField] private float _xrInitTimeoutSeconds = 8f;
+
         private IEnumerator InitializeXR()
         {
-            // XRの初期化を待つ
-            yield return new WaitForSeconds(0.5f);
-            
+            // XRディスプレイが「running」になるまでポーリングする。
+            // 以前は固定 WaitForSeconds(0.5f) で判定しており、XREAL SDK の初期化が
+            // 遅い環境ではまだ起動していないのにフォールバック（マウス操作）へ落ちて
+            // 「トラッキングが効かない」ように見える誤発火の原因になっていた。
             var xrDisplaySubsystems = new List<XRDisplaySubsystem>();
-            SubsystemManager.GetInstances(xrDisplaySubsystems);
-            
+            float elapsed = 0f;
+
+            while (elapsed < _xrInitTimeoutSeconds)
+            {
+                xrDisplaySubsystems.Clear();
+                SubsystemManager.GetInstances(xrDisplaySubsystems);
+
+                bool running = false;
+                foreach (var ds in xrDisplaySubsystems)
+                {
+                    if (ds != null && ds.running)
+                    {
+                        running = true;
+                        break;
+                    }
+                }
+
+                if (running)
+                {
+                    Debug.Log($"[Arsist] XR Display initialized after {elapsed:F1}s");
+                    _isTracking = true;
+                    yield break;
+                }
+
+                elapsed += Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            // タイムアウト: それでも見つかった（=生成はされたがまだrunningでない）なら
+            // トラッキング扱いにし、完全に無ければフォールバックへ。
             if (xrDisplaySubsystems.Count > 0)
             {
-                Debug.Log("[Arsist] XR Display initialized");
+                Debug.LogWarning($"[Arsist] XR Display present but not running after {_xrInitTimeoutSeconds:F0}s; continuing in XR mode");
                 _isTracking = true;
             }
             else

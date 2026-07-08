@@ -10,6 +10,7 @@ import { app } from 'electron';
 import * as os from 'os';
 import * as https from 'https';
 import * as http from 'http';
+import { liveContext, getUnityLicenseCandidates } from '../platform/paths';
 
 export interface UnityBuildConfig {
   projectPath: string;
@@ -502,20 +503,17 @@ export class UnityBuilder extends EventEmitter {
       const findManualLicenseFile = async (): Promise<string | null> => {
         // Unity Hubでログイン済みでも、ヘッドレス環境ではtoken更新に失敗することがある。
         // その場合に備えて、ローカルの .ulf を指定して起動できるようにする。
-        // (Linuxの一般的な配置先)
+        // 配置先は OS ごとに異なるため platform ヘルパで全 OS 分を列挙する
+        // (以前は Linux パスのみで、Windows/macOS では自動発見できなかった)。
         const home = (() => {
           try {
             return app.getPath('home');
           } catch {
-            return process.env.HOME || '';
+            return process.env.HOME || process.env.USERPROFILE || os.homedir();
           }
         })();
 
-        const candidates = [
-          path.join(home, '.local', 'share', 'unity3d', 'Unity', 'Unity_lic.ulf'),
-          path.join(home, '.config', 'unity3d', 'Unity', 'Unity_lic.ulf'),
-          path.join(home, '.local', 'share', 'unity3d', 'Unity', 'Unity_lic.ulf.bak'),
-        ].filter(Boolean);
+        const candidates = getUnityLicenseCandidates(liveContext(home));
 
         for (const p of candidates) {
           try {

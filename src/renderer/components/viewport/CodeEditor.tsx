@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useT, useI18n } from '../../i18n';
 import { 
   FileCode, 
   Palette, 
@@ -222,6 +223,8 @@ const DEFAULT_FULL_HTML = `<!DOCTYPE html>
 `;
 
 export function CodeEditor() {
+  const t = useT();
+  const { lang } = useI18n();
   const { project, setUICode, syncUIFromCode, syncCodeFromUI } = useProjectStore();
   const { addNotification, addConsoleLog } = useUIStore();
   const [activeFile, setActiveFile] = useState<FileType>('html');
@@ -232,7 +235,7 @@ export function CodeEditor() {
   if (!project) {
     return (
       <div className="w-full h-full flex items-center justify-center text-arsist-muted text-sm">
-        Please open a project
+        {t('code.openProject')}
       </div>
     );
   }
@@ -268,7 +271,7 @@ export function CodeEditor() {
   const handleContentChange = (content: string) => {
     const result = setUICode(activeFile, content);
     if (!result.success) {
-      addNotification({ type: 'error', message: `Failed to sync GUI: ${result.error}` });
+      addNotification({ type: 'error', message: t('code.syncGuiFailed', { error: String(result.error) }) });
     }
   };
 
@@ -330,6 +333,8 @@ export function CodeEditor() {
       return html;
     }
 
+    const htmlLang = lang;
+
     // NOTE:
     // - Editor treats 'HTML fragment' as input.
     // - Wrap with <html> etc. for preview/Unity WebView execution.
@@ -339,7 +344,7 @@ export function CodeEditor() {
     const htmlSafe = html;
 
     return `<!DOCTYPE html>
-<html>
+<html lang="${htmlLang}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -437,7 +442,7 @@ export function CodeEditor() {
     </script>
   </body>
 </html>`;
-  }, [resolvedCss, resolvedHtml, resolvedJs]);
+  }, [resolvedCss, resolvedHtml, resolvedJs, lang]);
 
   return (
     <div className="w-full h-full flex flex-col bg-arsist-bg">
@@ -466,37 +471,37 @@ export function CodeEditor() {
             onClick={() => {
               const result = syncUIFromCode();
               if (!result.success) {
-                addNotification({ type: 'error', message: `Failed to sync GUI: ${result.error}` });
+                addNotification({ type: 'error', message: t('code.syncGuiFailed', { error: String(result.error) }) });
               } else {
-                addNotification({ type: 'success', message: 'Reflected to GUI' });
+                addNotification({ type: 'success', message: t('code.reflectedToGui') });
               }
             }}
             className="btn-icon"
-            title="Apply code to GUI"
+            title={t('code.applyCodeToGui')}
           >
             <ChevronRight size={16} />
           </button>
           <button
             onClick={() => {
               syncCodeFromUI();
-              addNotification({ type: 'success', message: 'Updated HTML from GUI' });
+              addNotification({ type: 'success', message: t('code.updatedHtmlFromGui') });
             }}
             className="btn-icon"
-            title="Apply GUI to code"
+            title={t('code.applyGuiToCode')}
           >
             <RefreshCw size={16} />
           </button>
           <button
             onClick={handleCopy}
             className="btn-icon"
-            title="Copy"
+            title={t('code.copy')}
           >
             {copied ? <Check size={16} className="text-arsist-success" /> : <Copy size={16} />}
           </button>
           <button
             onClick={() => setShowPreview(!showPreview)}
             className={`btn-icon ${showPreview ? 'text-arsist-accent' : ''}`}
-            title="Show preview"
+            title={t('code.showPreview')}
           >
             <Eye size={16} />
           </button>
@@ -510,9 +515,9 @@ export function CodeEditor() {
           {/* Editor toolbar */}
           <div className="h-8 bg-arsist-hover border-b border-arsist-border flex items-center justify-between px-3 text-xs text-arsist-muted">
             <span>
-              {activeFile === 'html' && 'HTML - Define UI structure'}
-              {activeFile === 'css' && 'CSS - Define styles'}
-              {activeFile === 'js' && 'JavaScript - Define logic'}
+              {activeFile === 'html' && t('code.htmlDesc')}
+              {activeFile === 'css' && t('code.cssDesc')}
+              {activeFile === 'js' && t('code.jsDesc')}
             </span>
           </div>
 
@@ -532,9 +537,9 @@ export function CodeEditor() {
 
           {/* Status bar */}
           <div className="h-6 bg-arsist-hover border-t border-arsist-border flex items-center px-3 text-[10px] text-arsist-muted">
-            <span>Lines: {activeContent.split('\n').length}</span>
+            <span>{t('code.lines')}: {activeContent.split('\n').length}</span>
             <span className="mx-2">|</span>
-            <span>Characters: {activeContent.length}</span>
+            <span>{t('code.characters')}: {activeContent.length}</span>
           </div>
         </div>
 
@@ -543,7 +548,7 @@ export function CodeEditor() {
           <div className="w-1/2 flex flex-col">
             <div className="h-8 bg-arsist-hover border-b border-arsist-border flex items-center px-3 text-xs text-arsist-muted">
               <Eye size={12} className="mr-2" />
-              <span>Preview (1920x1080)</span>
+              <span>{t('code.previewTitle')}</span>
             </div>
             <div className="flex-1 overflow-hidden bg-arsist-bg p-4">
               <div 
@@ -553,14 +558,14 @@ export function CodeEditor() {
                 <iframe
                   srcDoc={previewHtml}
                   className="w-full h-full border-0"
-                  title="Preview"
+                  title={t('code.preview')}
                   sandbox="allow-scripts"
                 />
 
                 {previewError && (
                   <div className="absolute inset-0 p-4 pointer-events-none">
                     <div className="pointer-events-none bg-black/80 border border-arsist-border rounded p-3 text-xs text-red-300 whitespace-pre-wrap max-h-full overflow-auto">
-                      <div className="font-medium mb-2">Preview not available</div>
+                      <div className="font-medium mb-2">{t('code.previewNotAvailable')}</div>
                       {previewError}
                     </div>
                   </div>

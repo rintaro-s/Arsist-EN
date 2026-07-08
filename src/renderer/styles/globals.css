@@ -2,19 +2,55 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --color-bg: #1e1e1e;
-  --color-surface: #252526;
-  --color-border: #3c3c3c;
-  --color-hover: #2d2d30;
-  --color-active: #37373d;
-  --color-primary: #569cd6;
-  --color-accent: #4ec9b0;
-  --color-text: #d4d4d4;
-  --color-muted: #808080;
-  --color-success: #4ec9b0;
-  --color-warning: #dcdcaa;
-  --color-error: #f14c4c;
+/*
+ * Theme palettes as RGB channel triples (space-separated) so Tailwind's
+ * `rgb(var(--x) / <alpha-value>)` colors + opacity modifiers work.
+ * Dark is the default (:root); light is applied via [data-theme="light"].
+ * Design intent: FLAT — separation by subtle surface contrast + whitespace,
+ * not heavy borders/frames/shadows.
+ */
+:root,
+:root[data-theme='dark'] {
+  --arsist-bg: 30 30 30;
+  --arsist-surface: 37 37 38;
+  --arsist-border: 60 60 60;
+  --arsist-hover: 45 45 48;
+  --arsist-active: 55 55 61;
+  --arsist-primary: 86 156 214;
+  --arsist-accent: 78 201 176;
+  --arsist-text: 212 212 212;
+  --arsist-muted: 128 128 128;
+  --arsist-success: 78 201 176;
+  --arsist-warning: 220 220 170;
+  --arsist-error: 241 76 76;
+
+  /* Hairline divider — deliberately faint so regions read as flat. */
+  --arsist-divider: 255 255 255;
+  --arsist-divider-alpha: 0.06;
+  --arsist-grid-line: 255 255 255;
+  --arsist-grid-alpha: 0.03;
+  --arsist-modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme='light'] {
+  --arsist-bg: 244 245 246;
+  --arsist-surface: 255 255 255;
+  --arsist-border: 224 227 231;
+  --arsist-hover: 237 239 242;
+  --arsist-active: 228 231 236;
+  --arsist-primary: 47 111 179;
+  --arsist-accent: 13 148 136;
+  --arsist-text: 31 35 40;
+  --arsist-muted: 107 114 128;
+  --arsist-success: 13 148 136;
+  --arsist-warning: 180 120 20;
+  --arsist-error: 220 38 38;
+
+  --arsist-divider: 17 24 39;
+  --arsist-divider-alpha: 0.08;
+  --arsist-grid-line: 17 24 39;
+  --arsist-grid-alpha: 0.05;
+  --arsist-modal-shadow: 0 12px 40px rgba(17, 24, 39, 0.18);
 }
 
 * {
@@ -27,8 +63,12 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: rgb(var(--arsist-bg));
+  color: rgb(var(--arsist-text));
+  /* CJK-friendly stack so Japanese UI text renders well cross-platform and offline. */
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, 'Yu Gothic UI',
+    'Noto Sans CJK JP', 'Noto Sans JP', sans-serif;
 }
 
 /* Typography */
@@ -36,26 +76,33 @@ html, body, #root {
   font-family: 'JetBrains Mono', Consolas, monospace;
 }
 
-/* Panel styles */
+/* A faint hairline utility for the few places that genuinely need a divider. */
+.hairline { border-color: rgb(var(--arsist-divider) / var(--arsist-divider-alpha)); }
+.hairline-b { border-bottom: 1px solid rgb(var(--arsist-divider) / var(--arsist-divider-alpha)); }
+.hairline-t { border-top: 1px solid rgb(var(--arsist-divider) / var(--arsist-divider-alpha)); }
+.hairline-r { border-right: 1px solid rgb(var(--arsist-divider) / var(--arsist-divider-alpha)); }
+.hairline-l { border-left: 1px solid rgb(var(--arsist-divider) / var(--arsist-divider-alpha)); }
+
+/* Panel styles — flat: no frame, section is defined by spacing + a muted header. */
 .panel {
-  @apply bg-arsist-surface border border-arsist-border rounded-lg;
+  @apply bg-arsist-surface rounded-lg;
 }
 
 .panel-header {
-  @apply px-3 py-2 border-b border-arsist-border font-medium text-sm flex items-center justify-between bg-arsist-hover;
+  @apply px-3 py-2 font-medium text-xs text-arsist-muted flex items-center justify-between;
 }
 
-/* Button variants */
+/* Button variants — flat: filled or subtle, no borders. */
 .btn {
-  @apply px-4 py-2 rounded font-medium transition-all duration-150 flex items-center gap-2 border border-transparent;
+  @apply px-4 py-2 rounded-md font-medium transition-colors duration-150 flex items-center gap-2;
 }
 
 .btn-primary {
-  @apply bg-arsist-primary hover:bg-arsist-primary/80 text-white;
+  @apply bg-arsist-primary hover:bg-arsist-primary/85 text-white;
 }
 
 .btn-secondary {
-  @apply bg-arsist-surface hover:bg-arsist-hover text-arsist-text border-arsist-border;
+  @apply bg-arsist-hover hover:bg-arsist-active text-arsist-text;
 }
 
 .btn-ghost {
@@ -63,26 +110,26 @@ html, body, #root {
 }
 
 .btn-success {
-  @apply bg-arsist-success/20 hover:bg-arsist-success/30 text-arsist-success border-arsist-success/30;
+  @apply bg-arsist-success text-white hover:bg-arsist-success/85;
 }
 
 .btn-icon {
-  @apply p-2 rounded hover:bg-arsist-hover transition-colors text-arsist-muted hover:text-arsist-text;
+  @apply p-2 rounded-md hover:bg-arsist-hover transition-colors text-arsist-muted hover:text-arsist-text;
 }
 
-/* Input styles */
+/* Input styles — flat: filled field, no border; accent ring on focus. */
 .input {
-  @apply w-full px-3 py-2 bg-arsist-bg border border-arsist-border rounded
-         focus:outline-none focus:border-arsist-primary transition-colors text-arsist-text;
+  @apply w-full px-3 py-2 bg-arsist-hover rounded-md
+         focus:outline-none focus:ring-2 focus:ring-arsist-accent/50 transition-shadow text-arsist-text;
 }
 
 .input-label {
-  @apply block text-xs text-arsist-muted mb-1 uppercase tracking-wide;
+  @apply block text-xs text-arsist-muted mb-1;
 }
 
 /* Tree item */
 .tree-item {
-  @apply flex items-center gap-2 px-2 py-1.5 rounded hover:bg-arsist-hover cursor-pointer text-arsist-text;
+  @apply flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-arsist-hover cursor-pointer text-arsist-text;
 }
 
 .tree-item.selected {
@@ -91,16 +138,17 @@ html, body, #root {
 
 /* Viewport grid */
 .viewport-grid {
-  background-color: #1e1e1e;
-  background-image: 
-    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-color: rgb(var(--arsist-bg));
+  background-image:
+    linear-gradient(rgb(var(--arsist-grid-line) / var(--arsist-grid-alpha)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--arsist-grid-line) / var(--arsist-grid-alpha)) 1px, transparent 1px);
   background-size: 20px 20px;
 }
 
-/* Context menu */
+/* Context menu — flat: soft shadow, no border. */
 .context-menu {
-  @apply absolute bg-arsist-surface border border-arsist-border rounded-lg shadow-2xl py-1 z-50 min-w-48;
+  @apply absolute bg-arsist-surface rounded-lg py-1 z-50 min-w-48;
+  box-shadow: var(--arsist-modal-shadow);
 }
 
 .context-menu-item {
@@ -108,29 +156,30 @@ html, body, #root {
 }
 
 .context-menu-separator {
-  @apply border-t border-arsist-border my-1;
+  @apply my-1 hairline-t;
 }
 
-/* Tab styles */
+/* Tab styles — flat: no underline border; active = accent text + subtle fill. */
 .tab {
-  @apply px-4 py-2 border-b-2 border-transparent hover:bg-arsist-hover transition-colors cursor-pointer text-arsist-muted hover:text-arsist-text;
+  @apply px-4 py-2 rounded-md hover:bg-arsist-hover transition-colors cursor-pointer text-arsist-muted hover:text-arsist-text;
 }
 
 .tab.active {
-  @apply border-arsist-accent text-arsist-accent bg-arsist-active;
+  @apply text-arsist-accent bg-arsist-active;
 }
 
 /* Modal overlay */
 .modal-overlay {
-  @apply fixed inset-0 bg-black/60 flex items-center justify-center z-50;
+  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
 }
 
 .modal {
-  @apply bg-arsist-surface rounded-lg shadow-2xl max-w-lg w-full mx-4 overflow-hidden border border-arsist-border;
+  @apply bg-arsist-surface rounded-xl max-w-lg w-full mx-4 overflow-hidden;
+  box-shadow: var(--arsist-modal-shadow);
 }
 
 .modal-header {
-  @apply px-6 py-4 border-b border-arsist-border font-semibold bg-arsist-hover;
+  @apply px-6 py-4 font-semibold;
 }
 
 .modal-body {
@@ -138,7 +187,7 @@ html, body, #root {
 }
 
 .modal-footer {
-  @apply px-6 py-4 border-t border-arsist-border flex justify-end gap-3 bg-arsist-hover;
+  @apply px-6 py-4 flex justify-end gap-3;
 }
 
 /* Scrollbar styling */
@@ -148,32 +197,31 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: rgb(var(--arsist-muted) / 0.35);
   border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-muted);
+  background: rgb(var(--arsist-muted) / 0.55);
 }
 
 /* Selection highlight */
 ::selection {
-  background: var(--color-primary);
-  color: white;
+  background: rgb(var(--arsist-primary) / 0.4);
 }
 
-/* Code editor styles */
+/* Code editor styles — flat filled field. */
 .code-editor {
-  @apply font-mono text-sm bg-arsist-bg border border-arsist-border rounded;
+  @apply font-mono text-sm bg-arsist-bg rounded-md;
 }
 
 /* Help tooltip */
 .help-hint {
-  @apply text-xs text-arsist-muted bg-arsist-bg border border-arsist-border rounded px-2 py-1;
+  @apply text-xs text-arsist-muted bg-arsist-hover rounded-md px-2 py-1;
 }
 
 /* Status indicator */
@@ -190,20 +238,22 @@ html, body, #root {
 }
 
 .spinner {
-  @apply w-5 h-5 border-2 border-arsist-border border-t-arsist-accent rounded-full;
+  @apply w-5 h-5 rounded-full;
+  border: 2px solid rgb(var(--arsist-muted) / 0.25);
+  border-top-color: rgb(var(--arsist-accent));
   animation: spin 0.8s linear infinite;
 }
 
 /* Progress bar */
 .progress-bar {
-  @apply h-2 bg-arsist-bg rounded-full overflow-hidden;
+  @apply h-2 bg-arsist-hover rounded-full overflow-hidden;
 }
 
 .progress-bar-fill {
   @apply h-full bg-arsist-accent transition-all duration-300;
 }
 
-/* Keyboard shortcut badge */
+/* Keyboard shortcut badge — flat filled chip, no border. */
 .kbd {
-  @apply inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1 text-xs bg-arsist-bg border border-arsist-border rounded text-arsist-muted;
+  @apply inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1 text-xs bg-arsist-hover rounded text-arsist-muted;
 }

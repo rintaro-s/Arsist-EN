@@ -3,18 +3,20 @@
  */
 import { useUIStore } from '../../stores/uiStore';
 import { Trash2 } from 'lucide-react';
+import { useT } from '../../i18n';
 
 export function BottomPanel() {
+  const t = useT();
   const { bottomTab, setBottomTab, consoleLogs, clearConsoleLogs, buildLogs } = useUIStore();
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-arsist-surface">
       {/* Tabs */}
-      <div className="h-7 flex items-center border-b border-arsist-border px-2 gap-1 shrink-0">
-        <TabBtn label="Console" active={bottomTab === 'console'} onClick={() => setBottomTab('console')} />
+      <div className="h-7 flex items-center hairline-b px-2 gap-1 shrink-0">
+        <TabBtn label={t('console.tab')} active={bottomTab === 'console'} onClick={() => setBottomTab('console')} />
 
         {bottomTab === 'console' && (
-          <button onClick={clearConsoleLogs} className="ml-auto btn-icon p-0.5" title="Clear">
+          <button onClick={clearConsoleLogs} className="ml-auto btn-icon p-0.5" title={t('console.clear')}>
             <Trash2 size={12} />
           </button>
         )}
@@ -42,6 +44,7 @@ function TabBtn({ label, active, onClick }: { label: string; active: boolean; on
 }
 
 function ConsoleView({ logs, buildLogs }: { logs: { type: string; message: string; time: string }[]; buildLogs: string[] }) {
+  const t = useT();
   const allLogs = [
     ...logs.map((l) => ({ ...l, source: 'app' })),
     ...buildLogs.map((msg) => ({ type: 'info', message: msg, time: '', source: 'build' })),
@@ -60,7 +63,7 @@ function ConsoleView({ logs, buildLogs }: { logs: { type: string; message: strin
         </div>
       ))}
       {allLogs.length === 0 && (
-        <div className="text-arsist-muted text-center py-3">No logs</div>
+        <div className="text-arsist-muted text-center py-3">{t('console.noLogs')}</div>
       )}
     </div>
   );

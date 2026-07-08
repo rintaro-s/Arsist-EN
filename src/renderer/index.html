@@ -9,33 +9,25 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+    /*
+      Minimal pre-paint reset only. The real theme (dark/light) lives in
+      globals.css via CSS variables; this just avoids a white flash before
+      React mounts by matching the default (dark) background.
+    */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body, #root {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      font-family: 'Inter', system-ui, sans-serif;
-      background: #1a1a2e;
-      color: #eaeaea;
+      font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
+        'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, 'Yu Gothic UI',
+        'Noto Sans CJK JP', 'Noto Sans JP', sans-serif;
+      background: #1e1e1e;
+      color: #d4d4d4;
     }
-    /* Custom scrollbar */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #16213e;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #0f3460;
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #e94560;
+    html[data-theme='light'], html[data-theme='light'] body, html[data-theme='light'] #root {
+      background: #f4f5f6;
+      color: #1f2328;
     }
   </style>
 </head>

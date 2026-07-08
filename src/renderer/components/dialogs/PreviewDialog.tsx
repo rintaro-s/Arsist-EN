@@ -6,6 +6,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useProjectStore } from '../../stores/projectStore';
 import { DataStoreProvider, useDataStore } from '../../stores/dataStoreContext';
+import { useT } from '../../i18n';
 import type { SceneObject, UIElement } from '../../../shared/types';
 
 interface PreviewDialogProps {
@@ -19,6 +20,7 @@ type PreviewMode = 'user' | 'orbit';
  * Independent lightweight version from UIEditor.tsx ElementRenderer
  * ================================================================ */
 function SimpleUIRenderer({ element }: { element: UIElement }) {
+  const t = useT();
   let storeCtx: { data: Record<string, unknown> } | null = null;
   try {
     // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -73,7 +75,7 @@ function SimpleUIRenderer({ element }: { element: UIElement }) {
   if (element.type === 'Button') {
     return (
       <div style={{ ...styleObj, cursor: 'pointer', userSelect: 'none' }}>
-        {resolveContent(element) || 'Button'}
+        {resolveContent(element) || t('preview.button')}
       </div>
     );
   }
@@ -82,7 +84,7 @@ function SimpleUIRenderer({ element }: { element: UIElement }) {
     return (
       <div style={styleObj}>
         <div style={{ width: '100%', height: '100%', background: '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#888' }}>
-          IMG
+          {t('preview.imagePlaceholder')}
         </div>
       </div>
     );
@@ -219,6 +221,7 @@ function PreviewContent({
   setAutoUpdateData,
   onClose,
 }: PreviewContentProps) {
+  const t = useT();
   const { data, setData } = useDataStore();
 
   useEffect(() => {
@@ -243,7 +246,7 @@ function PreviewContent({
         <div className="modal-header flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Eye size={18} className="text-arsist-accent" />
-            <span>Full Preview</span>
+            <span>{t('preview.title')}</span>
           </div>
           <button onClick={onClose} className="btn-icon"><X size={18} /></button>
         </div>
@@ -253,17 +256,17 @@ function PreviewContent({
           <div className="flex items-center justify-between gap-2 text-xs text-arsist-muted">
             <div className="flex items-center gap-2">
               <button className={`btn btn-secondary text-xs ${mode === 'user' ? 'border-arsist-accent' : ''}`} onClick={() => setMode('user')}>
-                <Monitor size={14} /> User View
+                <Monitor size={14} /> {t('preview.userView')}
               </button>
               <button className={`btn btn-secondary text-xs ${mode === 'orbit' ? 'border-arsist-accent' : ''}`} onClick={() => setMode('orbit')}>
-                <Compass size={14} /> Orbit
+                <Compass size={14} /> {t('preview.orbit')}
               </button>
               <button className={`btn btn-secondary text-xs ${showUHD ? 'border-arsist-accent' : ''}`} onClick={() => setShowUHD(!showUHD)}>
-                Show UHD
+                {t('preview.showUhd')}
               </button>
             </div>
             <button className={`btn btn-secondary text-xs ${autoUpdateData ? 'border-arsist-accent' : ''}`} onClick={() => setAutoUpdateData(!autoUpdateData)}>
-              <Zap size={14} /> {autoUpdateData ? 'Live' : 'Static'}
+              <Zap size={14} /> {autoUpdateData ? t('preview.live') : t('preview.static')}
             </button>
           </div>
 
@@ -301,7 +304,7 @@ function PreviewContent({
         </div>
 
         <div className="modal-footer flex justify-end gap-2">
-          <button className="btn" onClick={onClose}>Close</button>
+          <button className="btn" onClick={onClose}>{t('common.close')}</button>
         </div>
       </div>
     </div>

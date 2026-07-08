@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Copy, CheckCircle, AlertCircle } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
+import { useT } from '../../i18n';
 
 interface ErrorDialogProps {
   title?: string;
@@ -10,12 +11,14 @@ interface ErrorDialogProps {
   onClose: () => void;
 }
 
-export function ErrorDialog({ title = 'Error', summary, details, onClose }: ErrorDialogProps) {
+export function ErrorDialog({ title, summary, details, onClose }: ErrorDialogProps) {
+  const t = useT();
   const { addNotification } = useUIStore();
   const [copied, setCopied] = useState(false);
+  const resolvedTitle = title ?? t('error.title');
 
   const textToCopy = [
-    `# ${title}`,
+    `# ${resolvedTitle}`,
     '',
     summary,
     details ? `\n---\n${details}` : '',
@@ -25,10 +28,10 @@ export function ErrorDialog({ title = 'Error', summary, details, onClose }: Erro
     try {
       await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
-      addNotification({ type: 'success', message: 'Error details copied to clipboard' });
+      addNotification({ type: 'success', message: t('errorDialog.copiedToClipboard') });
       setTimeout(() => setCopied(false), 1500);
     } catch (e) {
-      addNotification({ type: 'error', message: `Failed to copy: ${String(e)}` });
+      addNotification({ type: 'error', message: t('errorDialog.copyFailed', { error: String(e) }) });
     }
   };
 
@@ -38,7 +41,7 @@ export function ErrorDialog({ title = 'Error', summary, details, onClose }: Erro
         <div className="modal-header flex items-center justify-between">
           <div className="flex items-center gap-2">
             <AlertCircle size={18} className="text-arsist-error" />
-            <span>{title}</span>
+            <span>{resolvedTitle}</span>
           </div>
           <button onClick={onClose} className="btn-icon">
             <X size={18} />
@@ -52,7 +55,7 @@ export function ErrorDialog({ title = 'Error', summary, details, onClose }: Erro
 
           {details && (
             <div>
-              <div className="text-xs text-arsist-muted mb-2">Details (copy target)</div>
+              <div className="text-xs text-arsist-muted mb-2">{t('error.details')}</div>
               <textarea
                 readOnly
                 className="input w-full h-48 font-mono text-xs"
@@ -65,9 +68,9 @@ export function ErrorDialog({ title = 'Error', summary, details, onClose }: Erro
         <div className="modal-footer flex justify-end gap-2">
           <button className="btn btn-secondary" onClick={handleCopy}>
             {copied ? <CheckCircle size={18} /> : <Copy size={18} />}
-            <span className="ml-2">Copy</span>
+            <span className="ml-2">{t('common.copy')}</span>
           </button>
-          <button className="btn" onClick={onClose}>Close</button>
+          <button className="btn" onClick={onClose}>{t('common.close')}</button>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, FolderOpen, Glasses, Layout, Monitor, MapPin } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useT } from '../../i18n';
 import type { ProjectTemplate } from '../../../shared/types';
 
 interface NewProjectDialogProps {
@@ -10,28 +11,28 @@ interface NewProjectDialogProps {
 
 interface TemplateOption {
   id: ProjectTemplate;
-  name: string;
-  description: string;
+  nameKey: string;
+  descriptionKey: string;
   icon: React.ReactNode;
 }
 
 const templates: TemplateOption[] = [
   {
     id: '3d_ar_scene',
-    name: '3D AR Scene',
-    description: '6DoF tracking. Standard AR with 3D objects in space',
+    nameKey: 'newProject.template3dArSceneName',
+    descriptionKey: 'newProject.template3dArSceneDesc',
     icon: <Glasses size={32} />,
   },
   {
     id: '2d_floating_screen',
-    name: '2D Floating Screen',
-    description: '3DoF tracking. Fixed 2D display in front of view',
+    nameKey: 'newProject.template2dFloatingName',
+    descriptionKey: 'newProject.template2dFloatingDesc',
     icon: <Monitor size={32} />,
   },
   {
     id: 'head_locked_hud',
-    name: 'Head-Locked HUD',
-    description: 'Head-locked. Ideal for fixed HUD overlay',
+    nameKey: 'newProject.templateHudName',
+    descriptionKey: 'newProject.templateHudDesc',
     icon: <Layout size={32} />,
   },
 ];
@@ -45,6 +46,7 @@ const devices = [
 ];
 
 export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
+  const t = useT();
   const { createProject } = useProjectStore();
   const { addNotification } = useUIStore();
   
@@ -79,7 +81,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
 
   const handleCreate = async () => {
     if (!projectName || !projectPath) {
-      addNotification({ type: 'error', message: 'Please enter project name and path' });
+      addNotification({ type: 'error', message: t('newProject.enterNameAndPath') });
       return;
     }
 
@@ -93,10 +95,10 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
         targetDevice: selectedDevice,
       });
       
-      addNotification({ type: 'success', message: 'Project created successfully' });
+      addNotification({ type: 'success', message: t('newProject.createSuccess') });
       onClose();
     } catch (error) {
-      addNotification({ type: 'error', message: `Failed to create project: ${error}` });
+      addNotification({ type: 'error', message: t('newProject.createFailed', { error: String(error) }) });
     } finally {
       setIsCreating(false);
     }
@@ -107,7 +109,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
       <div className="modal max-w-2xl" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header flex items-center justify-between">
-          <span>New Project</span>
+          <span>{t('newProject.title')}</span>
           <button onClick={onClose} className="btn-icon">
             <X size={18} />
           </button>
@@ -115,11 +117,11 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
 
         {/* Steps Indicator */}
         <div className="px-6 py-3 border-b border-arsist-primary/30 flex items-center gap-4">
-          <StepIndicator step={1} currentStep={step} label="Template" />
+          <StepIndicator step={1} currentStep={step} label={t('newProject.stepTemplate')} />
           <div className="flex-1 h-0.5 bg-arsist-primary/30" />
-          <StepIndicator step={2} currentStep={step} label="Settings" />
+          <StepIndicator step={2} currentStep={step} label={t('newProject.stepSettings')} />
           <div className="flex-1 h-0.5 bg-arsist-primary/30" />
-          <StepIndicator step={3} currentStep={step} label="Device" />
+          <StepIndicator step={3} currentStep={step} label={t('newProject.stepDevice')} />
         </div>
 
         {/* Content */}
@@ -128,7 +130,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
           {step === 1 && (
             <div className="space-y-4">
               <p className="text-arsist-muted text-sm mb-4">
-                Select a project template
+                {t('newProject.selectTemplate')}
               </p>
               <div className="grid grid-cols-1 gap-3">
                 {templates.map(template => (
@@ -149,8 +151,8 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
                       {template.icon}
                     </div>
                     <div>
-                      <h3 className="font-medium mb-1">{template.name}</h3>
-                      <p className="text-sm text-arsist-muted">{template.description}</p>
+                      <h3 className="font-medium mb-1">{t(template.nameKey)}</h3>
+                      <p className="text-sm text-arsist-muted">{t(template.descriptionKey)}</p>
                     </div>
                   </button>
                 ))}
@@ -162,7 +164,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
           {step === 2 && (
             <div className="space-y-6">
               <div>
-                <label className="input-label">Project Name</label>
+                <label className="input-label">{t('newProject.projectName')}</label>
                 <input
                   type="text"
                   value={projectName}
@@ -173,14 +175,14 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               </div>
 
               <div>
-                <label className="input-label">Save Location</label>
+                <label className="input-label">{t('newProject.saveLocation')}</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={projectPath}
                     onChange={(e) => setProjectPath(e.target.value)}
                     className="input flex-1"
-                    placeholder="/path/to/projects"
+                    placeholder={t('newProject.pathPlaceholder')}
                   />
                   <button onClick={handleSelectPath} className="btn btn-secondary">
                     <FolderOpen size={18} />
@@ -189,7 +191,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               </div>
 
               <div className="p-4 bg-arsist-bg rounded-lg">
-                <h4 className="text-sm font-medium mb-2">Project Structure</h4>
+                <h4 className="text-sm font-medium mb-2">{t('newProject.projectStructure')}</h4>
                 <pre className="text-xs text-arsist-muted font-mono">
 {`${projectName}/
 ├── project.json
@@ -205,10 +207,10 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               </div>
 
               <div>
-                <label className="input-label">UI Creation</label>
+                <label className="input-label">{t('newProject.uiCreation')}</label>
                 <div className="p-3 rounded border border-arsist-accent bg-arsist-accent/10 text-xs">
-                  <div className="font-medium">Integrated GUI Mode</div>
-                  <div className="text-arsist-muted">Intuitive editing with Figma-like UI editor</div>
+                  <div className="font-medium">{t('newProject.integratedGuiMode')}</div>
+                  <div className="text-arsist-muted">{t('newProject.integratedGuiModeDesc')}</div>
                 </div>
               </div>
             </div>
@@ -218,7 +220,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
           {step === 3 && (
             <div className="space-y-4">
               <p className="text-arsist-muted text-sm mb-4">
-                Select target device (can be changed later)
+                {t('newProject.selectDevice')}
               </p>
               <div className="grid grid-cols-2 gap-3">
                 {devices.map(device => (
@@ -241,7 +243,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
                       <div>
                         <h3 className="font-medium">{device.name}</h3>
                         {!device.available && (
-                          <span className="text-xs text-arsist-muted">Coming Soon</span>
+                          <span className="text-xs text-arsist-muted">{t('newProject.comingSoon')}</span>
                         )}
                       </div>
                     </div>
@@ -252,12 +254,12 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               <div className="mt-6 p-4 bg-arsist-primary/20 rounded-lg">
                 <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
                   <MapPin size={16} className="text-arsist-accent" />
-                  Selected Device: {devices.find(d => d.id === selectedDevice)?.name}
+                  {t('newProject.selectedDevice', { name: devices.find(d => d.id === selectedDevice)?.name ?? '' })}
                 </h4>
                 <p className="text-xs text-arsist-muted">
                   {selectedDevice === 'Meta_Quest'
-                    ? 'Meta XR SDK (sdk/quest) • Unity 2022.3 LTS+ • OpenXR-compliant'
-                    : 'XREAL One SDK 3.1.0 • Unity 2022.3.20f1 LTS • OpenXR-compliant'}
+                    ? t('newProject.sdkInfoQuest')
+                    : t('newProject.sdkInfoXreal')}
                 </p>
               </div>
             </div>
@@ -268,13 +270,13 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
         <div className="modal-footer">
           {step > 1 && (
             <button onClick={() => setStep(s => s - 1)} className="btn btn-ghost">
-              Back
+              {t('common.back')}
             </button>
           )}
           <div className="flex-1" />
           {step < 3 ? (
             <button onClick={() => setStep(s => s + 1)} className="btn btn-primary">
-              Next
+              {t('common.next')}
             </button>
           ) : (
             <button 
@@ -285,10 +287,10 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
               {isCreating ? (
                 <>
                   <div className="spinner" />
-                  Creating...
+                  {t('newProject.creating')}
                 </>
               ) : (
-                'Create Project'
+                t('newProject.createProject')
               )}
             </button>
           )}

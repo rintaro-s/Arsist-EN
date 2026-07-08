@@ -46,6 +46,7 @@ const electron_1 = require("electron");
 const os = __importStar(require("os"));
 const https = __importStar(require("https"));
 const http = __importStar(require("http"));
+const paths_1 = require("../platform/paths");
 class UnityBuilder extends events_1.EventEmitter {
     unityPath;
     sdkDir = '';
@@ -460,20 +461,17 @@ class UnityBuilder extends events_1.EventEmitter {
             const findManualLicenseFile = async () => {
                 // Unity Hubでログイン済みでも、ヘッドレス環境ではtoken更新に失敗することがある。
                 // その場合に備えて、ローカルの .ulf を指定して起動できるようにする。
-                // (Linuxの一般的な配置先)
+                // 配置先は OS ごとに異なるため platform ヘルパで全 OS 分を列挙する
+                // (以前は Linux パスのみで、Windows/macOS では自動発見できなかった)。
                 const home = (() => {
                     try {
                         return electron_1.app.getPath('home');
                     }
                     catch {
-                        return process.env.HOME || '';
+                        return process.env.HOME || process.env.USERPROFILE || os.homedir();
                     }
                 })();
-                const candidates = [
-                    path.join(home, '.local', 'share', 'unity3d', 'Unity', 'Unity_lic.ulf'),
-                    path.join(home, '.config', 'unity3d', 'Unity', 'Unity_lic.ulf'),
-                    path.join(home, '.local', 'share', 'unity3d', 'Unity', 'Unity_lic.ulf.bak'),
-                ].filter(Boolean);
+                const candidates = (0, paths_1.getUnityLicenseCandidates)((0, paths_1.liveContext)(home));
                 for (const p of candidates) {
                     try {
                         if (p && await fs.pathExists(p))

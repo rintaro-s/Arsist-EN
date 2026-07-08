@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
+import { useUIStore } from './uiStore';
 import type {
   ArsistProject,
   SceneData,
@@ -20,6 +21,19 @@ import type {
   ScriptData,
   ScriptBundle,
 } from '../../shared/types';
+
+/** Surface a project error to the console panel instead of failing silently. */
+function notifyProjectError(action: string, detail?: string) {
+  try {
+    useUIStore.getState().addConsoleLog({
+      type: 'error',
+      message: detail ? `${action}: ${detail}` : action,
+    });
+  } catch {
+    // console store unavailable — fall back to devtools console
+    console.error(`[Arsist] ${action}${detail ? ': ' + detail : ''}`);
+  }
+}
 
 // ========================================
 // Store type definitions
@@ -126,46 +140,64 @@ export const useProjectStore = create<ProjectState>()(
 
     createProject: async (options) => {
       if (!window.electronAPI) return;
-      const result = await window.electronAPI.project.create(options);
-      if (result.success) {
-        set((s) => {
-          s.project = result.project;
-          s.projectPath = options.path + '/' + options.name;
-          s.isDirty = false;
-          s.currentSceneId = result.project.scenes[0]?.id ?? null;
-          s.currentUILayoutId = result.project.uiLayouts[0]?.id ?? null;
-          s.selectedDataSourceId = null;
-          s.selectedTransformId = null;
-          s.currentScriptId = null;
-        });
+      try {
+        const result = await window.electronAPI.project.create(options);
+        if (result.success) {
+          set((s) => {
+            s.project = result.project;
+            s.projectPath = options.path + '/' + options.name;
+            s.isDirty = false;
+            s.currentSceneId = result.project.scenes[0]?.id ?? null;
+            s.currentUILayoutId = result.project.uiLayouts[0]?.id ?? null;
+            s.selectedDataSourceId = null;
+            s.selectedTransformId = null;
+            s.currentScriptId = null;
+          });
+        } else {
+          notifyProjectError('Failed to create project', result.error);
+        }
+      } catch (e) {
+        notifyProjectError('Failed to create project', String((e as Error)?.message ?? e));
       }
     },
 
     loadProject: async (path) => {
       if (!window.electronAPI) return;
-      const result = await window.electronAPI.project.load(path);
-      if (result.success) {
-        set((s) => {
-          s.project = result.project;
-          s.projectPath = path;
-          s.isDirty = false;
-          s.currentSceneId = result.project.scenes[0]?.id ?? null;
-          s.currentUILayoutId = result.project.uiLayouts[0]?.id ?? null;
-          s.selectedDataSourceId = null;
-          s.selectedTransformId = null;
-          s.currentScriptId = result.project.scripts?.[0]?.id ?? null;
-        });
+      try {
+        const result = await window.electronAPI.project.load(path);
+        if (result.success) {
+          set((s) => {
+            s.project = result.project;
+            s.projectPath = path;
+            s.isDirty = false;
+            s.currentSceneId = result.project.scenes[0]?.id ?? null;
+            s.currentUILayoutId = result.project.uiLayouts[0]?.id ?? null;
+            s.selectedDataSourceId = null;
+            s.selectedTransformId = null;
+            s.currentScriptId = result.project.scripts?.[0]?.id ?? null;
+          });
+        } else {
+          notifyProjectError('Failed to open project', result.error);
+        }
+      } catch (e) {
+        notifyProjectError('Failed to open project', String((e as Error)?.message ?? e));
       }
     },
 
     saveProject: async () => {
       const { project, projectPath } = get();
       if (!project || !projectPath || !window.electronAPI) return;
-      const result = await window.electronAPI.project.save(project);
-      if (result.success) {
-        set((s) => {
-          s.isDirty = false;
-        });
+      try {
+        const result = await window.electronAPI.project.save(project);
+        if (result.success) {
+          set((s) => {
+            s.isDirty = false;
+          });
+        } else {
+          notifyProjectError('Failed to save project', result.error);
+        }
+      } catch (e) {
+        notifyProjectError('Failed to save project', String((e as Error)?.message ?? e));
       }
     },
 

@@ -79,13 +79,14 @@ export function MainLayout() {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel */}
-        <div style={{ width: leftPanelWidth }} className="flex-shrink-0 bg-arsist-surface border-r border-arsist-border">
+        <div style={{ width: leftPanelWidth }} className="flex-shrink-0 bg-arsist-surface">
           <LeftPanel />
         </div>
 
         {/* Left Resize Handle */}
         <div
-          className="w-1 cursor-col-resize hover:bg-arsist-accent/30 transition-colors bg-arsist-border"
+          className="w-px cursor-col-resize hover:bg-arsist-accent/40 transition-colors hairline"
+          style={{ backgroundColor: 'rgb(var(--arsist-divider) / var(--arsist-divider-alpha))' }}
           onMouseDown={() => {
             isDraggingLeft.current = true;
             document.body.style.cursor = 'col-resize';
@@ -105,7 +106,8 @@ export function MainLayout() {
 
           {/* Bottom Resize Handle */}
           <div
-            className="h-1 cursor-row-resize hover:bg-arsist-accent/30 transition-colors bg-arsist-border"
+            className="h-px cursor-row-resize hover:bg-arsist-accent/40 transition-colors"
+            style={{ backgroundColor: 'rgb(var(--arsist-divider) / var(--arsist-divider-alpha))' }}
             onMouseDown={() => {
               isDraggingBottom.current = true;
               document.body.style.cursor = 'row-resize';
@@ -114,9 +116,9 @@ export function MainLayout() {
           />
 
           {/* Bottom Panel */}
-          <div 
-            style={{ height: bottomPanelHeight }} 
-            className="flex-shrink-0 bg-arsist-surface border-t border-arsist-border"
+          <div
+            style={{ height: bottomPanelHeight }}
+            className="flex-shrink-0 bg-arsist-surface hairline-t"
           >
             <BottomPanel />
           </div>
@@ -124,7 +126,8 @@ export function MainLayout() {
 
         {/* Right Resize Handle */}
         <div
-          className="w-1 cursor-col-resize hover:bg-arsist-accent/30 transition-colors bg-arsist-border"
+          className="w-px cursor-col-resize hover:bg-arsist-accent/40 transition-colors"
+          style={{ backgroundColor: 'rgb(var(--arsist-divider) / var(--arsist-divider-alpha))' }}
           onMouseDown={() => {
             isDraggingRight.current = true;
             document.body.style.cursor = 'col-resize';
@@ -133,7 +136,7 @@ export function MainLayout() {
         />
 
         {/* Right Panel */}
-        <div style={{ width: rightPanelWidth }} className="flex-shrink-0 bg-arsist-surface border-l border-arsist-border">
+        <div style={{ width: rightPanelWidth }} className="flex-shrink-0 bg-arsist-surface">
           <RightPanel />
         </div>
       </div>

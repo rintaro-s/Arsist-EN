@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Server, Power, Copy, X, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
+import { useT } from '../../i18n';
 
 interface MCPDialogProps {
   onClose: () => void;
@@ -27,6 +28,7 @@ interface MCPClientConfig {
 }
 
 export function MCPDialog({ onClose }: MCPDialogProps) {
+  const t = useT();
   const { project } = useProjectStore();
   const [status, setStatus] = useState<MCPStatus>({ enabled: false, running: false });
   const [clientConfig, setClientConfig] = useState<MCPClientConfig | null>(null);
@@ -57,7 +59,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
 
   const handleStart = async () => {
     if (!window.electronAPI?.mcp || !project?.path) {
-      setMessage({ type: 'error', text: 'Project is not loaded' });
+      setMessage({ type: 'error', text: t('mcp.projectNotLoaded') });
       return;
     }
 
@@ -67,13 +69,13 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
     try {
       const result = await window.electronAPI.mcp.start(project.path);
       if (result.success) {
-        setMessage({ type: 'success', text: 'MCP server started' });
+        setMessage({ type: 'success', text: t('mcp.serverStarted') });
         await refreshStatus();
       } else {
-        setMessage({ type: 'error', text: result.message || 'Failed to start server' });
+        setMessage({ type: 'error', text: result.message || t('mcp.startFailed') });
       }
     } catch (error) {
-      setMessage({ type: 'error', text: `Error: ${(error as Error).message}` });
+      setMessage({ type: 'error', text: t('mcp.errorPrefix', { error: (error as Error).message }) });
     } finally {
       setIsLoading(false);
     }
@@ -88,13 +90,13 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
     try {
       const result = await window.electronAPI.mcp.stop();
       if (result.success) {
-        setMessage({ type: 'success', text: 'MCP server stopped' });
+        setMessage({ type: 'success', text: t('mcp.serverStopped') });
         await refreshStatus();
       } else {
-        setMessage({ type: 'error', text: result.message || 'Failed to stop server' });
+        setMessage({ type: 'error', text: result.message || t('mcp.stopFailed') });
       }
     } catch (error) {
-      setMessage({ type: 'error', text: `Error: ${(error as Error).message}` });
+      setMessage({ type: 'error', text: t('mcp.errorPrefix', { error: (error as Error).message }) });
     } finally {
       setIsLoading(false);
     }
@@ -117,7 +119,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
         <div className="flex items-center justify-between px-4 py-3 border-b border-arsist-border">
           <div className="flex items-center gap-2">
             <Server size={18} className="text-arsist-accent" />
-            <h2 className="text-base font-semibold text-arsist-text">MCP Server Settings</h2>
+            <h2 className="text-base font-semibold text-arsist-text">{t('mcp.title')}</h2>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-arsist-hover rounded transition-colors text-arsist-muted">
             <X size={18} />
@@ -129,27 +131,27 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
           {/* Status */}
           <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-arsist-text">Server Status</h3>
+              <h3 className="text-sm font-medium text-arsist-text">{t('mcp.serverStatus')}</h3>
               <div className={`flex items-center gap-2 text-xs font-medium px-2 py-1 rounded ${
                 status.running ? 'bg-green-500/10 text-green-400' : 'bg-arsist-hover text-arsist-muted'
               }`}>
                 <div className={`w-2 h-2 rounded-full ${status.running ? 'bg-green-400' : 'bg-arsist-muted'}`} />
-                {status.running ? 'Running' : 'Stopped'}
+                {status.running ? t('mcp.running') : t('mcp.stopped')}
               </div>
             </div>
 
             {status.config && (
               <div className="space-y-2 text-xs text-arsist-muted">
                 <div className="flex items-center justify-between">
-                  <span>Transport:</span>
+                  <span>{t('mcp.transport')}</span>
                   <span className="text-arsist-text font-mono">{status.config.transport}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span>Tools:</span>
+                  <span>{t('mcp.tools')}</span>
                   <span className="text-arsist-text font-mono">{status.config.tools}</span>
                 </div>
                 <div className="flex items-start justify-between gap-2">
-                  <span className="flex-shrink-0">Project:</span>
+                  <span className="flex-shrink-0">{t('mcp.project')}</span>
                   <span className="text-arsist-text font-mono text-right break-all">{status.config.projectPath}</span>
                 </div>
               </div>
@@ -164,7 +166,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
                   className="btn btn-success text-xs px-3 py-1.5 flex items-center gap-1.5"
                 >
                   <Power size={14} />
-                  Start
+                  {t('mcp.start')}
                 </button>
               ) : (
                 <button
@@ -173,7 +175,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
                   className="btn btn-danger text-xs px-3 py-1.5 flex items-center gap-1.5"
                 >
                   <Power size={14} />
-                  Stop
+                  {t('mcp.stop')}
                 </button>
               )}
             </div>
@@ -193,13 +195,13 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
           {status.running && clientConfig?.config && (
             <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-arsist-text">Client Configuration</h3>
+                <h3 className="text-sm font-medium text-arsist-text">{t('mcp.clientConfiguration')}</h3>
                 <button
                   onClick={handleCopyConfig}
                   className="text-xs px-2 py-1 bg-arsist-hover hover:bg-arsist-active rounded transition-colors flex items-center gap-1.5 text-arsist-muted hover:text-arsist-text"
                 >
                   {copied ? <CheckCircle2 size={12} className="text-green-400" /> : <Copy size={12} />}
-                  {copied ? 'Copied' : 'Copy'}
+                  {copied ? t('mcp.copied') : t('common.copy')}
                 </button>
               </div>
 
@@ -214,7 +216,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
           {/* Tools List */}
           {status.running && (
             <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
-              <h3 className="text-sm font-medium text-arsist-text mb-3">Available Tools (17)</h3>
+              <h3 className="text-sm font-medium text-arsist-text mb-3">{t('mcp.availableTools', { count: 17 })}</h3>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {[
                   'ir_get_project',
@@ -245,10 +247,9 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
 
           {/* Info */}
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
-            <p className="font-medium mb-1">ℹ️ About MCP Server</p>
+            <p className="font-medium mb-1">{t('mcp.aboutTitle')}</p>
             <p className="text-blue-200/80">
-              Model Context Protocol server that allows AI agents (such as Claude Desktop) to directly edit the project IR.
-              After starting, add the above configuration to Claude Desktop's settings file to enable model placement, UI construction, and DataFlow editing while conversing with AI.
+              {t('mcp.aboutBody')}
             </p>
           </div>
         </div>
@@ -256,7 +257,7 @@ export function MCPDialog({ onClose }: MCPDialogProps) {
         {/* Footer */}
         <div className="border-t border-arsist-border px-4 py-3 flex justify-end">
           <button onClick={onClose} className="btn btn-secondary text-xs px-4 py-1.5">
-            Close
+            {t('common.close')}
           </button>
         </div>
       </div>

@@ -15,7 +15,7 @@
     "electron:dev": "concurrently \"npm run dev:main\" \"wait-on dist/main/main/main.js && electron .\" \"npm run dev:renderer\"",
     "package": "npm run build && electron-builder",
     "lint": "eslint src --ext .ts,.tsx",
-    "test": "vitest",
+    "test": "vitest --config vitest.config.ts",
     "xreal:diag": "node scripts/xreal-diag.js",
     "mcp:ir": "node scripts/mcp-ir-server.mjs",
     "verify:ir": "node scripts/verify-ir-consistency.js",

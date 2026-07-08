@@ -58,6 +58,9 @@ declare global {
         get: (key: string) => Promise<any>;
         set: (key: string, value: any) => Promise<any>;
       };
+      app?: {
+        setLanguage: (lang: 'en' | 'ja') => void;
+      };
       mcp?: {
         start: (projectPath: string) => Promise<{ success: boolean; message?: string; config?: any }>;
         stop: () => Promise<{ success: boolean; message: string }>;

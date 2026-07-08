@@ -93,6 +93,11 @@ const electronAPI = {
     close: () => ipcRenderer.invoke('window:close'),
   },
 
+  // アプリ全般（UI言語などメインプロセスと同期する設定）
+  app: {
+    setLanguage: (lang: 'en' | 'ja') => ipcRenderer.invoke('app:set-language', lang),
+  },
+
   // メニューイベント
   menu: {
     onNewProject: (callback: () => void) => {

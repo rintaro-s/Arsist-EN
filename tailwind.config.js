@@ -1,4 +1,11 @@
 /** @type {import('tailwindcss').Config} */
+
+// Colors reference CSS variables (RGB channel triples) defined in globals.css so
+// the same utility classes work in both the dark and light themes. The
+// `<alpha-value>` placeholder keeps Tailwind opacity modifiers (e.g. bg-arsist-accent/20)
+// working. Switch themes by setting `data-theme="light"` on <html>.
+const v = (name) => `rgb(var(${name}) / <alpha-value>)`;
+
 export default {
   content: [
     "./src/renderer/**/*.{js,ts,jsx,tsx}",
@@ -6,20 +13,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 新しいダークグレーベースのカラーテーマ（見やすさ重視）
         arsist: {
-          bg: '#1e1e1e',           // VSCode風のダークグレー
-          surface: '#252526',      // サーフェス
-          border: '#3c3c3c',       // ボーダー
-          hover: '#2d2d30',        // ホバー
-          active: '#37373d',       // アクティブ
-          primary: '#569cd6',      // プライマリ（落ち着いた青）
-          accent: '#4ec9b0',       // アクセント（シアン/ミント）
-          text: '#d4d4d4',         // メインテキスト
-          muted: '#808080',        // サブテキスト
-          success: '#4ec9b0',      // 成功
-          warning: '#dcdcaa',      // 警告（黄色）
-          error: '#f14c4c',        // エラー
+          bg: v('--arsist-bg'),
+          surface: v('--arsist-surface'),
+          border: v('--arsist-border'),
+          hover: v('--arsist-hover'),
+          active: v('--arsist-active'),
+          primary: v('--arsist-primary'),
+          accent: v('--arsist-accent'),
+          text: v('--arsist-text'),
+          muted: v('--arsist-muted'),
+          success: v('--arsist-success'),
+          warning: v('--arsist-warning'),
+          error: v('--arsist-error'),
         },
       },
       fontFamily: {
