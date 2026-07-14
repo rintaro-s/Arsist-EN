@@ -50,6 +50,72 @@ const child_process_1 = require("child_process");
 const UnityBuilder_1 = require("./unity/UnityBuilder");
 const ProjectManager_1 = require("./project/ProjectManager");
 const AdapterManager_1 = require("./adapters/AdapterManager");
+// どんな環境でも起動できるよう、Linux では安全な環境変数を最初に設定
+// （wrapper 経由で起動しない場合の保険も兼ねる）
+function ensureLinuxSafeEnvironment() {
+    if (process.platform !== 'linux')
+        return;
+    try {
+        const home = os.homedir();
+        // Fontconfig 警告を抑えるための安全な設定ディレクトリ
+        const safeConfigDir = path.join(home, '.config', 'Arsist', 'fontconfig');
+        fs.ensureDirSync(safeConfigDir);
+        const safeFontsConf = path.join(safeConfigDir, 'fonts.conf');
+        if (!fs.pathExistsSync(safeFontsConf)) {
+            fs.writeFileSync(safeFontsConf, `<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>/usr/share/fonts</dir>
+  <dir>/usr/local/share/fonts</dir>
+  <dir>~/.fonts</dir>
+  <dir>~/.local/share/fonts</dir>
+  <cachedir>~/.cache/fontconfig</cachedir>
+  <config>
+    <rescan>0</rescan>
+  </config>
+</fontconfig>
+`, 'utf-8');
+        }
+        if (!process.env.FONTCONFIG_PATH) {
+            process.env.FONTCONFIG_PATH = safeConfigDir;
+        }
+        // GTK settings.ini が空/壊れている場合は修復
+        const gtkDir = path.join(home, '.config', 'gtk-3.0');
+        const settingsPath = path.join(gtkDir, 'settings.ini');
+        if (fs.pathExistsSync(settingsPath)) {
+            try {
+                const content = fs.readFileSync(settingsPath, 'utf-8').trim();
+                if (content && !content.startsWith('[')) {
+                    const backup = `${settingsPath}.bak-${Date.now()}`;
+                    fs.renameSync(settingsPath, backup);
+                    fs.writeFileSync(settingsPath, '[Settings]\n', 'utf-8');
+                }
+            }
+            catch {
+                // ignore
+            }
+        }
+        else {
+            fs.ensureDirSync(gtkDir);
+            fs.writeFileSync(settingsPath, '[Settings]\n', 'utf-8');
+        }
+    }
+    catch {
+        // ignore
+    }
+}
+ensureLinuxSafeEnvironment();
+// ELECTRON_RUN_AS_NODE などが設定されていると electron 組み込みモジュールが使えない。
+// その場合は明快なエラーメッセージを出して終了する。
+if (!electron_1.app || !electron_1.protocol || !electron_1.BrowserWindow) {
+    // eslint-disable-next-line no-console
+    console.error('[Arsist] Electron built-in module is not available.\n' +
+        'If ELECTRON_RUN_AS_NODE is set, please unset it before launching:\n' +
+        '  unset ELECTRON_RUN_AS_NODE\n' +
+        'Or use the safe wrapper:\n' +
+        '  npm run start');
+    process.exit(1);
+}
 // fetch() でローカルアセットを読めるようにする（dev/prod共通）
 electron_1.protocol.registerSchemesAsPrivileged([
     {
@@ -212,21 +278,30 @@ async function findUnityCandidates() {
     return { candidates: arr.map((d) => d.path), details: arr };
 }
 function createWindow() {
-    mainWindow = new electron_1.BrowserWindow({
-        width: 1600,
-        height: 900,
-        minWidth: 1200,
-        minHeight: 700,
-        title: 'Arsist Engine',
-        backgroundColor: '#1a1a2e',
-        webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            preload: path.join(__dirname, 'preload.js'),
-        },
-        frame: false,
-        titleBarStyle: 'hidden',
-    });
+    try {
+        mainWindow = new electron_1.BrowserWindow({
+            width: 1600,
+            height: 900,
+            minWidth: 1200,
+            minHeight: 700,
+            title: 'Arsist Engine',
+            backgroundColor: '#1a1a2e',
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                preload: path.join(__dirname, 'preload.js'),
+            },
+            frame: false,
+            titleBarStyle: 'hidden',
+        });
+    }
+    catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[createWindow] Failed to create BrowserWindow:', error);
+        electron_1.dialog.showErrorBox('Arsist Engine - Startup Error', 'Failed to create the main window. This is often caused by incompatible GPU drivers or display server settings.\n\nTry running with:\n  ELECTRON_OZONE_PLATFORM_HINT=x11 npm start');
+        electron_1.app.quit();
+        return;
+    }
     // 開発モードかプロダクションかで読み込みURLを変更
     if (isDev) {
         mainWindow.loadURL('http://localhost:5173');
@@ -932,6 +1007,11 @@ electron_1.app.whenReady().then(() => {
             createWindow();
         }
     });
+}).catch((error) => {
+    // eslint-disable-next-line no-console
+    console.error('[app.whenReady] Failed to initialize application:', error);
+    electron_1.dialog.showErrorBox('Arsist Engine - Startup Error', `Failed to initialize the application.\n\n${error.message}\n\nTry running with:\n  ELECTRON_OZONE_PLATFORM_HINT=x11 npm start`);
+    electron_1.app.quit();
 });
 electron_1.app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {

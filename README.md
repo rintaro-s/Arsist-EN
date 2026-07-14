@@ -426,6 +426,8 @@ See `docs/scripting-api.md` for complete documentation.
 - Check Node.js version: `node --version` (should be 18+)
 - Delete `node_modules/` and run `npm install` again
 - Check console for errors
+- If you see `Electron built-in module is not available`, your environment may have `ELECTRON_RUN_AS_NODE` set. Use the safe wrapper: `npm run start`
+- If the window fails to open due to GPU/sandbox issues on Linux, try: `ARSIST_SAFE_MODE=1 npm start`
 
 ### Build Fails with "SDK Not Found"
 - Verify SDK directory structure matches [SDK Setup](#sdk-setup)

@@ -9,10 +9,15 @@ let restartTimer = null;
 
 function start() {
   const env = { ...process.env, NODE_ENV: 'development' };
-  child = spawn('npx', ['electron', '.'], {
+  // Electron 組み込みモジュールを正しく読み込むため
+  delete env.ELECTRON_RUN_AS_NODE;
+  const electronBin = process.platform === 'win32'
+    ? path.join(process.cwd(), 'node_modules', '.bin', 'electron.cmd')
+    : path.join(process.cwd(), 'node_modules', '.bin', 'electron');
+  child = spawn(electronBin, ['.'], {
     stdio: 'inherit',
     env,
-    shell: true,
+    shell: false,
   });
 
   child.on('exit', (code, signal) => {
