@@ -82,6 +82,12 @@ const store = new electron_store_1.default({
     },
 });
 let mainWindow = null;
+// 起動安定化: GPU初期化失敗などでウィンドウが描画されない環境向けの
+// 「ソフトウェアレンダリングで再起動」を1回だけ試みるためのフラグ。
+// 環境変数で無限ループを防ぐ（再起動時に ARSIST_SOFTWARE_RENDER=1 を渡す）。
+const softwareRenderRequested = process.env.ARSIST_SOFTWARE_RENDER === '1' ||
+    process.env.ARSIST_DISABLE_GPU === '1';
+let paintFallbackTried = softwareRenderRequested;
 let projectManager = null;
 let unityBuilder = null;
 let adapterManager = null;
@@ -137,6 +143,32 @@ function mt(key) {
     const entry = MENU_STRINGS[key];
     const lang = getAppLang();
     return entry ? (entry[lang] ?? entry.en) : key;
+}
+// 起動安定化: GPUが壊れている/使えない環境（ドライバ不整合・ヘッドレス・
+// リモート・VM等）ではハードウェアアクセラレーションを無効化して、
+// 必ずソフトウェア合成でウィンドウが描画されるようにする。
+// 既定はGPU有効（3Dビューの性能のため）だが、
+//   - 環境変数 ARSIST_DISABLE_GPU=1 / ARSIST_SOFTWARE_RENDER=1
+//   - もしくは初回描画に失敗した際の自動再起動（後述のwatchdog）
+// でソフトウェアレンダリングに切り替わる。
+if (softwareRenderRequested) {
+    try {
+        electron_1.app.disableHardwareAcceleration();
+    }
+    catch {
+        // ignore
+    }
+    try {
+        electron_1.app.commandLine.appendSwitch('disable-gpu');
+        electron_1.app.commandLine.appendSwitch('disable-gpu-compositing');
+        // GPUが無い環境でもWebGL(three.js 3Dビュー)が動くようソフトGLを許可
+        electron_1.app.commandLine.appendSwitch('use-gl', 'angle');
+        electron_1.app.commandLine.appendSwitch('use-angle', 'swiftshader');
+        electron_1.app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+    }
+    catch {
+        // ignore
+    }
 }
 // Linux向け：Vulkan周りの警告/不安定さを避ける（WebGLは通常OpenGL経由）
 if (process.platform === 'linux') {
@@ -237,6 +269,48 @@ async function findUnityCandidates() {
     arr.sort((a, b) => compareUnityVersionsDesc(a.version, b.version));
     return { candidates: arr.map((d) => d.path), details: arr };
 }
+// ソフトウェアレンダリングで一度だけ再起動する（GPU初期化失敗時のフォールバック）。
+function relaunchWithSoftwareRendering(reason) {
+    if (paintFallbackTried)
+        return;
+    paintFallbackTried = true;
+    // eslint-disable-next-line no-console
+    console.warn(`[arsist] GPU描画に失敗した可能性 (${reason}) → ソフトウェアレンダリングで再起動します`);
+    // relaunchされる子プロセスは現在のenvを引き継ぐ
+    process.env.ARSIST_SOFTWARE_RENDER = '1';
+    try {
+        electron_1.app.relaunch();
+    }
+    catch {
+        // ignore
+    }
+    electron_1.app.exit(0);
+}
+// 画面が真っ白/真っ黒になるのを防ぐため、読み込み失敗時は必ず可視のエラー画面を出す。
+function showLoadErrorPage(win, message) {
+    const safe = message.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    html,body{height:100%;margin:0;background:#1e1e1e;color:#d4d4d4;
+      font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center}
+    .box{max-width:640px;padding:32px;text-align:center;line-height:1.6}
+    h1{font-size:18px;margin:0 0 12px}
+    code{display:block;margin-top:16px;padding:12px;background:#2a2a2a;border-radius:6px;
+      font-size:12px;white-space:pre-wrap;text-align:left;color:#ff9e9e}
+  </style></head><body><div class="box">
+    <h1>Arsist Engine を表示できませんでした / Failed to render UI</h1>
+    <div>アプリの読み込みに失敗しました。下記のエラーを確認してください。<br>
+    The application failed to load. See the error below.</div>
+    <code>${safe}</code>
+  </div></body></html>`;
+    try {
+        win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+        if (!win.isVisible())
+            win.show();
+    }
+    catch {
+        // ignore
+    }
+}
 function createWindow() {
     mainWindow = new electron_1.BrowserWindow({
         width: 1600,
@@ -245,6 +319,8 @@ function createWindow() {
         minHeight: 700,
         title: 'Arsist Engine',
         backgroundColor: '#1a1a2e',
+        // 描画準備が整ってから表示（真っ白なフレームのちらつき/ブランク対策）
+        show: false,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -253,16 +329,72 @@ function createWindow() {
         frame: false,
         titleBarStyle: 'hidden',
     });
+    const win = mainWindow;
+    let shown = false;
+    const reveal = () => {
+        if (shown || win.isDestroyed())
+            return;
+        shown = true;
+        if (paintWatchdog) {
+            clearTimeout(paintWatchdog);
+            paintWatchdog = null;
+        }
+        if (!win.isVisible())
+            win.show();
+    };
+    // 通常はこれで表示される
+    win.once('ready-to-show', reveal);
+    // 実際に描画されたら確実に表示（ready-to-showが来ない環境の保険）
+    win.webContents.once('did-finish-load', reveal);
+    // Watchdog: 一定時間内に描画されない場合、GPUが原因の可能性が高い。
+    //   - まだソフトレンダリングを試していなければ、無効化して自動再起動。
+    //   - 既に試済みなら、とにかくウィンドウを表示する（永久ブランク回避）。
+    let paintWatchdog = setTimeout(() => {
+        if (shown || win.isDestroyed())
+            return;
+        if (!paintFallbackTried) {
+            relaunchWithSoftwareRendering('first-paint-timeout');
+        }
+        else {
+            reveal();
+        }
+    }, 10000);
+    // 描画/GPUプロセスが落ちた場合のフォールバック
+    win.webContents.on('render-process-gone', (_e, details) => {
+        // eslint-disable-next-line no-console
+        console.error('[arsist] render-process-gone:', details.reason);
+        if (!paintFallbackTried && details.reason !== 'clean-exit') {
+            relaunchWithSoftwareRendering(`render-process-gone:${details.reason}`);
+        }
+    });
+    // 読み込み失敗（アセット欠落・devサーバ未起動など）→ 可視のエラー画面
+    win.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL) => {
+        // -3 (ERR_ABORTED) はリダイレクト等で発生し得るので無視
+        if (errorCode === -3)
+            return;
+        // eslint-disable-next-line no-console
+        console.error(`[arsist] did-fail-load ${errorCode} ${errorDesc} @ ${validatedURL}`);
+        showLoadErrorPage(win, `${errorDesc} (${errorCode})\n${validatedURL}`);
+    });
     // 開発モードかプロダクションかで読み込みURLを変更
     if (isDev) {
-        mainWindow.loadURL('http://localhost:5173');
-        mainWindow.webContents.openDevTools();
+        win.loadURL('http://localhost:5173').catch((err) => {
+            showLoadErrorPage(win, `dev server (http://localhost:5173) に接続できません。\n${String(err)}`);
+        });
+        win.webContents.openDevTools();
     }
     else {
         // __dirname points to dist/main/main in production; renderer lives at dist/renderer
-        mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
+        const indexPath = path.join(__dirname, '../../renderer/index.html');
+        win.loadFile(indexPath).catch((err) => {
+            showLoadErrorPage(win, `UI (${indexPath}) を読み込めません。\nnpm run build を実行してください。\n${String(err)}`);
+        });
     }
-    mainWindow.on('closed', () => {
+    win.on('closed', () => {
+        if (paintWatchdog) {
+            clearTimeout(paintWatchdog);
+            paintWatchdog = null;
+        }
         mainWindow = null;
     });
     // メニューバー設定
