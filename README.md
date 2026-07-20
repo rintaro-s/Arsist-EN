@@ -2,6 +2,10 @@
 
 Arsist is a cross-platform development engine for AR glasses. Built with Electron and React, the editor provides integrated editing of scenes, UI, and logic, generating device-ready applications through Unity batch builds.
 
+https://github.com/rintaro-s/Arsist
+↑こいつの英語verとして作成しましたが、こっち(EN)のほうが独り歩きして更新が速いです。
+コミットや試行錯誤はオリジナルの方で感じれます
+
 ## Table of Contents
 
 - [Requirements](#requirements)
