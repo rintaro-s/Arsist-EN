@@ -36,8 +36,11 @@ namespace Arsist.Adapters.XrealOne
             Debug.Log($"[Arsist-{ADAPTER_ID}] Applying all patches...");
             
             ApplyPlayerSettings();
-            ConfigureXRLoader();
+            // Validation の FixAll は XR Loader 設定より“前”に流す。
+            // 後に流すと、他プラグイン(OpenXR等)の自動修正が XREAL 以外のLoaderを
+            // 復活させ、ConfigureXRLoader で最小構成にしたはずの設定を上書きしうる。
             RunXRProjectValidationFixAllBestEffort();
+            ConfigureXRLoader();
             ConfigureXRInteraction();
             ApplyQualitySettings();
             ApplyTransparentCameraSettingsToBuildScenes();
@@ -80,33 +83,13 @@ namespace Arsist.Adapters.XrealOne
                     }
                 }
 
-                // Last resort: scan assemblies for a static parameterless FixAll() method on a type name that contains "ProjectValidation".
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    Type[] types;
-                    try { types = asm.GetTypes(); }
-                    catch { continue; }
-
-                    foreach (var t in types)
-                    {
-                        if (t == null) continue;
-                        var name = t.FullName ?? t.Name;
-                        if (string.IsNullOrWhiteSpace(name) || name.IndexOf("ProjectValidation", StringComparison.OrdinalIgnoreCase) < 0)
-                        {
-                            continue;
-                        }
-
-                        var mi = t.GetMethod("FixAll", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                        if (mi != null && mi.GetParameters().Length == 0)
-                        {
-                            mi.Invoke(null, null);
-                            Debug.Log($"[Arsist-{ADAPTER_ID}] XR Project Validation FixAll invoked via scan: {name}.{mi.Name}()");
-                            return;
-                        }
-                    }
-                }
-
-                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] XR Project Validation FixAll API not found. Manual settings are applied, but Unity's validation auto-fix could not be invoked programmatically in this editor/version.");
+                // 以前はここで全アセンブリを走査し、型名に "ProjectValidation" を含む型の
+                // static FixAll() を無差別に呼んでいたが、これは OpenXR / AR Foundation / Meta の
+                // バリデータまで巻き込んで実行してしまい、XREAL 向けに整えた設定
+                // （最小構成のXR Loader 等）を壊しうるため廃止した。
+                // XREAL のプロジェクト要件（minSdk29 / IL2CPP / ARM64 / GLES3）は
+                // ApplyPlayerSettings() で明示的に満たしているので、FixAll は必須ではない。
+                Debug.Log($"[Arsist-{ADAPTER_ID}] XR Project Validation FixAll API not found in XR Management; relying on ApplyPlayerSettings() (this is expected).");
             }
             catch (Exception e)
             {
@@ -308,7 +291,9 @@ namespace Arsist.Adapters.XrealOne
 
             PlayerSettings.colorSpace = ColorSpace.Linear;
             PlayerSettings.MTRendering = true; // マルチスレッドレンダリング
-            PlayerSettings.graphicsJobs = true;
+            // Graphics Jobs は Vulkan/D3D12/Metal 向けの機能で OpenGLES では使えない。
+            // XREAL は GLES3 固定なので有効にしても効果が無く、環境によっては不安定要因になる。
+            PlayerSettings.graphicsJobs = false;
             PlayerSettings.gpuSkinning = true;
 
             // OpenGLES3のみ（Vulkanは透過モードで不具合の原因になりやすい）
@@ -481,9 +466,14 @@ namespace Arsist.Adapters.XrealOne
                     }
                 }
 
-                // 既に登録済みならOK
+                // 既に登録済みでも、フィールドの設定は毎回やり直す。
+                // (作業用Unityプロジェクトを再利用するようになったため、
+                //  「登録済みだから何もしない」と SupportMultiResume 等が前回のまま残ってしまう)
                 if (EditorBuildSettings.TryGetConfigObject(key, out UnityEngine.Object existing) && existing != null)
                 {
+                    ConfigureXrealSettingsFields(existing);
+                    EditorUtility.SetDirty(existing);
+                    AssetDatabase.SaveAssets();
                     return;
                 }
 
@@ -573,11 +563,39 @@ namespace Arsist.Adapters.XrealOne
                 }
                 SetEnumFieldByName(settingsAsset, "InitialTrackingType", xrealTracking);
 
-                Debug.Log($"[Arsist-{ADAPTER_ID}] XREALSettings configured (Stereo=SinglePassInstanced, Tracking={xrealTracking} from '{trackingMode}')");
+                // SupportMultiResume は SDK 既定が true。true のままだと
+                // XREALManifestProvider が manifest/application/activity/intent-filter を
+                // 丸ごと削除するため、Adapters/XREAL_One/AndroidManifest.xml に書いた
+                // MAIN/LAUNCHER も消えて「インストールしてもアイコンが出ない／起動できない」
+                // 状態になる。Arsist は自前でランチャー用 intent-filter を持つので false にする。
+                var multiResumeApplied = SetBoolFieldByName(settingsAsset, "SupportMultiResume", false);
+
+                Debug.Log($"[Arsist-{ADAPTER_ID}] XREALSettings configured (Stereo=SinglePassInstanced, Tracking={xrealTracking} from '{trackingMode}', SupportMultiResume=false applied={multiResumeApplied})");
             }
             catch (Exception e)
             {
                 Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to configure XREALSettings fields (best-effort): {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// public bool フィールドを best-effort に設定する。
+        /// フィールドが存在しない SDK バージョンでは静かにスキップし、設定できたかを返す。
+        /// </summary>
+        private static bool SetBoolFieldByName(object target, string fieldName, bool value)
+        {
+            try
+            {
+                var fi = target.GetType().GetField(fieldName,
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (fi == null || fi.FieldType != typeof(bool)) return false;
+                fi.SetValue(target, value);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] SetBoolFieldByName({fieldName}={value}) failed: {e.Message}");
+                return false;
             }
         }
 
@@ -966,7 +984,11 @@ namespace Arsist.Adapters.XrealOne
             
             // VSync（AR用に無効化、フレームレート制御はSDKに任せる）
             QualitySettings.vSyncCount = 0;
-            Application.targetFrameRate = 60;
+            // NOTE: Application.targetFrameRate はランタイム設定なので、ここ（Editor/ビルド時）で
+            // 設定してもAPKには反映されない。実際の適用は Arsist.Runtime.XROriginSetup が行う。
+
+            // バッチモードでは変更が ProjectSettings に書き戻されないことがあるため明示的に保存する
+            AssetDatabase.SaveAssets();
 
             Debug.Log($"[Arsist-{ADAPTER_ID}] Quality Settings applied");
         }

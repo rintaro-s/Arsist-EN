@@ -10,6 +10,7 @@ import { app } from 'electron';
 import * as os from 'os';
 import * as https from 'https';
 import * as http from 'http';
+import * as crypto from 'crypto';
 import { liveContext, getUnityLicenseCandidates } from '../platform/paths';
 
 export interface UnityBuildConfig {
@@ -34,6 +35,37 @@ export interface UnityBuildConfig {
 
   /** スクリプトデータ (scripts.json 相当の内容) */
   scriptsData?: object;
+
+  /**
+   * true の場合、作業用Unityプロジェクト（Library/を含む）を捨ててゼロから作り直す。
+   * 通常は false（差分ビルド）でよい。キャッシュ由来の不整合を疑うときの逃げ道。
+   */
+  cleanBuild?: boolean;
+}
+
+/** 差分同期時に「不要になったファイル」をどこまで消すか。 */
+type PruneMode =
+  /** 消さない */
+  | 'none'
+  /** src に無いものは全部消す（srcが唯一の正） */
+  | 'mirror'
+  /** 前回同期したファイルのうち src から消えたものだけ消す（生成物は残す） */
+  | 'tracked';
+
+/** relPath -> "size:mtimeMs" の対応表。差分判定に使う。 */
+type FileStampMap = Record<string, string>;
+
+/** 作業ディレクトリのキャッシュ状態を記録するスタンプ。 */
+interface WorkspaceStamp {
+  version: number;
+  unityPath: string;
+  /**
+   * このワークスペースを組んだときの対象デバイス。
+   * デバイスが変わると Packages/ に別デバイスのSDKが残ったままになるため、作り直す。
+   */
+  targetDevice: string;
+  /** ProjectSettings/ と Packages/manifest.json のフィンガープリント。変わったら作り直す。 */
+  settingsFingerprint: string;
 }
 
 export interface BuildProgress {
@@ -50,6 +82,12 @@ export class UnityBuilder extends EventEmitter {
   private buildInProgress = false;
   private lastLogFile: string | null = null;
   private preparedAndroidSdkPath: string | null = null;
+  /** validate() が取得した Unity バージョン文字列（例 "6000.0.40f1"）。パッケージ版数の分岐に使う。 */
+  private detectedUnityVersion: string | null = null;
+
+  /** 作業ディレクトリ再利用の互換バージョン。準備処理を変えたら上げる（＝全ユーザーが1回だけ作り直す）。 */
+  private static readonly WORKSPACE_CACHE_VERSION = 1;
+  private static readonly WORKSPACE_STAMP_FILE = '.arsist-workspace.json';
 
   private isLicensingNoise(text?: string): boolean {
     const s = text || '';
@@ -188,7 +226,8 @@ export class UnityBuilder extends EventEmitter {
 
       // バージョン取得
       const version = await this.getUnityVersion();
-      
+      this.detectedUnityVersion = this.normalizeUnityVersion(version) || version;
+
       // UnityBackendプロジェクトの存在確認
       const resolved = this.resolveUnityTemplatePath();
       if (!resolved.path) {
@@ -384,7 +423,15 @@ export class UnityBuilder extends EventEmitter {
 
       await fs.ensureDir(config.outputPath);
       if (config.cleanOutput) {
-        await fs.emptyDir(config.outputPath);
+        // 作業用Unityプロジェクトは outputPath の下にあるため、巻き添えで消さない。
+        // （消すと Library/ が飛んで毎回フルビルドになる。クリーンにしたい場合は cleanBuild を使う）
+        const workspaceName = path.resolve(config.projectPath).startsWith(path.resolve(config.outputPath))
+          ? path.basename(path.resolve(config.projectPath))
+          : null;
+        for (const entry of await fs.readdir(config.outputPath)) {
+          if (workspaceName && entry === workspaceName) continue;
+          await fs.remove(path.join(config.outputPath, entry));
+        }
       }
 
       // ULF(.ulf)が指定されている場合、Unityは「ライセンス取り込みだけして終了」することがあるため
@@ -405,7 +452,10 @@ export class UnityBuilder extends EventEmitter {
 
       // Phase 1: Unityワークディレクトリ準備
       this.emitProgress('prepare-unity', 5, 'Unityプロジェクトを準備中...');
-      const unityProjectPath = await this.prepareUnityProject(config.projectPath);
+      const unityProjectPath = await this.prepareUnityProject(config.projectPath, {
+        cleanBuild: config.cleanBuild,
+        targetDevice: config.targetDevice,
+      });
 
       // Phase 1.5: Jint/Esprima DLL を確認/ダウンロード
       this.emitProgress('prepare-jint', 8, 'Jintスクリプトエンジンを準備中...');
@@ -443,10 +493,15 @@ export class UnityBuilder extends EventEmitter {
 
         this.emit('log', `[Arsist] Found UniVRM package: ${univrmPackage}`);
         
-        // UniVRMパッケージをインポート
+        // UniVRMパッケージをインポート（同じパッケージなら2回目以降はスキップされる）
         const importLog = path.join(config.outputPath, 'unity_univrm_import.log');
-        const importResult = await this.importUnityPackage(unityProjectPath, univrmPackage, importLog);
-        
+        const importResult = await this.ensureUnityPackageImported(
+          unityProjectPath,
+          univrmPackage,
+          '.arsist-univrm.json',
+          importLog,
+        );
+
         if (!importResult.success) {
           this.emit('log', `[Arsist] UniVRM package import FAILED: ${importResult.error}`);
           this.emit('log', `[Arsist] Check log file: ${importLog}`);
@@ -727,25 +782,314 @@ export class UnityBuilder extends EventEmitter {
     return 0;
   }
 
-  private async prepareUnityProject(workingDir: string): Promise<string> {
-    await fs.ensureDir(workingDir);
-    await fs.emptyDir(workingDir);
-    await fs.copy(this.unityTemplatePath, workingDir);
-    
-    // Ensure TextMeshPro package is in manifest
-    const manifestPath = path.join(workingDir, 'Packages', 'manifest.json');
-    if (await fs.pathExists(manifestPath)) {
-      const manifest = await fs.readJSON(manifestPath);
-      const dependencies = (manifest.dependencies ?? {}) as Record<string, string>;
-      if (!dependencies['com.unity.textmeshpro']) {
-        dependencies['com.unity.textmeshpro'] = '3.0.9';
-        manifest.dependencies = dependencies;
-        await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
-        this.emit('log', '[Arsist] Added TextMeshPro package to Unity manifest');
+  // ----------------------------------------------------------------
+  // 差分同期ユーティリティ
+  //
+  // 以前は毎ビルドで作業ディレクトリを emptyDir + フルコピーしていたため、
+  // Unity から見ると常に「新規プロジェクト」= 全アセット再インポート＋全C#再コンパイル＋
+  // IL2CPPフルビルド＋Gradleフルビルドになっていた。ここでは mtime/size 比較で
+  // 変わったファイルだけを touch し、Library/ を温存することでインクリメンタルにする。
+  // ----------------------------------------------------------------
+
+  /** Unity が読み飛ばすディレクトリ（末尾 `~`）と VCS メタデータはコピーしない。 */
+  private isSyncExcludedDirName(name: string): boolean {
+    return name.endsWith('~') || name === '.git' || name === '.svn' || name === 'node_modules';
+  }
+
+  private stampOf(stat: fs.Stats): string {
+    // mtimeMs はファイルシステムによって小数以下の精度が違うため ms 単位に丸める
+    return `${stat.size}:${Math.floor(stat.mtimeMs)}`;
+  }
+
+  /** root 以下のファイルを再帰列挙し、相対パス -> スタンプ の対応表を返す。 */
+  private async collectFileStamps(root: string, relBase = ''): Promise<FileStampMap> {
+    const result: FileStampMap = {};
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.readdir(path.join(root, relBase), { withFileTypes: true });
+    } catch {
+      return result;
+    }
+
+    for (const entry of entries) {
+      const rel = relBase ? path.join(relBase, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        if (this.isSyncExcludedDirName(entry.name)) continue;
+        Object.assign(result, await this.collectFileStamps(root, rel));
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        result[rel] = this.stampOf(await fs.stat(path.join(root, rel)));
+      } catch {
+        // 読めないファイルは無視（同期対象外）
       }
     }
-    
+
+    return result;
+  }
+
+  /**
+   * 同期先に置く「前回コピーしたソース側のスタンプ」記録。
+   * `.` 始まりのファイルは Unity のアセットパイプラインが無視するので、
+   * Assets/ や Packages/ の直下に置いても取り込まれない。
+   */
+  private static readonly SYNC_MANIFEST_FILE = '.arsist-sync.json';
+
+  private async readSyncManifest(dest: string): Promise<FileStampMap> {
+    try {
+      const data = await fs.readJSON(path.join(dest, UnityBuilder.SYNC_MANIFEST_FILE));
+      return (data && typeof data === 'object' ? data : {}) as FileStampMap;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * src -> dest を差分同期する。
+   *
+   * 変更判定は「ソース側スタンプ」と「前回同期時に記録したソース側スタンプ」の比較で行う。
+   * コピー先の mtime を見ないのは、`preserveTimestamps` がサブミリ秒を丸めてしまい
+   * 毎回わずかにズレて“変更あり”と誤判定されるため。
+   *
+   * Unity が生成した `.meta` は、対応するアセットが残っている限り prune しない
+   * （消すと GUID が振り直され、結局フルインポートになる）。
+   */
+  private async syncDirectory(
+    src: string,
+    dest: string,
+    options?: { prune?: PruneMode },
+  ): Promise<{ stamps: FileStampMap; copied: number; removed: number }> {
+    const prune: PruneMode = options?.prune ?? 'none';
+    const stamps = await this.collectFileStamps(src);
+    await fs.ensureDir(dest);
+    const recorded = await this.readSyncManifest(dest);
+
+    let copied = 0;
+    for (const [rel, stamp] of Object.entries(stamps)) {
+      const destPath = path.join(dest, rel);
+      if (recorded[rel] === stamp && await fs.pathExists(destPath)) continue;
+
+      await fs.ensureDir(path.dirname(destPath));
+      await fs.copy(path.join(src, rel), destPath, { overwrite: true, preserveTimestamps: true });
+      copied++;
+    }
+
+    let removed = 0;
+    if (prune !== 'none') {
+      const candidates = prune === 'tracked'
+        ? Object.keys(recorded)
+        : Object.keys(await this.collectFileStamps(dest));
+
+      for (const rel of candidates) {
+        if (stamps[rel] !== undefined) continue;
+        if (rel === UnityBuilder.SYNC_MANIFEST_FILE) continue;
+        // 対応するアセット（ファイル or フォルダ）が残っている .meta は Unity の資産なので残す
+        if (rel.endsWith('.meta')) {
+          const owner = rel.slice(0, -'.meta'.length);
+          if (stamps[owner] !== undefined) continue;
+          if (await fs.pathExists(path.join(src, owner))) continue;
+        }
+        const destPath = path.join(dest, rel);
+        if (!await fs.pathExists(destPath)) continue;
+        await fs.remove(destPath);
+        removed++;
+      }
+      await this.removeEmptyDirs(dest);
+    }
+
+    await fs.writeJSON(path.join(dest, UnityBuilder.SYNC_MANIFEST_FILE), stamps, { spaces: 0 });
+
+    return { stamps, copied, removed };
+  }
+
+  /**
+   * prune 後に残った空ディレクトリを掃除する。
+   * `isRoot` の呼び出し（同期先そのもの）は空でも削除しない。
+   */
+  private async removeEmptyDirs(root: string, isRoot = true): Promise<boolean> {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.readdir(root, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+
+    let remaining = 0;
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const emptied = await this.removeEmptyDirs(path.join(root, entry.name), false);
+        if (!emptied) remaining++;
+      } else {
+        remaining++;
+      }
+    }
+
+    if (remaining === 0 && !isRoot) {
+      try {
+        await fs.rmdir(root);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /** アセットフォルダと、それに対応する `.meta` をまとめて消す。 */
+  private async removeAssetFolder(assetsRoot: string, relative: string): Promise<void> {
+    const target = path.join(assetsRoot, relative);
+    await fs.remove(target).catch(() => {});
+    await fs.remove(`${target}.meta`).catch(() => {});
+  }
+
+  /** 作業ディレクトリを作り直すべきか判定するためのフィンガープリント。 */
+  private async computeSettingsFingerprint(templatePath: string): Promise<string> {
+    const parts: string[] = [];
+    const projectSettings = await this.collectFileStamps(path.join(templatePath, 'ProjectSettings'));
+    for (const rel of Object.keys(projectSettings).sort()) {
+      parts.push(`ProjectSettings/${rel}=${projectSettings[rel]}`);
+    }
+    try {
+      const manifestStat = await fs.stat(path.join(templatePath, 'Packages', 'manifest.json'));
+      parts.push(`Packages/manifest.json=${this.stampOf(manifestStat)}`);
+    } catch {
+      parts.push('Packages/manifest.json=missing');
+    }
+    return crypto.createHash('sha1').update(parts.join('\n')).digest('hex');
+  }
+
+  private async readWorkspaceStamp(workingDir: string): Promise<WorkspaceStamp | null> {
+    try {
+      const stamp = await fs.readJSON(path.join(workingDir, UnityBuilder.WORKSPACE_STAMP_FILE));
+      if (!stamp || typeof stamp !== 'object') return null;
+      return stamp as WorkspaceStamp;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 作業用Unityプロジェクトを用意する。
+   *
+   * 既存の作業ディレクトリが再利用可能なら Library/ を温存したまま差分更新する。
+   * 再利用できない（初回 / テンプレートの ProjectSettings が変わった / Unity を変えた /
+   * cleanBuild 指定）場合のみ、ゼロから作り直す。
+   */
+  private async prepareUnityProject(
+    workingDir: string,
+    options: { cleanBuild?: boolean; targetDevice: string },
+  ): Promise<string> {
+    await fs.ensureDir(workingDir);
+
+    const settingsFingerprint = await this.computeSettingsFingerprint(this.unityTemplatePath);
+    const previous = await this.readWorkspaceStamp(workingDir);
+    const hasLibrary = await fs.pathExists(path.join(workingDir, 'Library'));
+
+    const reuseBlocker = options.cleanBuild
+      ? 'clean build requested'
+      : !previous
+        ? 'no previous workspace stamp'
+        : previous.version !== UnityBuilder.WORKSPACE_CACHE_VERSION
+          ? 'workspace cache format changed'
+          : previous.unityPath !== this.unityPath
+            ? 'Unity editor changed'
+            : previous.targetDevice !== options.targetDevice
+              ? `target device changed (${previous.targetDevice} -> ${options.targetDevice})`
+              : previous.settingsFingerprint !== settingsFingerprint
+                ? 'template ProjectSettings/manifest changed'
+                : !hasLibrary
+                  ? 'Library/ missing'
+                  : null;
+
+    if (reuseBlocker) {
+      this.emit('log', `[Arsist] Preparing a fresh Unity workspace (${reuseBlocker})`);
+      await this.resetWorkspaceDir(workingDir);
+      await fs.copy(this.unityTemplatePath, workingDir, { preserveTimestamps: true });
+    }
+
+    // ProjectSettings / Packages はビルド中に書き換えられるため同期対象にしない。
+    // （テンプレートへ戻すと毎回 define などが変わって全C#再コンパイルになる）
+    // 新規作成直後でも呼ぶことで、同期記録（.arsist-sync.json）を残しておく。
+    const sync = await this.syncDirectory(
+      path.join(this.unityTemplatePath, 'Assets'),
+      path.join(workingDir, 'Assets'),
+      { prune: 'tracked' },
+    );
+
+    if (!reuseBlocker) {
+      this.emit(
+        'log',
+        `[Arsist] Reusing Unity workspace (Library kept): ${sync.copied} file(s) updated, ${sync.removed} removed`,
+      );
+    }
+
+    // 毎ビルド作り直す生成物。前回のプロジェクトの残骸が混ざるとビルド対象シーンや
+    // アダプターのEditorスクリプトが二重になるので、ここで必ず消す。
+    const assetsRoot = path.join(workingDir, 'Assets');
+    await this.removeAssetFolder(assetsRoot, 'Scenes');
+    await this.removeAssetFolder(assetsRoot, path.join('Arsist', 'Editor', 'Adapters'));
+
+    await this.ensureUnityUiPackages(workingDir);
+
+    await fs.writeJSON(
+      path.join(workingDir, UnityBuilder.WORKSPACE_STAMP_FILE),
+      {
+        version: UnityBuilder.WORKSPACE_CACHE_VERSION,
+        unityPath: this.unityPath,
+        targetDevice: options.targetDevice,
+        settingsFingerprint,
+      } satisfies WorkspaceStamp,
+      { spaces: 0 },
+    );
+
     return workingDir;
+  }
+
+  /** 作業ディレクトリの中身を消す（保持対象ディレクトリも含めて完全にクリーンにする）。 */
+  private async resetWorkspaceDir(workingDir: string): Promise<void> {
+    await fs.emptyDir(workingDir);
+  }
+
+  /**
+   * uGUI / TextMeshPro をUnityバージョンに合わせて manifest に足す。
+   * Unity 6 では TextMeshPro は com.unity.ugui 2.0.0 に統合済みで、
+   * 旧 com.unity.textmeshpro を要求すると解決に失敗する。
+   */
+  private async ensureUnityUiPackages(workingDir: string): Promise<void> {
+    const manifestPath = path.join(workingDir, 'Packages', 'manifest.json');
+    if (!await fs.pathExists(manifestPath)) return;
+
+    const manifest = await fs.readJSON(manifestPath);
+    const dependencies = (manifest.dependencies ?? {}) as Record<string, string>;
+    const before = JSON.stringify(dependencies);
+
+    this.applyUnityUiDependencies(dependencies);
+
+    if (JSON.stringify(dependencies) !== before) {
+      manifest.dependencies = dependencies;
+      await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
+      this.emit('log', `[Arsist] Unity UI packages ensured for ${this.getUnityMajorVersion() >= 6000 ? 'Unity 6+' : 'Unity 2022'}`);
+    }
+  }
+
+  /** 検出済み Unity バージョンのメジャー番号（例 6000 / 2022）。不明なら 0。 */
+  private getUnityMajorVersion(): number {
+    const match = (this.detectedUnityVersion || '').match(/(\d+)\.\d+\.\d+/);
+    return match ? parseInt(match[1], 10) : 0;
+  }
+
+  /** uGUI / TextMeshPro の依存をUnityバージョンに応じて設定する。 */
+  private applyUnityUiDependencies(deps: Record<string, string>): void {
+    if (this.getUnityMajorVersion() >= 6000) {
+      // Unity 6: TextMeshPro は com.unity.ugui 2.x に同梱。旧パッケージは入れてはいけない。
+      deps['com.unity.ugui'] = '2.0.0';
+      delete deps['com.unity.textmeshpro'];
+      return;
+    }
+
+    if (!deps['com.unity.ugui']) deps['com.unity.ugui'] = '1.0.0';
+    if (!deps['com.unity.textmeshpro']) deps['com.unity.textmeshpro'] = '3.0.6';
   }
 
   private projectUsesVRM(config: UnityBuildConfig): boolean {
@@ -782,12 +1126,47 @@ export class UnityBuilder extends EventEmitter {
     return null;
   }
 
+  /**
+   * .unitypackage を作業プロジェクトへ取り込む。既に同じパッケージを取り込み済みなら何もしない。
+   *
+   * インポートは Unity をもう1プロセス起動するため数分単位のコストがある。
+   * 作業ディレクトリを再利用するようになったので、毎ビルド走らせる必要はない。
+   */
+  private async ensureUnityPackageImported(
+    unityProjectPath: string,
+    packagePath: string,
+    markerName: string,
+    logFile: string,
+  ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+    const markerPath = path.join(unityProjectPath, markerName);
+    const stamp = `${packagePath}:${this.stampOf(await fs.stat(packagePath))}`;
+
+    try {
+      const existing = await fs.readJSON(markerPath);
+      if (existing?.stamp === stamp) {
+        this.emit('log', `[Arsist] Package already imported, skipping: ${path.basename(packagePath)}`);
+        return { success: true, skipped: true };
+      }
+    } catch {
+      // マーカーが無い/壊れている場合は普通にインポートする
+    }
+
+    const result = await this.importUnityPackage(unityProjectPath, packagePath, logFile);
+    if (result.success) {
+      await fs.writeJSON(markerPath, { stamp }, { spaces: 0 });
+    }
+    return result;
+  }
+
   private async importUnityPackage(projectPath: string, packagePath: string, logFile: string): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       const args = [
         '-batchmode',
         '-nographics',
         '-quit',
+        // ターゲットを指定しないと Standalone 向けにインポートされ、
+        // 本ビルドで Android 用に丸ごと再インポートされてしまう
+        '-buildTarget', 'Android',
         '-projectPath', this.normalizeOsPath(projectPath),
         '-importPackage', this.normalizeOsPath(packagePath),
         '-logFile', this.normalizeOsPath(logFile),
@@ -1062,14 +1441,35 @@ export class UnityBuilder extends EventEmitter {
       this.emit('log', '[Arsist] scripts.json exported');
     }
 
+    // 前回ビルドで出力した json のうち、今回出力しなかったものを消す
+    // （dataflow/scripts を削除したのに Unity 側に残り続けるのを防ぐ）
+    const expectedGeneratedFiles = new Set([
+      'manifest.json',
+      'scenes.json',
+      'ui_layouts.json',
+      ...(dataFlowData ? ['dataflow.json'] : []),
+      ...(config.scriptsData ? ['scripts.json'] : []),
+    ]);
+    for (const entry of await fs.readdir(dataDir)) {
+      if (entry.endsWith('.meta')) continue;
+      if (expectedGeneratedFiles.has(entry)) continue;
+      if (!entry.endsWith('.json')) continue;
+      await fs.remove(path.join(dataDir, entry)).catch(() => {});
+      await fs.remove(path.join(dataDir, `${entry}.meta`)).catch(() => {});
+    }
+
     // Arsistプロジェクト内AssetsをUnityプロジェクトにコピー（実アセットとしてUnityに取り込ませる）
     if (config.sourceProjectPath) {
       const sourceAssets = path.join(config.sourceProjectPath, 'Assets');
       if (await fs.pathExists(sourceAssets)) {
         const destAssets = path.join(unityProjectPath, 'Assets', 'ArsistProjectAssets');
-        await fs.ensureDir(destAssets);
-        await fs.copy(sourceAssets, destAssets, { overwrite: true });
-        this.emit('log', '[Arsist] Project Assets copied into Unity (Assets/ArsistProjectAssets)');
+        // mirror: エディタ側で削除したアセットが Unity 側に残り続けないようにする。
+        // Unity が生成した .meta は syncDirectory 側で保護されるので GUID は維持される。
+        const sync = await this.syncDirectory(sourceAssets, destAssets, { prune: 'mirror' });
+        this.emit(
+          'log',
+          `[Arsist] Project Assets synced into Unity (Assets/ArsistProjectAssets): ${sync.copied} updated, ${sync.removed} removed`,
+        );
       } else {
         this.emit('log', `[Arsist] Project Assets folder not found: ${sourceAssets}`);
       }
@@ -1096,7 +1496,7 @@ export class UnityBuilder extends EventEmitter {
       if (await fs.pathExists(manifestPatch)) {
         const destManifest = path.join(unityProjectPath, 'Assets', 'Plugins', 'Android', 'AndroidManifest.xml');
         await fs.ensureDir(path.dirname(destManifest));
-        await fs.copy(manifestPatch, destManifest, { overwrite: true });
+        await fs.copy(manifestPatch, destManifest, { overwrite: true, preserveTimestamps: true });
         this.emit('log', '[Arsist] Applied AndroidManifest patch');
         break;
       }
@@ -1115,7 +1515,10 @@ export class UnityBuilder extends EventEmitter {
         const entries = await fs.readdir(scriptsPatch);
         const csFiles = entries.filter((f) => f.endsWith('.cs'));
         for (const file of csFiles) {
-          await fs.copy(path.join(scriptsPatch, file), path.join(destScripts, file), { overwrite: true });
+          await fs.copy(path.join(scriptsPatch, file), path.join(destScripts, file), {
+            overwrite: true,
+            preserveTimestamps: true,
+          });
         }
         if (csFiles.length > 0) {
           this.emit('log', '[Arsist] Applied editor scripts patch');
@@ -1128,7 +1531,7 @@ export class UnityBuilder extends EventEmitter {
     const packagesPatch = path.join(adapterDir, 'Packages');
     if (await fs.pathExists(packagesPatch)) {
       const destPackages = path.join(unityProjectPath, 'Packages');
-      await fs.copy(packagesPatch, destPackages, { overwrite: true });
+      await fs.copy(packagesPatch, destPackages, { overwrite: true, preserveTimestamps: true });
       this.emit('log', '[Arsist] Applied packages patch');
     }
 
@@ -1191,7 +1594,11 @@ export class UnityBuilder extends EventEmitter {
 
     const destDir = path.join(unityProjectPath, 'Packages', 'com.xreal.xr');
     await fs.ensureDir(path.dirname(destDir));
-    await fs.copy(sdkSourceDir, destDir, { overwrite: true });
+    // 差分同期。以前は毎回 overwrite フルコピーしていたため、SDK 835ファイル分の
+    // mtime が更新され Unity が全部再インポートしていた。
+    // Unity が読まない `Samples~` / `Tools~` / `Marker~` は syncDirectory 側で除外される。
+    const sync = await this.syncDirectory(sdkSourceDir, destDir, { prune: 'mirror' });
+    this.emit('log', `[Arsist] XREAL SDK synced: ${sync.copied} file(s) updated, ${sync.removed} removed`);
 
     const manifestPath = path.join(unityProjectPath, 'Packages', 'manifest.json');
     if (!await fs.pathExists(manifestPath)) {
@@ -1224,10 +1631,9 @@ export class UnityBuilder extends EventEmitter {
     setIfMissing('com.unity.modules.uielements', '1.0.0');
     setIfMissing('com.unity.modules.xr', '1.0.0');
     setIfMissing('com.unity.modules.audio', '1.0.0');
-    // Legacy UI: Unity 2022 では 1.0.0（2.0.0 は Unity 6 以降）
-    setIfMissing('com.unity.ugui', '1.0.0');
-    // TextMeshPro
-    setIfMissing('com.unity.textmeshpro', '3.0.6');
+    // uGUI / TextMeshPro は Unity バージョンで構成が違うため専用ヘルパで解決する
+    // （Unity 6 では TextMeshPro が com.unity.ugui 2.0.0 に統合されている）
+    this.applyUnityUiDependencies(deps);
   }
 
   private async integrateQuestSdk(unityProjectPath: string): Promise<void> {
@@ -1254,7 +1660,17 @@ export class UnityBuilder extends EventEmitter {
     const copyTgzToPackages = async (packageId: string, fileName: string) => {
       const source = path.join(questSdkDir, fileName);
       const destination = path.join(packagesDir, fileName);
-      await fs.copy(source, destination, { overwrite: true });
+      // tgz の mtime が変わると Unity が tarball を展開し直すので、変化が無ければ触らない
+      const sourceStamp = this.stampOf(await fs.stat(source));
+      let destStamp: string | null = null;
+      try {
+        destStamp = this.stampOf(await fs.stat(destination));
+      } catch {
+        destStamp = null;
+      }
+      if (destStamp !== sourceStamp) {
+        await fs.copy(source, destination, { overwrite: true, preserveTimestamps: true });
+      }
       copiedPackages.push({ id: packageId, fileName });
     };
 
@@ -1300,14 +1716,14 @@ export class UnityBuilder extends EventEmitter {
 
     if (await fs.pathExists(sampleAssetsXr)) {
       const destAssetsXr = path.join(unityProjectPath, 'Assets', 'XR');
-      await fs.copy(sampleAssetsXr, destAssetsXr, { overwrite: true });
+      await this.syncDirectory(sampleAssetsXr, destAssetsXr);
     }
 
     const copySettingIfExists = async (fileName: string) => {
       const src = path.join(sampleProjectSettings, fileName);
       const dst = path.join(unityProjectPath, 'ProjectSettings', fileName);
       if (await fs.pathExists(src)) {
-        await fs.copy(src, dst, { overwrite: true });
+        await fs.copy(src, dst, { overwrite: true, preserveTimestamps: true });
       }
     };
 

@@ -288,6 +288,11 @@ export const STRINGS: Record<string, Entry> = {
   'build.outputPlaceholder': { en: '/path/to/output', ja: '/path/to/output' },
   'build.options': { en: 'Options', ja: 'オプション' },
   'build.developmentBuild': { en: 'Development Build', ja: '開発ビルド' },
+  'build.cleanBuild': { en: 'Clean build (rebuild from scratch)', ja: 'クリーンビルド（最初から作り直す）' },
+  'build.cleanBuildHint': {
+    en: 'Normally the Unity workspace is reused so builds stay fast. Enable this only if you suspect a stale cache.',
+    ja: '通常はUnity作業プロジェクトを再利用して高速にビルドします。キャッシュ由来の不具合を疑うときだけONにしてください。',
+  },
   'build.buildProgress': { en: 'Build Progress', ja: 'ビルドの進行状況' },
   'build.buildLog': { en: 'Build Log', ja: 'ビルドログ' },
   'build.cancelBuild': { en: 'Cancel Build', ja: 'ビルドを中止' },

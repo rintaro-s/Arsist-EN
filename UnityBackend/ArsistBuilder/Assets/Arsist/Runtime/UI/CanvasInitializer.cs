@@ -92,12 +92,17 @@ namespace Arsist.Runtime.UI
                 Debug.LogWarning($"[CanvasInitializer] UI camera not found, using main camera: {_xrCamera.name}");
             }
 
-            // Ensure UI layer exists; fallback to Default if missing
-            int uiLayer = LayerMask.NameToLayer("UI");
-            if (uiLayer < 0)
+            // ビルド時に割り当てられたレイヤーを尊重する。
+            // 常時表示HUDは専用レイヤー(ArsistHUD)、ワールド配置のUIは "UI" と、
+            // 用途ごとに別レイヤーへ置いているため、ここで "UI" に決め打ちすると
+            // HUD が専用カメラの cullingMask から外れて見えなくなる。
+            int uiLayer = gameObject.layer;
+            if (uiLayer == 0)
             {
-                uiLayer = 0;
-                Debug.LogWarning("[CanvasInitializer] UI layer missing; falling back to Default layer (0)");
+                // Default のままなら未設定とみなして UI レイヤーへ寄せる
+                uiLayer = LayerMask.NameToLayer("UI");
+                if (uiLayer < 0) uiLayer = 5;
+                Debug.LogWarning($"[CanvasInitializer] Canvas was on the Default layer; falling back to layer {uiLayer}");
             }
 
             // Ensure camera renders UI layer

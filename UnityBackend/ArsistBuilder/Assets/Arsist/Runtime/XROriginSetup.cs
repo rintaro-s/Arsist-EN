@@ -36,10 +36,26 @@ namespace Arsist.Runtime
         private Vector3 _lastHeadPosition;
         private Quaternion _lastHeadRotation;
 
+        [Header("Performance")]
+        [Tooltip("ARグラス側のリフレッシュレートに合わせた目標フレームレート。0以下で未設定。")]
+        [SerializeField] private int _targetFrameRate = 60;
+
         private void Awake()
         {
+            ApplyFrameRateSettings();
             SetupCamera();
             SetupInteraction();
+        }
+
+        /// <summary>
+        /// Application.targetFrameRate はランタイムでしか効かないため、ここで適用する。
+        /// (以前は XrealBuildPatcher がビルド時に設定していたが、APKには反映されていなかった)
+        /// </summary>
+        private void ApplyFrameRateSettings()
+        {
+            if (_targetFrameRate <= 0) return;
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = _targetFrameRate;
         }
 
         private void Start()

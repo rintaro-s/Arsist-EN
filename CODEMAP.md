@@ -74,6 +74,12 @@ Each = `adapter.json` (metadata) + `AndroidManifest.xml` + a C# build patcher. P
 `patch` (device adapter manifest + editor scripts) → `sdk` (copy XREAL/Quest packages into Unity `Packages/`) →
 `build` (spawn Unity `-batchmode -nographics -quit`, invoke `ArsistBuildPipeline.BuildFromCLI`). See `doc/04-unity-builder.md`.
 
+**The working Unity project is reused between builds** (`<outputPath>/TempUnityProject`) so `Library/` — and with it
+asset imports, C# compilation, IL2CPP and Gradle output — stays warm. Everything Arsist copies in goes through
+`syncDirectory()` (source-stamp diffing, `.arsist-sync.json` sidecar), never a blind `overwrite` copy: rewriting
+mtimes would make Unity re-import the file and defeat the cache. A full rebuild is triggered by the `cleanBuild`
+flag or by a change of Unity editor / target device / template `ProjectSettings`.
+
 ---
 
 ## Device path map — who owns what (XREAL vs Quest)
@@ -94,6 +100,24 @@ to configure Unity + the scene the way the SDK expects, then get out of the way.
 **Why XREAL was less stable than Quest:** the engine reimplemented (via reflection + manual manifest/scene patching)
 things the SDK does automatically, and some of it conflicted (LAUNCHER vs multi-resume; fictional `XREALSessionConfig`
 component; missing `XREALSessionManager` stability logic; unset stereo mode). The direction is to lean on the SDK.
+
+**Known XREAL constraints — do not regress these:**
+
+- `XREALSettings.SupportMultiResume` defaults to `true`, and `XREALManifestProvider` then **removes every
+  `activity/intent-filter`** — including the MAIN/LAUNCHER one Arsist ships. `ConfigureXrealSettingsFields` forces
+  it to `false` so the app keeps a launcher icon.
+- `XREALUtility.MainCamera` resolves **only** through `FindAnyObjectByType<XROrigin>().Camera`. A bare
+  `AddComponent<XROrigin>()` leaves that null and silently disables `XREALSessionManager`. `CreateXROrigin` wires
+  `Camera` / `CameraFloorOffsetObject` explicitly.
+- The SDK prefab `XR Interaction Setup` **cannot be instantiated as shipped**: its nested `XR Origin (XR Rig)`
+  lives in the XRI *Starter Assets* sample, which Arsist does not import (`Missing Nested Prefab Asset` in the
+  Unity log). That is why `CreateXROrigin` still hand-rolls the rig. Importing that sample is the proper fix.
+- Always-on-top HUD lives on its own **`ArsistHUD` layer**, not `UI`. The HUD camera (`depth=100`,
+  `clearFlags=Depth`) renders that layer and the main camera excludes it — otherwise both draw the HUD and it
+  burns in twice on the additive see-through display. World-placed UI Surfaces stay on `UI` so they remain
+  depth-sorted against the scene.
+- Graphics Jobs is unsupported on OpenGLES; XREAL is GLES3-only, so `PlayerSettings.graphicsJobs` must stay
+  `false`.
 
 ---
 

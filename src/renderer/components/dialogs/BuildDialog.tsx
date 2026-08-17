@@ -41,6 +41,9 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   const [selectedDevice, setSelectedDevice] = useState(project?.targetDevice || 'XREAL_One');
   const [outputPath, setOutputPath] = useState('');
   const [developmentBuild, setDevelopmentBuild] = useState(false);
+  // 通常は差分ビルド（作業用Unityプロジェクトの Library/ を再利用）。
+  // キャッシュ由来の不整合を疑うときだけ ON にする。
+  const [cleanBuild, setCleanBuild] = useState(false);
   const [unityPath, setUnityPath] = useState('');
   const [unityValid, setUnityValid] = useState<boolean | null>(null);
   const [unityManualLicenseFile, setUnityManualLicenseFile] = useState('');
@@ -209,6 +212,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         targetDevice: selectedDevice,
         buildTarget: 'Android',
         developmentBuild,
+        cleanBuild,
         manualLicenseFile: unityManualLicenseFile || undefined,
         manifestData,
         scenesData: project.scenes,
@@ -377,6 +381,17 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                 />
                 <span className="text-sm">{t('build.developmentBuild')}</span>
               </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={cleanBuild}
+                  onChange={(e) => setCleanBuild(e.target.checked)}
+                  className="rounded"
+                  disabled={isBuilding}
+                />
+                <span className="text-sm">{t('build.cleanBuild')}</span>
+              </label>
+              <p className="text-xs text-arsist-muted">{t('build.cleanBuildHint')}</p>
             </div>
           </div>
 

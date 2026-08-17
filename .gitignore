@@ -6,6 +6,8 @@ dist/
 UnityBackend/ArsistBuilder/Library/
 UnityBackend/ArsistBuilder/Temp/
 UnityBackend/ArsistBuilder/Logs/
-BuildOutput/TempUnityProject/Library/
+# 作業用Unityプロジェクトはビルド間で再利用される（Library/ と SDK を丸ごと保持するため
+# 数百MB規模になる）。中身は毎回再生成できるので、まるごと追跡対象外にする。
+BuildOutput/TempUnityProject/
 sdk.zip
 release/

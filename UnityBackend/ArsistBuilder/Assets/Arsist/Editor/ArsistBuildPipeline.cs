@@ -65,6 +65,7 @@ namespace Arsist.Builder
                 // Phase 1: シーン生成
                 Debug.Log("[Arsist] Phase 1: Generating scenes...");
                 EnsureUILayerExists();
+                EnsureHudLayerExists();
                 GenerateScenes();
 
                 // Phase 2: UI生成（StreamingAssetsへのコピーのみ。Canvas生成はPhase 1で完了）
@@ -124,11 +125,35 @@ namespace Arsist.Builder
             }
         }
 
+        /// <summary>
+        /// 常時表示HUD専用のレイヤー名。
+        ///
+        /// HUD は専用カメラ（clearFlags=Depth / depth=100）で最前面に描くため、
+        /// メインカメラの cullingMask から外す必要がある。ここで "UI" をそのまま
+        /// 使ってしまうと、ワールド配置の UI Surface（3D空間に置いた Canvas）まで
+        /// メインカメラから消えて「常に手前に浮く」壊れ方をするので、HUD だけを
+        /// 別レイヤーに隔離する。
+        /// </summary>
+        private const string HUD_LAYER_NAME = "ArsistHUD";
+
         private static void EnsureUILayerExists()
+        {
+            EnsureLayerExists("UI", preferredIndex: 5);
+        }
+
+        private static void EnsureHudLayerExists()
+        {
+            EnsureLayerExists(HUD_LAYER_NAME, preferredIndex: -1);
+        }
+
+        /// <summary>
+        /// 指定名のレイヤーを TagManager に確保する。既にあれば何もしない。
+        /// </summary>
+        private static void EnsureLayerExists(string layerName, int preferredIndex)
         {
             try
             {
-                if (LayerMask.NameToLayer("UI") != -1)
+                if (LayerMask.NameToLayer(layerName) != -1)
                 {
                     return;
                 }
@@ -138,13 +163,15 @@ namespace Arsist.Builder
                 var layersProp = tagManager.FindProperty("layers");
 
                 int targetIndex = -1;
-                // Prefer slot 5 if empty, otherwise first empty user layer
-                if (layersProp.GetArrayElementAtIndex(5).stringValue == string.Empty)
+                if (preferredIndex >= 0
+                    && preferredIndex < layersProp.arraySize
+                    && layersProp.GetArrayElementAtIndex(preferredIndex).stringValue == string.Empty)
                 {
-                    targetIndex = 5;
+                    targetIndex = preferredIndex;
                 }
                 else
                 {
+                    // ユーザーレイヤーは 8 番以降
                     for (int i = 8; i < layersProp.arraySize; i++)
                     {
                         if (layersProp.GetArrayElementAtIndex(i).stringValue == string.Empty)
@@ -157,18 +184,18 @@ namespace Arsist.Builder
 
                 if (targetIndex >= 0)
                 {
-                    layersProp.GetArrayElementAtIndex(targetIndex).stringValue = "UI";
+                    layersProp.GetArrayElementAtIndex(targetIndex).stringValue = layerName;
                     tagManager.ApplyModifiedPropertiesWithoutUndo();
-                    Debug.Log($"[Arsist] Added UI layer at index {targetIndex}");
+                    Debug.Log($"[Arsist] Added '{layerName}' layer at index {targetIndex}");
                 }
                 else
                 {
-                    Debug.LogWarning("[Arsist] No available layer slot for UI. UI camera will fallback to render all layers.");
+                    Debug.LogWarning($"[Arsist] No available layer slot for '{layerName}'. Falling back to the UI layer.");
                 }
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[Arsist] Failed to ensure UI layer exists: {e.Message}");
+                Debug.LogWarning($"[Arsist] Failed to ensure '{layerName}' layer exists: {e.Message}");
             }
         }
 
@@ -1009,11 +1036,21 @@ namespace Arsist.Builder
                     }
                 }
                 
-                if (File.Exists(packagePath))
+                // 作業プロジェクトを再利用するようになったため、既にフォントが入っていれば
+                // .unitypackage の再インポート（数十秒〜のコスト）はスキップする。
+                var alreadyImported =
+                    AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>("Assets/Resources/LiberationSans SDF.asset") != null
+                    || AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>("Assets/JKG-M_3 SDF.asset") != null;
+
+                if (alreadyImported)
+                {
+                    Debug.Log("[Arsist] TMP font asset already present, skipping package import");
+                }
+                else if (File.Exists(packagePath))
                 {
                     Debug.Log($"[Arsist] Found TMP font package at: {packagePath}");
                     Debug.Log("[Arsist] Importing JKG-M3.unitypackage...");
-                    
+
                     try
                     {
                         AssetDatabase.ImportPackage(packagePath, false);
@@ -1776,6 +1813,9 @@ namespace Arsist.Builder
 
             // XR Origin プレハブを探してインスタンス化（将来: アダプター側prefabに差し替え）
             GameObject xrOrigin = null;
+            GameObject cameraOffsetGO = null;
+            Camera originCamera = null;
+
             var xrOriginPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Arsist/Prefabs/XROrigin.prefab");
             if (xrOriginPrefab != null)
             {
@@ -1788,26 +1828,27 @@ namespace Arsist.Builder
                 xrOrigin = new GameObject("XR Origin");
                 xrOrigin.transform.position = Vector3.zero;
 
-                var cameraOffset = new GameObject("Camera Offset");
-                cameraOffset.transform.SetParent(xrOrigin.transform);
-                cameraOffset.transform.localPosition = Vector3.zero;
+                cameraOffsetGO = new GameObject("Camera Offset");
+                cameraOffsetGO.transform.SetParent(xrOrigin.transform);
+                cameraOffsetGO.transform.localPosition = Vector3.zero;
 
                 var mainCamera = new GameObject("Main Camera");
                 mainCamera.tag = "MainCamera";
-                mainCamera.transform.SetParent(cameraOffset.transform);
+                mainCamera.transform.SetParent(cameraOffsetGO.transform);
                 mainCamera.transform.localPosition = Vector3.zero;
                 mainCamera.transform.localRotation = Quaternion.identity;
-                
+
                 var cam = mainCamera.AddComponent<Camera>();
                 // Critical: Configure camera for proper WorldSpace Canvas rendering
                 cam.clearFlags = CameraClearFlags.SolidColor;
                 cam.backgroundColor = new Color(0f, 0f, 0f, 0f); // Transparent for AR
-                cam.cullingMask = -1; // Everything
+                cam.cullingMask = -1; // Everything（HUDレイヤーだけ後で除外する）
                 cam.depth = 0; // Main camera renders first
                 cam.nearClipPlane = 0.1f;
                 cam.farClipPlane = 1000f;
-                
+
                 mainCamera.AddComponent<AudioListener>();
+                originCamera = cam;
 
                 // Best-effort: TrackedPoseDriver (Input System or Legacy)
                 TryAddComponentByTypeName(mainCamera, "UnityEngine.InputSystem.XR.TrackedPoseDriver");
@@ -1820,8 +1861,13 @@ namespace Arsist.Builder
             }
 
             // Best-effort: XR Origin component (Core Utils)
-            TryAddComponentByTypeName(xrOrigin, "Unity.XR.CoreUtils.XROrigin");
-            TryAddComponentByTypeName(xrOrigin, "UnityEngine.XR.Interaction.Toolkit.XROrigin");
+            var xrOriginComponent = TryAddComponentByTypeName(xrOrigin, "Unity.XR.CoreUtils.XROrigin");
+
+            // XROrigin の Camera / CameraFloorOffsetObject を必ず結線する。
+            // XREAL SDK は XREALUtility.MainCamera => FindAnyObjectByType<XROrigin>().Camera
+            // 経由でしかカメラを取得しないため、ここが null だと XREALSessionManager などの
+            // 安定化ロジックが無言で動かなくなる。
+            ConfigureXROriginComponent(xrOriginComponent, xrOrigin, originCamera, cameraOffsetGO);
 
             // Add Arsist runtime setup (exists in this project)
             var setupType = Type.GetType("Arsist.Runtime.XROriginSetup, Assembly-CSharp");
@@ -2153,6 +2199,150 @@ ScriptedImporter:
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 指定レイヤーをカメラの cullingMask から外す。
+        /// HUD 専用カメラを併用する構成で、メインカメラが同じ HUD を二重に描くのを防ぐ。
+        /// (加算合成の透過ディスプレイでは二重描画が「UIだけ白く浮く」形で出る)
+        /// </summary>
+        private static void ExcludeLayerFromCamera(Camera camera, int layer)
+        {
+            if (camera == null || layer < 0) return;
+            var mask = 1 << layer;
+            if ((camera.cullingMask & mask) == 0) return;
+            camera.cullingMask &= ~mask;
+            Debug.Log($"[Arsist] Excluded layer {layer} from camera '{camera.name}' culling mask (HUD is drawn by the dedicated HUD camera)");
+        }
+
+        /// <summary>
+        /// UI レイヤーのインデックス。Unity 標準では 5 番が "UI"。
+        /// NameToLayer が -1 を返した場合に `1 &lt;&lt; -1` を作ってしまわないようにするためのガード。
+        /// </summary>
+        private static int GetUILayer()
+        {
+            var layer = LayerMask.NameToLayer("UI");
+            return layer >= 0 ? layer : 5;
+        }
+
+        /// <summary>
+        /// 常時表示HUDを描くレイヤー。専用レイヤーが確保できていればそれを、
+        /// 空きが無ければ UI レイヤーにフォールバックする。
+        /// </summary>
+        private static int GetHudLayer()
+        {
+            var layer = LayerMask.NameToLayer(HUD_LAYER_NAME);
+            return layer >= 0 ? layer : GetUILayer();
+        }
+
+        /// <summary>
+        /// HUD 専用レイヤーが確保できているか。
+        /// 確保できていない（=UI レイヤーと共用）ときにメインカメラから除外すると、
+        /// ワールド配置の UI まで見えなくなるため、除外してよいかの判定に使う。
+        /// </summary>
+        private static bool HasDedicatedHudLayer()
+        {
+            return LayerMask.NameToLayer(HUD_LAYER_NAME) >= 0;
+        }
+
+        /// <summary>
+        /// メインカメラから HUD レイヤーを外す。専用レイヤーが無い場合は何もしない
+        /// （外すとワールド配置の UI Surface まで消えてしまうため）。
+        /// </summary>
+        private static void ExcludeHudLayerFromMainCamera(Camera camera)
+        {
+            if (camera == null) return;
+            if (!HasDedicatedHudLayer())
+            {
+                Debug.LogWarning($"[Arsist] '{HUD_LAYER_NAME}' layer is unavailable; the main camera will also draw the HUD (it may look brighter on additive AR displays).");
+                return;
+            }
+            ExcludeLayerFromCamera(camera, GetHudLayer());
+        }
+
+        /// <summary>
+        /// XROrigin コンポーネント（Unity.XR.CoreUtils）に、カメラとカメラオフセットを結線する。
+        /// SDK のバージョン差に強いよう reflection で best-effort に設定する。
+        /// </summary>
+        private static void ConfigureXROriginComponent(
+            Component xrOriginComponent,
+            GameObject xrOriginGO,
+            Camera camera,
+            GameObject cameraOffset)
+        {
+            if (xrOriginComponent == null)
+            {
+                Debug.LogWarning("[Arsist] Unity.XR.CoreUtils.XROrigin not found. XREAL SDK will not be able to resolve the main camera.");
+                return;
+            }
+
+            // プレハブ経由で組んだ場合は引数が null なので、階層から解決する
+            if (camera == null)
+            {
+                camera = xrOriginGO.GetComponentInChildren<Camera>(true);
+            }
+            if (cameraOffset == null && camera != null)
+            {
+                var parent = camera.transform.parent;
+                cameraOffset = parent != null ? parent.gameObject : xrOriginGO;
+            }
+
+            if (camera == null)
+            {
+                Debug.LogWarning("[Arsist] No camera under XR Origin; cannot wire XROrigin.Camera.");
+                return;
+            }
+
+            var wiredCamera = TrySetMemberValue(xrOriginComponent, "Camera", camera);
+            var wiredOffset = TrySetMemberValue(xrOriginComponent, "CameraFloorOffsetObject", cameraOffset);
+
+            Debug.Log($"[Arsist] XROrigin wired (camera={wiredCamera}, floorOffset={wiredOffset}) -> {camera.name}");
+        }
+
+        /// <summary>
+        /// プロパティ優先、無ければ同名/バッキングフィールドに値を設定する best-effort ヘルパー。
+        /// </summary>
+        private static bool TrySetMemberValue(object target, string memberName, object value)
+        {
+            if (target == null) return false;
+
+            try
+            {
+                var type = target.GetType();
+
+                var property = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (property != null && property.CanWrite && property.PropertyType.IsInstanceOfType(value))
+                {
+                    property.SetValue(target, value);
+                    if (target is UnityEngine.Object propertyOwner)
+                    {
+                        EditorUtility.SetDirty(propertyOwner);
+                    }
+                    return true;
+                }
+
+                // XROrigin は m_Camera / m_CameraFloorOffsetObject という SerializeField を持つ
+                var fieldNames = new[] { memberName, $"m_{memberName}", $"_{memberName}" };
+                foreach (var fieldName in fieldNames)
+                {
+                    var field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (field != null && field.FieldType.IsInstanceOfType(value))
+                    {
+                        field.SetValue(target, value);
+                        if (target is UnityEngine.Object unityObject)
+                        {
+                            EditorUtility.SetDirty(unityObject);
+                        }
+                        return true;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to set {memberName}: {e.Message}");
+            }
+
+            return false;
         }
 
         private static Component TryAddComponentByTypeName(GameObject go, string fullTypeName)
@@ -2583,22 +2773,29 @@ ScriptedImporter:
                     uiCameraGO.transform.localPosition = Vector3.zero;
                     uiCameraGO.transform.localRotation = Quaternion.identity;
                     
+                    var hudLayer = GetHudLayer();
                     var uiCam = uiCameraGO.AddComponent<Camera>();
                     uiCam.clearFlags = CameraClearFlags.Depth; // Only clear depth, preserve color from main camera
-                    uiCam.cullingMask = 1 << LayerMask.NameToLayer("UI"); // Only render UI layer
+                    uiCam.cullingMask = 1 << hudLayer; // Only render the HUD layer
                     uiCam.depth = 100; // Render after main camera (depth 0)
                     uiCam.nearClipPlane = 0.01f;
                     uiCam.farClipPlane = 10f;
-                    
+                    // XR ではメインカメラと同じく両眼へ描画させる（未指定だと片眼/モノラルになりうる）
+                    uiCam.stereoTargetEye = StereoTargetEyeMask.Both;
+                    // AudioListener はシーンに1つだけ。メインカメラ側に付いているのでここでは追加しない。
+
+                    // メインカメラが HUD を描かないようにする（二重描画＝白浮きの防止）
+                    ExcludeHudLayerFromMainCamera(mainCam);
+
                     // Position Canvas as child of UI camera
                     canvasGO.transform.SetParent(uiCameraGO.transform, false);
                     rectTransform.localPosition = new Vector3(0f, 0f, Mathf.Max(0.3f, distance * 0.5f));
                     rectTransform.localRotation = Quaternion.identity;
-                    
-                    // Set Canvas and all children to UI layer
-                    canvasGO.layer = LayerMask.NameToLayer("UI");
-                    SetLayerRecursively(canvasGO, LayerMask.NameToLayer("UI"));
-                    
+
+                    // Set Canvas and all children to the HUD layer
+                    canvasGO.layer = hudLayer;
+                    SetLayerRecursively(canvasGO, hudLayer);
+
                     // Canvas uses the dedicated UI camera
                     canvas.worldCamera = uiCam;
                     canvas.planeDistance = rectTransform.localPosition.z;
@@ -2638,6 +2835,9 @@ ScriptedImporter:
                 {
                     CreateUIElement(root, canvasGO.transform);
                 }
+
+                // 生成後にもう一度そろえる（要素側の実装差でレイヤーがずれても Canvas と一致させる）
+                SetLayerRecursively(canvasGO, canvasGO.layer);
             }
 
             if (createdHudCount == 0)
@@ -2661,18 +2861,23 @@ ScriptedImporter:
             uiCameraGO.transform.localPosition = Vector3.zero;
             uiCameraGO.transform.localRotation = Quaternion.identity;
             
+            var hudLayer = GetHudLayer();
             var uiCam = uiCameraGO.AddComponent<Camera>();
             uiCam.clearFlags = CameraClearFlags.Depth;
-            uiCam.cullingMask = 1 << LayerMask.NameToLayer("UI");
+            uiCam.cullingMask = 1 << hudLayer;
             uiCam.depth = 100;
             uiCam.nearClipPlane = 0.01f;
             uiCam.farClipPlane = 10f;
+            uiCam.stereoTargetEye = StereoTargetEyeMask.Both;
+
+            // メインカメラが HUD を描かないようにする（二重描画＝白浮きの防止）
+            ExcludeHudLayerFromMainCamera(mainCam);
 
             var canvasGO = new GameObject("Canvas_FallbackHUD");
             canvasGO.transform.SetParent(uiCameraGO.transform, false);
             canvasGO.transform.localPosition = new Vector3(0f, 0f, 0.7f);
             canvasGO.transform.localRotation = Quaternion.identity;
-            canvasGO.layer = LayerMask.NameToLayer("UI");
+            canvasGO.layer = hudLayer;
 
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
@@ -2800,11 +3005,11 @@ ScriptedImporter:
             Debug.Log($"[Arsist] >> CreateUIElement: type={type}, id={elementId}");
             var go = new GameObject(type);
             go.transform.SetParent(parent, false);
-            
-            // FIX 13: Set UI layer on all elements
-            int uiLayer = LayerMask.NameToLayer("UI");
-            if (uiLayer < 0) uiLayer = 5;
-            go.layer = uiLayer;
+
+            // 親（Canvas または親要素）のレイヤーを継承する。
+            // ここで "UI" を決め打ちすると、HUD専用レイヤーに置いた Canvas の子だけが
+            // UI レイヤーに残り、Canvas と子が別々のカメラで描かれて崩れる。
+            go.layer = parent != null ? parent.gameObject.layer : GetUILayer();
 
             TryAttachUiBindingRegistry(go, elementData);
 
@@ -4258,18 +4463,35 @@ ScriptedImporter:
 
         private static void ExecuteBuild(JObject manifest)
         {
-            var scenes = new List<string>();
-            
-            // ビルド対象シーンを収集
-            foreach (var guid in AssetDatabase.FindAssets("t:Scene", new[] { "Assets/Scenes" }))
+            // ビルド対象シーンは GenerateScenes が scenes.json の順で EditorBuildSettings に
+            // 登録済み。scenes[0] が起動シーンになるため、ここで順序を保つことが重要。
+            // (以前は AssetDatabase.FindAssets の戻り順＝未定義順を使っており、
+            //  シーンが複数あると毎回違うシーンで起動する可能性があった)
+            // 存在確認は AssetDatabase 経由で行う（File.Exists はカレントディレクトリ依存のため）
+            var scenes = EditorBuildSettings.scenes
+                .Where(s => s != null && s.enabled && !string.IsNullOrWhiteSpace(s.path))
+                .Where(s => AssetDatabase.LoadAssetAtPath<SceneAsset>(s.path) != null)
+                .Select(s => s.path)
+                .Distinct()
+                .ToList();
+
+            if (scenes.Count == 0)
             {
-                scenes.Add(AssetDatabase.GUIDToAssetPath(guid));
+                // フォールバック: Build Settings が空なら Assets/Scenes をパス順で拾う（順序を決定的にする）
+                scenes = AssetDatabase.FindAssets("t:Scene", new[] { "Assets/Scenes" })
+                    .Select(AssetDatabase.GUIDToAssetPath)
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .OrderBy(p => p, StringComparer.Ordinal)
+                    .ToList();
+                Debug.LogWarning($"[Arsist] EditorBuildSettings.scenes was empty; falling back to {scenes.Count} scene(s) from Assets/Scenes");
             }
 
             if (scenes.Count == 0)
             {
                 throw new Exception("No scenes found to build");
             }
+
+            Debug.Log($"[Arsist] Build scenes ({scenes.Count}), startup = {scenes[0]}");
 
             var buildOptions = BuildOptions.None;
             var normalizedTarget = (_targetDevice ?? "").ToLowerInvariant();
