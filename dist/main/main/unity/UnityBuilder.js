@@ -48,6 +48,9 @@ const https = __importStar(require("https"));
 const http = __importStar(require("http"));
 const crypto = __importStar(require("crypto"));
 const paths_1 = require("../platform/paths");
+const assets_1 = require("../../shared/assets");
+/** arSettings.backgroundMode に許される値（IR の BackgroundMode と対応）。 */
+const BACKGROUND_MODES = ['passthrough', 'skybox', 'solidColor'];
 class UnityBuilder extends events_1.EventEmitter {
     unityPath;
     sdkDir = '';
@@ -362,6 +365,12 @@ class UnityBuilder extends events_1.EventEmitter {
             if (!config.targetDevice || !config.buildTarget) {
                 return { success: false, error: 'Invalid build configuration: targetDevice/buildTarget is required' };
             }
+            // IR の整合性チェック。Unity を起動する前に落とすことで、
+            // 「ビルドは通ったが実機でプレースホルダが出るだけ」を防ぐ。
+            const irProblems = this.findIrProblems(config);
+            if (irProblems.length > 0) {
+                return { success: false, error: this.formatIrProblems(irProblems) };
+            }
             await fs.ensureDir(config.outputPath);
             if (config.cleanOutput) {
                 // 作業用Unityプロジェクトは outputPath の下にあるため、巻き添えで消さない。
@@ -624,6 +633,92 @@ class UnityBuilder extends events_1.EventEmitter {
         finally {
             this.buildInProgress = false;
         }
+    }
+    /**
+     * ビルド前に IR の「実機で無言に壊れる」組み合わせを検出する。
+     *
+     * 特に Canvas は、参照先の UILayout が未割り当て/削除済みでもビルド自体は成功し、
+     * 実機ではプレースホルダだけが表示される。原因が分かりにくいので、
+     * 黙って直したり素通りさせたりせず、ここでビルドを失敗させる。
+     */
+    findIrProblems(config) {
+        const problems = [];
+        const layouts = Array.isArray(config.uiData) ? config.uiData : [];
+        const layoutIds = new Set(layouts.map((l) => (l && typeof l.id === 'string' ? l.id : null)).filter((id) => !!id));
+        const canvasLayoutNames = layouts
+            .filter((l) => l?.scope === 'canvas' && typeof l?.name === 'string')
+            .map((l) => l.name);
+        // UI 要素側: Unity が取り込めない画像を使っていないか
+        for (const layout of layouts) {
+            const layoutName = typeof layout?.name === 'string' ? layout.name : 'UI Layout';
+            this.walkUiElements(layout?.root, (el) => {
+                if (el?.type !== 'Image')
+                    return;
+                const assetPath = typeof el?.assetPath === 'string' ? el.assetPath : '';
+                if (!assetPath)
+                    return;
+                if ((0, assets_1.isUnityTextureExtension)(assetPath))
+                    return;
+                problems.push(`${layoutName} / Image: Unity が読めない画像形式です / unsupported image format: ${assetPath}` +
+                    ` (対応 / supported: ${assets_1.UNITY_TEXTURE_EXTENSIONS.join(', ')})`);
+            });
+        }
+        const scenes = Array.isArray(config.scenesData) ? config.scenesData : [];
+        for (const scene of scenes) {
+            const sceneName = typeof scene?.name === 'string' ? scene.name : 'Scene';
+            const objects = Array.isArray(scene?.objects) ? scene.objects : [];
+            for (const obj of objects) {
+                if (obj?.type !== 'canvas')
+                    continue;
+                const objName = typeof obj?.name === 'string' ? obj.name : 'Canvas';
+                const label = `${sceneName} / ${objName}`;
+                const layoutId = obj?.canvasSettings?.layoutId;
+                // 「どれを選べばいいか」まで書く。原因行と対処が離れていると読み飛ばされる。
+                const pick = canvasLayoutNames.length > 0
+                    ? ` 選択肢 / available: ${canvasLayoutNames.join(', ')}`
+                    : ' 先にUIエディタでcanvasスコープのレイアウトを作成してください / create a canvas-scope UI layout first';
+                const howToFix = `インスペクタの「キャンバス設定 > UIレイアウト」で設定してください / set it under Canvas Settings > UI Layout in the inspector.${pick}`;
+                if (!layoutId) {
+                    problems.push(`${label}: UIレイアウトが未割り当てです / no UI layout assigned. ${howToFix}`);
+                }
+                else if (!layoutIds.has(layoutId)) {
+                    problems.push(`${label}: 参照先のUIレイアウトが存在しません / unknown UI layout id "${layoutId}". ${howToFix}`);
+                }
+            }
+        }
+        // 背景モード（Quest のパススルー/VR切り替え）
+        const arSettings = config.manifestData?.arSettings;
+        const backgroundMode = arSettings?.backgroundMode;
+        if (backgroundMode !== undefined && !BACKGROUND_MODES.includes(backgroundMode)) {
+            problems.push(`arSettings.backgroundMode: 不明な背景モードです / unknown background mode "${backgroundMode}"` +
+                ` (対応 / supported: ${BACKGROUND_MODES.join(', ')})`);
+        }
+        if (backgroundMode === 'solidColor') {
+            const backgroundColor = arSettings?.backgroundColor;
+            if (backgroundColor !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(backgroundColor))) {
+                problems.push(`arSettings.backgroundColor: 背景色は #RRGGBB 形式で指定してください / background color must be #RRGGBB` +
+                    ` (actual: "${backgroundColor}")`);
+            }
+        }
+        return problems;
+    }
+    /** UI 要素ツリーを深さ優先で走査する。 */
+    walkUiElements(element, visit) {
+        if (!element || typeof element !== 'object')
+            return;
+        visit(element);
+        const children = Array.isArray(element.children) ? element.children : [];
+        for (const child of children) {
+            this.walkUiElements(child, visit);
+        }
+    }
+    formatIrProblems(problems) {
+        return [
+            'プロジェクトの設定に問題があるためビルドを中止しました。',
+            'Build aborted: the project has problems that would silently break the app on device.',
+            '',
+            ...problems.map((p) => `  - ${p}`),
+        ].join('\n');
     }
     /**
      * ビルドキャンセル
@@ -2168,6 +2263,31 @@ class UnityBuilder extends events_1.EventEmitter {
         }
         return null;
     }
+    /**
+     * エラー行と、それに続くインデントされた本文をまとめて1つのメッセージにする。
+     *
+     * Gradle/AGP は原因を次の行にインデントで書く:
+     *     [:nr_loader:] .../AndroidManifest.xml Error:
+     *         Namespace 'nrsdk.pack' is used in multiple modules and/or libraries: ...
+     * 行単位で拾うと "... Error:" だけがUIに出て、肝心の原因が消えてしまう。
+     */
+    collectErrorMessage(lines, startIndex) {
+        const MAX_CONTINUATION_LINES = 3;
+        const parts = [lines[startIndex].trim()];
+        let index = startIndex;
+        for (let j = startIndex + 1; j < lines.length && parts.length <= MAX_CONTINUATION_LINES; j++) {
+            const raw = lines[j];
+            // インデントされた非空行だけを継続行とみなす
+            if (!raw || !/^[ \t]/.test(raw) || !raw.trim())
+                break;
+            // スタックトレースは原因説明ではないので取り込まない
+            if (/^\s*at\s/.test(raw))
+                break;
+            parts.push(raw.trim());
+            index = j;
+        }
+        return { message: parts.join(' '), nextIndex: index };
+    }
     async readUnityLogIssues(logFile) {
         const errors = [];
         const warnings = [];
@@ -2177,8 +2297,8 @@ class UnityBuilder extends events_1.EventEmitter {
         try {
             const content = await fs.readFile(logFile, 'utf-8');
             const lines = content.split(/\r?\n/);
-            for (const line of lines) {
-                const t = line.trim();
+            for (let i = 0; i < lines.length; i++) {
+                const t = lines[i].trim();
                 if (!t)
                     continue;
                 if (/Scripts have compiler errors\./i.test(t)) {
@@ -2191,7 +2311,9 @@ class UnityBuilder extends events_1.EventEmitter {
                 // Unity/CSC は "error CSxxxx" のように小文字になることがある
                 // ただし "ValidationExceptions.json" のようなファイル名もあるため、Exception 判定はコロン付きに限定する
                 if (/(^|\s)error(\s|:)/i.test(t) || (/Exception\s*:/i.test(t) && !this.isLicensingNoise(t)) || /BuildFailedException\s*:/i.test(t)) {
-                    errors.push(t);
+                    const { message, nextIndex } = this.collectErrorMessage(lines, i);
+                    errors.push(message);
+                    i = nextIndex;
                     continue;
                 }
                 if (/(^|\s)warning(\s|:)/i.test(t)) {

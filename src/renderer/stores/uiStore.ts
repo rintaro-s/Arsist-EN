@@ -41,9 +41,12 @@ interface UIState {
   // 3D Viewport
   showGrid: boolean;
   showAxes: boolean;
+  /** ユーザーの初期視点（スポーン位置＝原点）とその視野を表示する */
+  showSpawnView: boolean;
   snapToGrid: boolean;
   setShowGrid: (v: boolean) => void;
   setShowAxes: (v: boolean) => void;
+  setShowSpawnView: (v: boolean) => void;
   setSnapToGrid: (v: boolean) => void;
 
   transformMode: 'translate' | 'rotate' | 'scale';
@@ -100,9 +103,11 @@ export const useUIStore = create<UIState>((set) => ({
 
   showGrid: true,
   showAxes: true,
+  showSpawnView: true,
   snapToGrid: false,
   setShowGrid: (v) => set({ showGrid: v }),
   setShowAxes: (v) => set({ showAxes: v }),
+  setShowSpawnView: (v) => set({ showSpawnView: v }),
   setSnapToGrid: (v) => set({ snapToGrid: v }),
 
   transformMode: 'translate',

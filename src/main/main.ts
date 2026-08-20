@@ -13,6 +13,11 @@ import { UnityBuilder } from './unity/UnityBuilder';
 import { ProjectManager } from './project/ProjectManager';
 import { AdapterManager } from './adapters/AdapterManager';
 import {
+  isUnsupportedTextureExtension,
+  isUnityTextureExtension,
+  UNITY_TEXTURE_EXTENSIONS,
+} from '../shared/assets';
+import {
   liveContext,
   getUnitySearchRoots,
   getUnityExeRelative,
@@ -49,6 +54,9 @@ const store = new Store({
     defaultOutputPath: '',
     defaultProjectPath: '',
     sdkDir: '',
+    // GPUドライバ指紋と、次回起動時にシェーダキャッシュを消すかのフラグ
+    gpuFingerprint: '',
+    gpuCachePurgePending: false,
   },
 });
 
@@ -107,6 +115,10 @@ const MENU_STRINGS: Record<string, { en: string; ja: string }> = {
   'menu.viewScript': { en: 'Script Editor', ja: 'スクリプトエディタ' },
   'menu.devtools': { en: 'Developer Tools', ja: '開発者ツール' },
   'menu.help': { en: 'Help', ja: 'ヘルプ' },
+  'menu.resetGpuCache': {
+    en: 'Reset GPU Shader Cache and Restart',
+    ja: 'GPUシェーダキャッシュをリセットして再起動',
+  },
   'menu.docs': { en: 'Documentation', ja: 'ドキュメント' },
   'menu.github': { en: 'GitHub Repository', ja: 'GitHubリポジトリ' },
   'menu.about': { en: 'About Arsist', ja: 'Arsistについて' },
@@ -146,6 +158,164 @@ if (softwareRenderRequested) {
   } catch {
     // ignore
   }
+}
+
+// ── GPUシェーダキャッシュの自動無効化 ────────────────────────────────
+//
+// Chromium/ANGLE はリンク済みシェーダプログラムのバイナリを userData/GPUCache に
+// 保存する。GPUドライバを更新するとこのバイナリは互換性を失い、
+//   "Program binary could not be loaded. Binary is not compatible with
+//    current driver/hardware combination."
+// で全シェーダのリンクが失敗する（ウィンドウは出るが3Dビューだけ死ぬ）。
+// ブラウザは別プロファイルなので無事に見え、「Electronだけ GPU が壊れている」
+// ように見えるのが厄介なところ。
+//
+// 対策は「ドライバが変わったらキャッシュを捨てる」だけ。ただし GPU 情報は
+// GPUプロセスが起動しないと取れず、その時点では既にキャッシュを掴んでいる
+// （Windows では削除できない）ため、
+//   1. 起動直後（GPUプロセス起動前）に、前回のフラグを見て同期的に削除
+//   2. ready 後にドライバ指紋を取り、変化していたらフラグを立てて1回だけ再起動
+// の2段構えにしている。
+const GPU_CACHE_DIRS = ['GPUCache', 'DawnCache', 'ShaderCache', 'GrShaderCache'];
+const GPU_FINGERPRINT_KEY = 'gpuFingerprint';
+const GPU_PURGE_PENDING_KEY = 'gpuCachePurgePending';
+
+function purgeGpuCaches(reason: string): void {
+  let userDataDir: string;
+  try {
+    userDataDir = app.getPath('userData');
+  } catch {
+    return;
+  }
+
+  const removed: string[] = [];
+  for (const dirName of GPU_CACHE_DIRS) {
+    const dir = path.join(userDataDir, dirName);
+    try {
+      if (!fs.pathExistsSync(dir)) continue;
+      fs.removeSync(dir);
+      removed.push(dirName);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(`[arsist] GPUキャッシュの削除に失敗: ${dir}: ${(error as Error).message}`);
+    }
+  }
+
+  if (removed.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(`[arsist] GPUシェーダキャッシュを削除しました (${reason}): ${removed.join(', ')}`);
+  }
+}
+
+// 1) GPUプロセスが起動する前に、保留中の削除を実行する
+{
+  const manualReset = process.env.ARSIST_RESET_GPU_CACHE === '1';
+  let purgePending = false;
+  try {
+    purgePending = store.get(GPU_PURGE_PENDING_KEY) === true;
+  } catch {
+    purgePending = false;
+  }
+
+  if (manualReset || purgePending) {
+    purgeGpuCaches(manualReset ? 'ARSIST_RESET_GPU_CACHE=1' : 'GPU driver change detected on the previous run');
+    try {
+      store.set(GPU_PURGE_PENDING_KEY, false);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** GPUドライバ/レンダラの指紋。これが変わるとキャッシュ済みバイナリは無効になる。 */
+function buildGpuFingerprint(info: unknown): string | null {
+  if (!info || typeof info !== 'object') return null;
+  const gpuInfo = info as Record<string, any>;
+  const aux = (gpuInfo.auxAttributes ?? {}) as Record<string, any>;
+  const devices = Array.isArray(gpuInfo.gpuDevice) ? gpuInfo.gpuDevice : [];
+
+  const parts = [
+    aux.glRenderer,
+    aux.glVendor,
+    aux.glVersion,
+    ...devices.map((d: Record<string, any>) => `${d?.vendorId}:${d?.deviceId}:${d?.driverVersion ?? ''}`),
+  ].filter((v) => typeof v === 'string' ? v.length > 0 : v !== undefined && v !== null);
+
+  if (parts.length === 0) return null;
+  return createHash('sha1').update(parts.join('|')).digest('hex');
+}
+
+/**
+ * 2) ドライバ指紋が前回と変わっていたら、次回起動時に削除するようフラグを立て、
+ *    1回だけ自動で再起動する（キャッシュを掴んでいない状態で消すため）。
+ */
+async function checkGpuDriverChange(): Promise<void> {
+  // 再起動直後は再度判定しない（ループ防止）
+  if (process.env.ARSIST_GPU_CACHE_RESET_DONE === '1') return;
+  if (softwareRenderRequested) return;
+
+  let fingerprint: string | null = null;
+  try {
+    fingerprint = buildGpuFingerprint(await app.getGPUInfo('complete'));
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn(`[arsist] GPU情報を取得できませんでした: ${(error as Error).message}`);
+    return;
+  }
+  if (!fingerprint) return;
+
+  let previous: string | null = null;
+  try {
+    const stored = store.get(GPU_FINGERPRINT_KEY);
+    previous = typeof stored === 'string' && stored ? stored : null;
+  } catch {
+    previous = null;
+  }
+
+  if (previous === fingerprint) return;
+
+  try {
+    store.set(GPU_FINGERPRINT_KEY, fingerprint);
+  } catch {
+    // ignore
+  }
+
+  // 初回起動時は比較対象が無いだけなので、記録するだけで再起動しない
+  if (!previous) return;
+
+  // eslint-disable-next-line no-console
+  console.warn('[arsist] GPUドライバの変更を検出しました → シェーダキャッシュを破棄して再起動します');
+  try {
+    store.set(GPU_PURGE_PENDING_KEY, true);
+  } catch {
+    // ignore
+  }
+  process.env.ARSIST_GPU_CACHE_RESET_DONE = '1';
+  try {
+    app.relaunch();
+  } catch {
+    // ignore
+  }
+  app.exit(0);
+}
+
+/**
+ * 手動リセット（ヘルプメニュー）。自動検出が効かないケース
+ * （キャッシュ破損、指紋が変わらないドライバ更新など）の逃げ道。
+ * 削除自体は次回起動時（GPUプロセスがキャッシュを掴む前）に行う。
+ */
+function resetGpuCacheAndRelaunch(): void {
+  try {
+    store.set(GPU_PURGE_PENDING_KEY, true);
+  } catch {
+    // ignore
+  }
+  try {
+    app.relaunch();
+  } catch {
+    // ignore
+  }
+  app.exit(0);
 }
 
 // Linux向け：Vulkan周りの警告/不安定さを避ける（WebGLは通常OpenGL経由）
@@ -190,7 +360,7 @@ function updateRecentProjects(projectPath: string) {
 function detectAssetKindByExt(filePath: string): 'model' | 'texture' | 'video' | 'other' {
   const ext = path.extname(filePath).toLowerCase();
   if (['.glb', '.gltf'].includes(ext)) return 'model';
-  if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) return 'texture';
+  if (isUnityTextureExtension(filePath) || isUnsupportedTextureExtension(filePath)) return 'texture';
   if (['.mp4', '.webm', '.mov'].includes(ext)) return 'video';
   return 'other';
 }
@@ -427,6 +597,8 @@ function createMenu(): void {
       submenu: [
         { label: mt('menu.docs'), click: () => shell.openExternal('https://arsist.dev/docs') },
         { label: mt('menu.github'), click: () => shell.openExternal('https://github.com/arsist') },
+        { type: 'separator' },
+        { label: mt('menu.resetGpuCache'), click: () => resetGpuCacheAndRelaunch() },
         { type: 'separator' },
         { label: mt('menu.about'), click: () => showAboutDialog() },
       ],
@@ -806,9 +978,23 @@ ipcMain.handle('assets:import', async (_, params: { projectPath: string; sourceP
     }
 
     const ext = path.extname(sourcePath).toLowerCase();
+
+    // Unity が取り込めない画像形式はここで断る。
+    // 通してしまうとエディタ上は正常に見えるのに、ビルドすると
+    // UI.Image が sprite=null のまま「真っ白な四角」になる。
+    if (isUnsupportedTextureExtension(sourcePath)) {
+      return {
+        success: false,
+        error:
+          `${ext} は Unity が対応していない画像形式のため取り込めません（ビルドすると白い四角になります）。\n` +
+          `${ext} is not a texture format Unity can import; it would render as a blank white box in the build.\n` +
+          `対応形式 / supported: ${UNITY_TEXTURE_EXTENSIONS.join(', ')}`,
+      };
+    }
+
     const kind = params.kind || (
       ['.glb', '.gltf'].includes(ext) ? 'model' :
-      ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext) ? 'texture' :
+      isUnityTextureExtension(sourcePath) ? 'texture' :
       ['.mp4', '.webm', '.mov'].includes(ext) ? 'video' :
       'other'
     );
@@ -1145,6 +1331,10 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+
+  // GPUドライバが更新されていたらシェーダキャッシュを捨てて1回だけ再起動する。
+  // ウィンドウ生成をブロックしないよう await しない。
+  void checkGpuDriverChange();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

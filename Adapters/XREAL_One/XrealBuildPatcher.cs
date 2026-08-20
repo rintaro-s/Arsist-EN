@@ -11,6 +11,7 @@ using UnityEditor.XR.Management.Metadata;
 using UnityEngine.XR.Management;
 using UnityEngine.SceneManagement;
 using System.IO;
+using System.IO.Compression;
 using System.Xml;
 using System.Collections.Generic;
 using System;
@@ -41,6 +42,8 @@ namespace Arsist.Adapters.XrealOne
             // 復活させ、ConfigureXRLoader で最小構成にしたはずの設定を上書きしうる。
             RunXRProjectValidationFixAllBestEffort();
             ConfigureXRLoader();
+            // AGP 8 は同一 namespace の複数ライブラリを許さないため、SDK側AARの重複を解消する
+            EnsureUniqueAarNamespaces();
             ConfigureXRInteraction();
             ApplyQualitySettings();
             ApplyTransparentCameraSettingsToBuildScenes();
@@ -95,6 +98,343 @@ namespace Arsist.Adapters.XrealOne
             {
                 Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Failed to run XR Project Validation FixAll (best-effort): {e.Message}");
             }
+        }
+
+        /// <summary>
+        /// XREAL SDK の AAR が持つ重複した Android namespace を一意化する。
+        ///
+        /// XREAL SDK 3.1.0 の nr_*.aar は全て AndroidManifest.xml で
+        /// package="nrsdk.pack" を宣言している。Unity 2022 (AGP 7) までは通ったが、
+        /// Unity 6 (AGP 8) は同一 namespace を複数ライブラリで使うことを禁止しており、
+        ///   Namespace 'nrsdk.pack' is used in multiple modules and/or libraries:
+        ///   :nr_loader:, :nr_common:
+        /// でマニフェストマージが失敗し、Gradle ビルドごと落ちる。
+        ///
+        /// これらの AAR は classes.jar が空・R.txt が空・res/ 無しの
+        /// 「ネイティブ .so の入れ物」なので、namespace は AGP の一意性チェック以外に
+        /// 何も参照されない。よってファイル名由来のサフィックスを足して衝突を解消する。
+        ///
+        /// 対象は作業用Unityプロジェクトへコピーされた Packages/com.xreal.xr 配下のみ。
+        /// ユーザー提供の sdk/ 本体は書き換えない。
+        /// </summary>
+        [MenuItem("Arsist/Adapters/XREAL One/Fix Duplicate AAR Namespaces")]
+        public static void EnsureUniqueAarNamespaces()
+        {
+            try
+            {
+                var sdkRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Packages", "com.xreal.xr"));
+                if (!Directory.Exists(sdkRoot))
+                {
+                    Debug.Log($"[Arsist-{ADAPTER_ID}] XREAL SDK package folder not found, skipping AAR namespace fix: {sdkRoot}");
+                    return;
+                }
+
+                var aarPaths = Directory.GetFiles(sdkRoot, "*.aar", SearchOption.AllDirectories)
+                    .OrderBy(p => p, StringComparer.Ordinal)
+                    .ToList();
+                if (aarPaths.Count == 0) return;
+
+                // namespace -> AARパス群
+                var byNamespace = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+                foreach (var aarPath in aarPaths)
+                {
+                    var ns = ReadAarNamespace(aarPath);
+                    if (string.IsNullOrWhiteSpace(ns)) continue;
+                    if (!byNamespace.TryGetValue(ns, out var list))
+                    {
+                        list = new List<string>();
+                        byNamespace[ns] = list;
+                    }
+                    list.Add(aarPath);
+                }
+
+                var patched = 0;
+                foreach (var kvp in byNamespace)
+                {
+                    if (kvp.Value.Count < 2) continue; // 衝突していないものは触らない
+
+                    Debug.Log($"[Arsist-{ADAPTER_ID}] Duplicate AAR namespace '{kvp.Key}' in: {string.Join(", ", kvp.Value.Select(Path.GetFileName))}");
+                    foreach (var aarPath in kvp.Value)
+                    {
+                        var suffix = SanitizeNamespaceSegment(Path.GetFileNameWithoutExtension(aarPath));
+                        if (string.IsNullOrEmpty(suffix)) continue;
+
+                        var uniqueNamespace = $"{kvp.Key}.{suffix}";
+                        if (WriteAarNamespace(aarPath, uniqueNamespace))
+                        {
+                            Debug.Log($"[Arsist-{ADAPTER_ID}] {Path.GetFileName(aarPath)}: namespace '{kvp.Key}' -> '{uniqueNamespace}'");
+                            patched++;
+                        }
+                    }
+                }
+
+                if (patched > 0)
+                {
+                    AssetDatabase.Refresh();
+                    Debug.Log($"[Arsist-{ADAPTER_ID}] Made {patched} AAR namespace(s) unique for AGP 8 (Unity 6)");
+                }
+            }
+            catch (Exception e)
+            {
+                // ここで失敗すると Gradle の manifest merger で落ちるため、原因を明示しておく
+                Debug.LogError($"[Arsist-{ADAPTER_ID}] Failed to make AAR namespaces unique: {e.Message}\n{e.StackTrace}");
+            }
+        }
+
+        private const string AAR_MANIFEST_ENTRY = "AndroidManifest.xml";
+
+        /// <summary>AAR 内 AndroidManifest.xml の package 属性を読む。取れなければ null。</summary>
+        private static string ReadAarNamespace(string aarPath)
+        {
+            try
+            {
+                // ZipFile は System.IO.Compression.FileSystem 側の型なので、
+                // 参照の有無に左右されない ZipArchive + FileStream を使う。
+                using (var stream = new FileStream(aarPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
+                {
+                    var entry = archive.GetEntry(AAR_MANIFEST_ENTRY);
+                    if (entry == null) return null;
+                    using (var reader = new StreamReader(entry.Open()))
+                    {
+                        return ExtractManifestPackage(reader.ReadToEnd());
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Could not read namespace from {Path.GetFileName(aarPath)}: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// AAR 内 AndroidManifest.xml の package 属性を書き換える。変更したら true。
+        ///
+        /// ZipArchiveMode.Update は使わない。Mono の Update 実装は
+        /// 「中央ディレクトリからは全エントリが見えるが、ローカルヘッダを逐次読むと
+        ///  途中で止まる」壊れた zip を作ることがあり、Gradle の AAR 展開
+        ///  (ZipInputStream 相当) が AndroidManifest.xml を取り出せず
+        ///  AarResourcesCompilerTransform が NoSuchFileException で落ちる。
+        /// そのため一時ファイルへ zip を丸ごと書き起こし、検証してから差し替える。
+        /// </summary>
+        private static bool WriteAarNamespace(string aarPath, string newNamespace)
+        {
+            var tempPath = aarPath + ".arsist-tmp";
+            try
+            {
+                var rewrote = false;
+
+                using (var srcStream = new FileStream(aarPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var src = new ZipArchive(srcStream, ZipArchiveMode.Read))
+                using (var dstStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (var dst = new ZipArchive(dstStream, ZipArchiveMode.Create))
+                {
+                    foreach (var entry in src.Entries)
+                    {
+                        var isManifest = string.Equals(entry.FullName, AAR_MANIFEST_ENTRY, StringComparison.Ordinal);
+                        var newEntry = dst.CreateEntry(entry.FullName, System.IO.Compression.CompressionLevel.Optimal);
+                        try
+                        {
+                            newEntry.LastWriteTime = entry.LastWriteTime;
+                        }
+                        catch
+                        {
+                            // 範囲外の日時を持つエントリはそのままにする
+                        }
+
+                        using (var input = entry.Open())
+                        using (var output = newEntry.Open())
+                        {
+                            if (isManifest)
+                            {
+                                string xml;
+                                using (var reader = new StreamReader(input))
+                                {
+                                    xml = reader.ReadToEnd();
+                                }
+
+                                var updated = ReplaceManifestPackage(xml, newNamespace);
+                                rewrote = !string.Equals(updated, xml, StringComparison.Ordinal);
+
+                                // BOM を付けない UTF-8（AAPT2 は先頭が '<' である必要がある）
+                                using (var writer = new StreamWriter(output, new System.Text.UTF8Encoding(false)))
+                                {
+                                    writer.Write(updated);
+                                }
+                            }
+                            else
+                            {
+                                input.CopyTo(output);
+                            }
+                        }
+                    }
+                }
+
+                if (!rewrote)
+                {
+                    File.Delete(tempPath);
+                    return false;
+                }
+
+                if (!VerifyAarIsSequentiallyReadable(tempPath, newNamespace))
+                {
+                    // 壊れた AAR で元を上書きすると、以降クリーンビルドしないと復旧できない
+                    Debug.LogError($"[Arsist-{ADAPTER_ID}] Rewritten AAR failed verification, keeping the original: {Path.GetFileName(aarPath)}");
+                    File.Delete(tempPath);
+                    return false;
+                }
+
+                File.Delete(aarPath);
+                File.Move(tempPath, aarPath);
+                return true;
+            }
+            catch
+            {
+                if (File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { /* best-effort */ }
+                }
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// 書き出した AAR が「ローカルヘッダを頭から順に読む」方式でも全エントリ辿れるかを検証する。
+        /// Gradle の AAR 展開はこの読み方をするため、中央ディレクトリだけ正しくても不十分。
+        /// </summary>
+        private static bool VerifyAarIsSequentiallyReadable(string aarPath, string expectedNamespace)
+        {
+            try
+            {
+                int centralCount;
+                using (var stream = new FileStream(aarPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
+                {
+                    centralCount = archive.Entries.Count;
+                }
+
+                int seen;
+                using (var stream = new FileStream(aarPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    // ZipArchive は中央ディレクトリを読むため逐次読みの検証には使えない
+                    seen = CountSequentialLocalEntries(stream);
+                }
+
+                var manifestOk = false;
+
+                using (var stream = new FileStream(aarPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
+                {
+                    var entry = archive.GetEntry(AAR_MANIFEST_ENTRY);
+                    if (entry != null)
+                    {
+                        using (var reader = new StreamReader(entry.Open()))
+                        {
+                            manifestOk = string.Equals(ExtractManifestPackage(reader.ReadToEnd()), expectedNamespace, StringComparison.Ordinal);
+                        }
+                    }
+                }
+
+                if (!manifestOk)
+                {
+                    Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Verification: manifest namespace mismatch in {Path.GetFileName(aarPath)}");
+                    return false;
+                }
+                if (seen != centralCount)
+                {
+                    Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Verification: {Path.GetFileName(aarPath)} has {centralCount} entries in the central directory but only {seen} readable local headers");
+                    return false;
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist-{ADAPTER_ID}] Verification of {Path.GetFileName(aarPath)} failed: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// ローカルファイルヘッダを先頭から順に辿ってエントリ数を数える。
+        /// Gradle/ZipInputStream と同じ読み方なので、中央ディレクトリだけ正しい
+        /// 「壊れた zip」をここで検出できる。辿れなくなった時点で打ち切る。
+        /// </summary>
+        private static int CountSequentialLocalEntries(Stream stream)
+        {
+            const uint LocalHeaderSignature = 0x04034b50;
+            const uint CentralHeaderSignature = 0x02014b50;
+            const int LocalHeaderSize = 30;
+
+            var header = new byte[LocalHeaderSize];
+            var count = 0;
+            long offset = 0;
+
+            while (true)
+            {
+                stream.Position = offset;
+                if (!ReadExactly(stream, header, LocalHeaderSize)) return count;
+
+                var signature = BitConverter.ToUInt32(header, 0);
+                if (signature == CentralHeaderSignature) return count; // 正常終了
+                if (signature != LocalHeaderSignature) return count;   // 壊れている
+
+                var flags = BitConverter.ToUInt16(header, 6);
+                var compressedSize = BitConverter.ToUInt32(header, 18);
+                var nameLength = BitConverter.ToUInt16(header, 26);
+                var extraLength = BitConverter.ToUInt16(header, 28);
+
+                // bit 3 が立っているとサイズはデータ記述子側にあり、ここからは辿れない。
+                // ZipArchiveMode.Create + シーク可能ストリームでは立たない想定。
+                if ((flags & 0x0008) != 0) return count;
+
+                count++;
+                offset += LocalHeaderSize + nameLength + extraLength + compressedSize;
+            }
+        }
+
+        private static bool ReadExactly(Stream stream, byte[] buffer, int count)
+        {
+            var read = 0;
+            while (read < count)
+            {
+                var n = stream.Read(buffer, read, count - read);
+                if (n <= 0) return false;
+                read += n;
+            }
+            return true;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex s_ManifestPackageRegex =
+            new System.Text.RegularExpressions.Regex(
+                "(<manifest\\b[^>]*?\\bpackage\\s*=\\s*\")([^\"]*)(\")",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        private static string ExtractManifestPackage(string xml)
+        {
+            if (string.IsNullOrEmpty(xml)) return null;
+            var match = s_ManifestPackageRegex.Match(xml);
+            return match.Success ? match.Groups[2].Value : null;
+        }
+
+        private static string ReplaceManifestPackage(string xml, string newNamespace)
+        {
+            return s_ManifestPackageRegex.Replace(
+                xml,
+                m => m.Groups[1].Value + newNamespace + m.Groups[3].Value,
+                1);
+        }
+
+        /// <summary>ファイル名を Android namespace のセグメントとして使える形にする。</summary>
+        private static string SanitizeNamespaceSegment(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            var chars = raw.Select(c => (char.IsLetterOrDigit(c) || c == '_') ? c : '_').ToArray();
+            var segment = new string(chars).Trim('_');
+            if (segment.Length == 0) return null;
+            // Java パッケージのセグメントは数字始まりにできない
+            if (char.IsDigit(segment[0])) segment = "_" + segment;
+            return segment;
         }
 
         private static void ApplyTransparentCameraSettingsToBuildScenes()

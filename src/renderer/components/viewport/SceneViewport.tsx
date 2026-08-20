@@ -35,29 +35,146 @@ function OriginAxes() {
   );
 }
 
-function StartPoseMarker() {
+/** アダプターの adapter.json から読んだ視野角 (度)。 */
+interface DeviceFov {
+  horizontal: number;
+  vertical: number;
+}
+
+/**
+ * adapter.json の display から視野角を取り出す。
+ *
+ * XREAL_One は display.fieldOfView が直下にあるが、Meta_Quest は
+ * display.quest3 / display.quest2 のように機種ごとにぶら下がっている。
+ * どちらの形でも拾えるようにする。
+ */
+function extractDeviceFov(adapter: any): DeviceFov | null {
+  const display = adapter?.display;
+  if (!display || typeof display !== 'object') return null;
+
+  const read = (candidate: any): DeviceFov | null => {
+    const fov = candidate?.fieldOfView;
+    const h = Number(fov?.horizontal);
+    const v = Number(fov?.vertical);
+    if (!Number.isFinite(h) || !Number.isFinite(v) || h <= 0 || v <= 0) return null;
+    return { horizontal: h, vertical: v };
+  };
+
+  return read(display) ?? Object.values(display).map(read).find((f): f is DeviceFov => f !== null) ?? null;
+}
+
+/**
+ * ターゲットデバイスの視野角を adapter.json から取得する。
+ * 取れなかった場合は null を返し、視錐台は描かない（適当な値でそれっぽく
+ * 描くと「実機でもこの範囲に入る」と誤解されるため）。
+ */
+function useDeviceFov(targetDevice: string | undefined): DeviceFov | null {
+  const [fov, setFov] = useState<DeviceFov | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFov(null);
+    if (!targetDevice || !window.electronAPI?.adapters) return;
+
+    window.electronAPI.adapters
+      .get(targetDevice)
+      .then((adapter) => {
+        if (!cancelled) setFov(extractDeviceFov(adapter));
+      })
+      .catch(() => {
+        if (!cancelled) setFov(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [targetDevice]);
+
+  return fov;
+}
+
+/**
+ * ユーザーの初期視点（スポーン時の視点）マーカー。
+ *
+ * Arsist の座標系では 原点 = ユーザーの初期視点、Z+ = 正面 と定義されている
+ * （ArsistBuildPipeline の座標系定義コメントを参照）。ビルド時に XROrigin の
+ * TrackingOriginMode を Device / CameraYOffset を 0 に固定しているので、実機でも
+ * セッション開始時のヘッド位置がここに来る。
+ */
+function SpawnViewMarker({ fov, distance }: { fov: DeviceFov | null; distance: number }) {
   const t = useT();
+  const color = '#4ec9b0';
+
+  // 視錐台: 原点を頂点に、distance[m] 先の可視矩形まで
+  const frustum = useMemo(() => {
+    if (!fov) return null;
+    const halfW = distance * Math.tan((fov.horizontal / 2) * (Math.PI / 180));
+    const halfH = distance * Math.tan((fov.vertical / 2) * (Math.PI / 180));
+    const corners: [number, number, number][] = [
+      [-halfW, halfH, distance],
+      [halfW, halfH, distance],
+      [halfW, -halfH, distance],
+      [-halfW, -halfH, distance],
+    ];
+    return { halfW, halfH, corners };
+  }, [fov, distance]);
+
   return (
     <group>
-      {/* Origin */}
+      {/* 視点そのもの */}
       <mesh position={[0, 0, 0]}>
         <sphereGeometry args={[0.06, 16, 16]} />
-        <meshStandardMaterial color={'#ffffff'} emissive={'#ffffff'} emissiveIntensity={0.4} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
       </mesh>
 
-      {/* Forward (+Z) marker */}
-      <Line points={[[0, 0, 0], [0, 0, 1]]} color="#ffffff" lineWidth={2} />
-      <Line points={[[0, 0, 1], [0.08, 0, 0.9]]} color="#ffffff" lineWidth={2} />
-      <Line points={[[0, 0, 1], [-0.08, 0, 0.9]]} color="#ffffff" lineWidth={2} />
+      {/* 正面 (+Z) */}
+      <Line points={[[0, 0, 0], [0, 0, 0.6]]} color={color} lineWidth={2} />
+      <Line points={[[0, 0, 0.6], [0.06, 0, 0.5]]} color={color} lineWidth={2} />
+      <Line points={[[0, 0, 0.6], [-0.06, 0, 0.5]]} color={color} lineWidth={2} />
+      <Text position={[0, -0.12, 0.62]} fontSize={0.1} color={color} anchorX="center" anchorY="middle">
+        {t('scene.spawnViewForward')}
+      </Text>
 
-      {/* 1m scale */}
+      {/* 視錐台 */}
+      {frustum && (
+        <group>
+          {frustum.corners.map((corner, i) => (
+            <Line key={`edge-${i}`} points={[[0, 0, 0], corner]} color={color} lineWidth={1} transparent opacity={0.5} />
+          ))}
+          <Line
+            points={[...frustum.corners, frustum.corners[0]]}
+            color={color}
+            lineWidth={1.5}
+            transparent
+            opacity={0.8}
+          />
+          <Text
+            position={[0, frustum.halfH + 0.12, distance]}
+            fontSize={0.12}
+            color={color}
+            anchorX="center"
+            anchorY="middle"
+          >
+            {t('scene.spawnViewFov', {
+              h: String(fov!.horizontal),
+              v: String(fov!.vertical),
+              d: String(distance),
+            })}
+          </Text>
+        </group>
+      )}
+
+      {/* 1m スケール */}
       <Line points={[[0, 0, 0], [1, 0, 0]]} color="#f14c4c" lineWidth={2} />
       <Text position={[1.05, 0.02, 0]} fontSize={0.15} color="#f14c4c" anchorX="left" anchorY="middle">
         1m
       </Text>
 
-      <Text position={[0, 0.22, 0]} fontSize={0.16} color="#ffffff" anchorX="center" anchorY="middle">
-        {t('scene.startMarker')}
+      <Text position={[0, 0.3, 0]} fontSize={0.16} color={color} anchorX="center" anchorY="middle">
+        {t('scene.spawnView')}
+      </Text>
+      <Text position={[0, 0.16, 0]} fontSize={0.1} color="#9a9a9a" anchorX="center" anchorY="middle">
+        {fov ? t('scene.spawnViewOrigin') : t('scene.spawnViewFovUnknown')}
       </Text>
     </group>
   );
@@ -65,12 +182,18 @@ function StartPoseMarker() {
 
 export function SceneViewport() {
   const t = useT();
-  const { showGrid, showAxes, transformMode, transformSpace, setTransformMode } = useUIStore();
+  const { showGrid, showAxes, showSpawnView, transformMode, transformSpace, setTransformMode } = useUIStore();
   const { project, currentSceneId, selectedObjectIds, selectObjects, updateObject, addObject } = useProjectStore();
   const [cameraPos, setCameraPos] = useState({ x: 5, y: 5, z: 5 });
   const [showHelp, setShowHelp] = useState(false);
   const trackingMode = project?.arSettings?.trackingMode || '6dof';
   const presentationMode = project?.arSettings?.presentationMode || 'world_anchored';
+  // 視錐台は「デフォルトの奥行き」までを描く。そこがオブジェクトの既定の置き場所なので、
+  // 「その距離で視野に入るか」がそのまま知りたい情報になる。
+  const spawnViewDistance = project?.arSettings?.defaultDepth && project.arSettings.defaultDepth > 0
+    ? project.arSettings.defaultDepth
+    : 2;
+  const deviceFov = useDeviceFov(project?.targetDevice);
   
   const currentScene = project?.scenes.find(s => s.id === currentSceneId);
 
@@ -240,8 +363,8 @@ export function SceneViewport() {
         {/* Origin axis */}
         {showAxes && <OriginAxes />}
 
-        {/* For 6DoF, always visualize the start position (origin) */}
-        {trackingMode === '6dof' && <StartPoseMarker />}
+        {/* ユーザーの初期視点（原点）。トラッキングモードに関係なく「どこから見るか」は常に要る */}
+        {showSpawnView && <SpawnViewMarker fov={deviceFov} distance={spawnViewDistance} />}
 
         {/* Grid */}
         {showGrid && (

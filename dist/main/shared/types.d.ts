@@ -36,6 +36,14 @@ export interface DataFlowDefinition {
     dataSources: DataSourceDefinition[];
     transforms: TransformDefinition[];
 }
+/**
+ * 背景（カメラの clear）の描き方。
+ *
+ * XREAL のような光学シースルー機では、そもそも黒＝素通しなので選択の余地は無い
+ * （常に passthrough 相当）。Quest のようなビデオシースルー機だけが、
+ * 「パススルー映像を見せる MR」と「現実を隠す VR」を選べる。
+ */
+export type BackgroundMode = 'passthrough' | 'skybox' | 'solidColor';
 export interface ARSettings {
     trackingMode: TrackingMode;
     presentationMode: PresentationMode;
@@ -53,6 +61,13 @@ export interface ARSettings {
     remoteControlPort?: number;
     /** WebSocket リモート制御の認証パスワード（空文字なら認証なし） */
     remoteControlPassword?: string;
+    /**
+     * 背景の描き方 (default: 'passthrough')。
+     * ビデオシースルー機 (Meta Quest) でのみ意味を持つ。XREAL では無視される。
+     */
+    backgroundMode?: BackgroundMode;
+    /** backgroundMode === 'solidColor' のときの背景色 (#RRGGBB, default: '#000000') */
+    backgroundColor?: string;
 }
 export interface DesignSystem {
     defaultFont: string;

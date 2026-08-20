@@ -7,6 +7,7 @@ import {
   Grid3X3,
   Axis3D,
   Magnet,
+  PersonStanding,
   Settings,
   Download,
   Eye,
@@ -31,6 +32,8 @@ export function Toolbar() {
     setShowGrid,
     showAxes,
     setShowAxes,
+    showSpawnView,
+    setShowSpawnView,
     snapToGrid,
     setSnapToGrid,
     setShowBuildDialog,
@@ -97,6 +100,7 @@ export function Toolbar() {
             <div className="flex items-center bg-arsist-hover rounded-md p-0.5 gap-0.5">
               <ToolBtn icon={<Grid3X3 size={15} />} active={showGrid} onClick={() => setShowGrid(!showGrid)} tip={t('toolbar.grid')} />
               <ToolBtn icon={<Axis3D size={15} />} active={showAxes} onClick={() => setShowAxes(!showAxes)} tip={t('toolbar.axes')} />
+              <ToolBtn icon={<PersonStanding size={15} />} active={showSpawnView} onClick={() => setShowSpawnView(!showSpawnView)} tip={t('toolbar.spawnView')} />
               <ToolBtn icon={<Magnet size={15} />} active={snapToGrid} onClick={() => setSnapToGrid(!snapToGrid)} tip={t('toolbar.snap')} />
             </div>
           </>

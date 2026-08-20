@@ -17,10 +17,26 @@ namespace Arsist.Runtime
     /// </summary>
     public class XROriginSetup : MonoBehaviour
     {
+        /// <summary>背景の描き方。ArsistBuildPipeline がビルド時に arSettings.backgroundMode から設定する。</summary>
+        public enum BackgroundMode
+        {
+            /// <summary>透過（光学シースルー / Quest のパススルー）。カメラは alpha=0 の黒でクリアする。</summary>
+            Passthrough = 0,
+            /// <summary>Skybox を背景に描く（VR）。</summary>
+            Skybox = 1,
+            /// <summary>単色で塗りつぶす（VR）。</summary>
+            SolidColor = 2,
+        }
+
         [Header("Camera Settings")]
         [SerializeField] private Camera _mainCamera;
         [SerializeField] private Transform _cameraOffset;
         [SerializeField] private float _defaultHeight = 1.6f;
+
+        [Tooltip("背景の描き方。ビルド時に arSettings.backgroundMode から設定される。")]
+        [SerializeField] private BackgroundMode _backgroundMode = BackgroundMode.Passthrough;
+        [Tooltip("_backgroundMode = SolidColor のときの背景色。")]
+        [SerializeField] private Color _backgroundColor = Color.black;
         
         [Header("Interaction")]
         [SerializeField] private bool _enableGazeInteraction = true;
@@ -134,14 +150,13 @@ namespace Arsist.Runtime
                 {
                     _mainCamera.tag = "MainCamera";
                 }
-                _mainCamera.clearFlags = CameraClearFlags.SolidColor;
-                // XREAL: 黒(RGB0)を透過扱い。alpha=0の黒に揃える。
-                _mainCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                ApplyBackground(_mainCamera);
                 _mainCamera.nearClipPlane = 0.1f;
                 _mainCamera.farClipPlane = 100f;
 
                 // AR Foundation の ARCameraBackground が付いていると視界が塗りつぶされることがあるため除去
                 // （パッケージが無い場合もあるので、型名で安全に取得する）
+                // VR 背景（Skybox / SolidColor）でも、AR 用のカメラ映像描画は不要なので同じく外す。
                 var arCameraBackground = _mainCamera.GetComponent("UnityEngine.XR.ARFoundation.ARCameraBackground");
                 if (arCameraBackground != null)
                 {
@@ -156,6 +171,35 @@ namespace Arsist.Runtime
                 {
                     _cameraOffset = _mainCamera.transform.parent;
                 }
+            }
+        }
+
+        /// <summary>
+        /// 背景（カメラの clear）を _backgroundMode に従って設定する。
+        ///
+        /// 以前はここで無条件に alpha=0 の黒クリアを強制していたため、ビルド時に
+        /// Skybox / 単色を選んでもランタイムで上書きされて必ず透過になっていた。
+        /// </summary>
+        private void ApplyBackground(Camera cam)
+        {
+            switch (_backgroundMode)
+            {
+                case BackgroundMode.Skybox:
+                    cam.clearFlags = CameraClearFlags.Skybox;
+                    break;
+
+                case BackgroundMode.SolidColor:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    // VR 背景は不透過。alpha を落とすと Quest 側で素通しになってしまう。
+                    cam.backgroundColor = new Color(_backgroundColor.r, _backgroundColor.g, _backgroundColor.b, 1f);
+                    break;
+
+                default:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    // 光学シースルー(XREAL)は黒(RGB0)がそのまま透過。
+                    // Quest のパススルーも、アンダーレイ合成のために alpha=0 の黒が必要。
+                    cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                    break;
             }
         }
 

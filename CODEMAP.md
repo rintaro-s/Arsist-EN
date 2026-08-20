@@ -96,6 +96,7 @@ to configure Unity + the scene the way the SDK expects, then get out of the way.
 | XREAL scene rig | [ArsistBuildPipeline.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs) `CreateXROrigin` | canonical = SDK prefab **`XR Interaction Setup`** (carries `XREALSessionManager`, `XREALTrackingModeChangeListener`, InputActionManager w/ `XREAL Actions`, XR Origin cam=black FOV≈25). Note its inner XR Origin is a nested **XRI Starter Assets** prefab (external dep) |
 | XREAL runtime pose/DoF | `XROriginSetup.cs` | `XREALUtility.MainCamera` = `XROrigin.Camera` via TrackedPoseDriver; DoF via `XREALPlugin.SwitchTrackingTypeAsync`; `TrackingType {MODE_6DOF,MODE_3DOF,MODE_0DOF,MODE_0DOF_STAB}` |
 | Quest player settings + manifest | [QuestBuildPatcher.cs](Adapters/Meta_Quest/QuestBuildPatcher.cs) | Meta XR SDK; Vulkan+GLES3, SinglePassInstanced, OVRManager |
+| Background (passthrough vs VR) | `ArsistBuildPipeline.GetBackgroundMode` / `ApplyBackgroundToCamera` / `ConfigureQuestPassthrough` + `XROriginSetup.ApplyBackground` | `OVRPassthroughLayer` (Underlay) + `OVRManager.isInsightPassthroughEnabled` + `OculusProjectConfig._insightPassthroughSupport` |
 
 **Why XREAL was less stable than Quest:** the engine reimplemented (via reflection + manual manifest/scene patching)
 things the SDK does automatically, and some of it conflicted (LAUNCHER vs multi-resume; fictional `XREALSessionConfig`
@@ -118,6 +119,27 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   depth-sorted against the scene.
 - Graphics Jobs is unsupported on OpenGLES; XREAL is GLES3-only, so `PlayerSettings.graphicsJobs` must stay
   `false`.
+- **Spawn viewpoint = the scene origin.** `XROrigin.RequestedTrackingOriginMode` defaults to `NotSpecified`, and
+  the resulting height is device-dependent: in `Device` mode XROrigin adds `CameraYOffset` (default **1.1176 m**)
+  to the floor-offset object, and in `Floor` mode (what Quest reports) the pose carries the user's real height
+  instead. Either way content authored at `(0,0,0)` lands somewhere other than the user's eye, differently per
+  device. `PinSpawnViewpointToOrigin()` forces `Device` + `CameraYOffset = 0` so the session-start head pose is
+  exactly the origin — which is what the editor's spawn-viewpoint marker draws.
+- Background mode is **only** a Quest concept. On XREAL, black (RGB 0) is transparent in the optical combiner, so
+  a skybox or solid-colour background does not hide reality — it just tints the view. `GetBackgroundMode()`
+  therefore pins XREAL to `passthrough` and logs a warning if the project asked for anything else.
+- XREAL SDK 3.1.0 ships several AARs (`nr_common`, `nr_loader`, …) that **all declare
+  `package="nrsdk.pack"`**. AGP 8 (Unity 6) rejects a namespace shared by multiple libraries, so the Gradle
+  manifest merger fails with `Namespace 'nrsdk.pack' is used in multiple modules and/or libraries`. This built
+  fine on Unity 2022/AGP 7. `XrealBuildPatcher.EnsureUniqueAarNamespaces()` rewrites the namespace inside the
+  *copied* AARs under `Packages/com.xreal.xr` (never `sdk/`). Safe because those AARs carry only native `.so`
+  files — empty `classes.jar`, empty `R.txt`, no `res/`.
+- When rewriting an AAR, **never use `ZipArchiveMode.Update`**. Mono's implementation produces an archive whose
+  central directory lists every entry but whose *local headers* stop being walkable partway through. Gradle
+  extracts AARs sequentially (`ZipInputStream`-style), so it silently drops the entries after the break and
+  `AarResourcesCompilerTransform` dies with `NoSuchFileException: .../AndroidManifest.xml` — while `unzip -l`
+  and any central-directory reader show the file as present. `WriteAarNamespace()` writes a fresh archive with
+  `ZipArchiveMode.Create` and verifies the local-header chain before swapping the file in.
 
 ---
 
@@ -127,6 +149,14 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
 - **A build fails / retry / licensing** → [UnityBuilder.ts](src/main/unity/UnityBuilder.ts) `build()` and retry ladder.
 - **XREAL setup / stability / DoF / manifest** → [XrealBuildPatcher.cs](Adapters/XREAL_One/XrealBuildPatcher.cs) + `CreateXROrigin` in [ArsistBuildPipeline.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs); ground truth in `sdk/com.xreal.xr/package/`.
 - **Quest setup** → [QuestBuildPatcher.cs](Adapters/Meta_Quest/QuestBuildPatcher.cs).
+- **Where the user starts / what they see** → `SpawnViewMarker` in
+  [SceneViewport.tsx](src/renderer/components/viewport/SceneViewport.tsx) (FOV read from the adapter's
+  `display.fieldOfView`, toggled by `showSpawnView`) + `PinSpawnViewpointToOrigin` in `ArsistBuildPipeline.cs`.
+  Coordinate contract documented in `doc/01-ir-types.md`.
+- **Background: passthrough (MR) vs skybox/solid (VR)** → `arSettings.backgroundMode` in the Build dialog →
+  `ArsistBuildPipeline` (`GetBackgroundMode`, `ApplyBackgroundToCamera`, `ConfigureQuestPassthrough`,
+  `ConfigureOculusProjectConfigForQuest`) **and** `XROriginSetup.ApplyBackground`. Both sides must agree —
+  `XROriginSetup.Awake()` reconfigures the camera at runtime, so a build-time-only change is silently undone.
 - **Add a new device** → new folder in [Adapters/](Adapters/) (`adapter.json` + manifest + patcher); see `doc/05-adapter-manager.md`.
 - **IR schema / a new project field** → [src/shared/types.ts](src/shared/types.ts) (then bridge + Unity consumer).
 - **IR → Unity JSON mapping** → [src/bridge/UnityBridge.ts](src/bridge/UnityBridge.ts).

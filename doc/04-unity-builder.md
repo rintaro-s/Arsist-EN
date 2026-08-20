@@ -78,6 +78,11 @@ BuildResult {
 
 - Verifies the Unity binary exists and is executable.
 - Extracts and compares the Unity version string (`validate()`).
+- `findIrProblems(config)` runs **before Unity is launched** and aborts the build on IR problems that would
+  otherwise produce an APK that installs fine but is broken on device: a `canvas` object with no (or a dangling)
+  `canvasSettings.layoutId`, an `Image` pointing at a file Unity cannot import as a texture (e.g. `.webp`), and an
+  invalid `arSettings.backgroundMode` / `backgroundColor`. Each problem line carries its own fix instruction —
+  by design there is no silent auto-repair.
 
 ### Phase 2 — Prepare Jint DLLs (`prepare-jint`, 10–20 %)
 

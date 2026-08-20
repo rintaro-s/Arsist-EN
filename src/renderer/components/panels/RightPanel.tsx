@@ -204,28 +204,45 @@ function ObjectInspector() {
           </div>
         )}
 
-        {/* Canvas settings */}
-        {obj.type === 'canvas' && obj.canvasSettings && (
-          <div className="space-y-2">
-            <label className="input-label">{t('rightPanel.canvasSettings')}</label>
-            <Field label={t('rightPanel.uiLayout')}>
-              <select className="input text-xs" value={obj.canvasSettings.layoutId}
-                onChange={(e) => updateObject(obj.id, { canvasSettings: { ...obj.canvasSettings!, layoutId: e.target.value } })}>
-                {canvasLayouts.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-            </Field>
-            <div className="grid grid-cols-2 gap-2">
-              <Field label={t('rightPanel.widthMeters')}>
-                <input type="number" step="0.1" className="input text-xs py-1" value={obj.canvasSettings.widthMeters}
-                  onChange={(e) => updateObject(obj.id, { canvasSettings: { ...obj.canvasSettings!, widthMeters: parseFloat(e.target.value) || 1 } })} />
+        {/* Canvas settings
+            canvasSettings が欠けている Canvas でも必ず表示する。
+            以前は `obj.canvasSettings &&` で描画をガードしていたため、
+            参照先レイアウトを削除した Canvas は設定UIごと消えて
+            レイアウトを割り当て直せなくなっていた。 */}
+        {obj.type === 'canvas' && (() => {
+          const canvasSettings = obj.canvasSettings ?? {
+            layoutId: '',
+            widthMeters: 1.2,
+            heightMeters: 0.7,
+            pixelsPerUnit: 1000,
+          };
+          const layoutMissing = !canvasSettings.layoutId || !canvasLayouts.some((l) => l.id === canvasSettings.layoutId);
+          return (
+            <div className="space-y-2">
+              <label className="input-label">{t('rightPanel.canvasSettings')}</label>
+              <Field label={t('rightPanel.uiLayout')}>
+                <select className="input text-xs" value={layoutMissing ? '' : canvasSettings.layoutId}
+                  onChange={(e) => updateObject(obj.id, { canvasSettings: { ...canvasSettings, layoutId: e.target.value } })}>
+                  <option value="">{t('rightPanel.uiLayoutUnassigned')}</option>
+                  {canvasLayouts.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
               </Field>
-              <Field label={t('rightPanel.heightMeters')}>
-                <input type="number" step="0.1" className="input text-xs py-1" value={obj.canvasSettings.heightMeters}
-                  onChange={(e) => updateObject(obj.id, { canvasSettings: { ...obj.canvasSettings!, heightMeters: parseFloat(e.target.value) || 1 } })} />
-              </Field>
+              {layoutMissing && (
+                <p className="text-xs text-arsist-error">{t('rightPanel.uiLayoutMissingHint')}</p>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <Field label={t('rightPanel.widthMeters')}>
+                  <input type="number" step="0.1" className="input text-xs py-1" value={canvasSettings.widthMeters}
+                    onChange={(e) => updateObject(obj.id, { canvasSettings: { ...canvasSettings, widthMeters: parseFloat(e.target.value) || 1 } })} />
+                </Field>
+                <Field label={t('rightPanel.heightMeters')}>
+                  <input type="number" step="0.1" className="input text-xs py-1" value={canvasSettings.heightMeters}
+                    onChange={(e) => updateObject(obj.id, { canvasSettings: { ...canvasSettings, heightMeters: parseFloat(e.target.value) || 1 } })} />
+                </Field>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* VRM Capabilities (shown only for VRM type) */}
         {obj.type === 'vrm' && <VRMCapabilitiesPanel assetId={obj.assetId} modelPath={obj.modelPath} />}

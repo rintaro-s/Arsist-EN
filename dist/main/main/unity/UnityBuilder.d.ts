@@ -80,6 +80,17 @@ export declare class UnityBuilder extends EventEmitter {
         error?: string;
     }>;
     /**
+     * ビルド前に IR の「実機で無言に壊れる」組み合わせを検出する。
+     *
+     * 特に Canvas は、参照先の UILayout が未割り当て/削除済みでもビルド自体は成功し、
+     * 実機ではプレースホルダだけが表示される。原因が分かりにくいので、
+     * 黙って直したり素通りさせたりせず、ここでビルドを失敗させる。
+     */
+    private findIrProblems;
+    /** UI 要素ツリーを深さ優先で走査する。 */
+    private walkUiElements;
+    private formatIrProblems;
+    /**
      * ビルドキャンセル
      */
     cancel(): void;
@@ -203,6 +214,15 @@ export declare class UnityBuilder extends EventEmitter {
     private executeUnityBuild;
     private parseUnityProgress;
     private verifyBuildOutput;
+    /**
+     * エラー行と、それに続くインデントされた本文をまとめて1つのメッセージにする。
+     *
+     * Gradle/AGP は原因を次の行にインデントで書く:
+     *     [:nr_loader:] .../AndroidManifest.xml Error:
+     *         Namespace 'nrsdk.pack' is used in multiple modules and/or libraries: ...
+     * 行単位で拾うと "... Error:" だけがUIに出て、肝心の原因が消えてしまう。
+     */
+    private collectErrorMessage;
     private readUnityLogIssues;
     private resolveAdapterDir;
     private emitProgress;

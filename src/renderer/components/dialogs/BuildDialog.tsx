@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle } from 'lucide-react';
+import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle, Eye, Cloud, Square } from 'lucide-react';
+import type { BackgroundMode } from '../../../shared/types';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ErrorDialog } from './ErrorDialog';
@@ -15,6 +16,15 @@ interface DeviceOption {
   available: boolean;
 }
 
+/**
+ * 背景モードを選べるのはビデオシースルー機だけ。
+ * XREAL のような光学シースルー機は黒＝素通しなので、常にパススルー相当で固定される。
+ */
+function supportsBackgroundChoice(deviceId: string): boolean {
+  const normalized = deviceId.toLowerCase();
+  return normalized.includes('quest') || normalized.includes('meta');
+}
+
 const devices: DeviceOption[] = [
   { id: 'XREAL_One', name: 'XREAL One (Beam Pro)', available: true },
   { id: 'Meta_Quest', name: 'Meta Quest', available: true },
@@ -25,7 +35,7 @@ const devices: DeviceOption[] = [
 
 export function BuildDialog({ onClose }: BuildDialogProps) {
   const t = useT();
-  const { project, projectPath, exportScriptBundle, saveProject, isDirty } = useProjectStore();
+  const { project, projectPath, exportScriptBundle, saveProject, isDirty, updateARSettings } = useProjectStore();
   const { 
     isBuilding, 
     buildProgress, 
@@ -50,6 +60,16 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
   const [errorModal, setErrorModal] = useState<{ summary: string; details?: string } | null>(null);
+
+  // 背景モードはプロジェクト設定 (arSettings) 側に持つ。ビルドごとの一時オプションにすると
+  // 「前回どっちでビルドしたか」が失われて、出来上がったAPKの見た目が説明できなくなるため。
+  const backgroundMode: BackgroundMode = project?.arSettings?.backgroundMode ?? 'passthrough';
+  const backgroundColor = project?.arSettings?.backgroundColor ?? '#000000';
+  const backgroundOptions: Array<{ id: BackgroundMode; label: string; desc: string }> = [
+    { id: 'passthrough', label: t('build.bgPassthrough'), desc: t('build.bgPassthroughDesc') },
+    { id: 'skybox', label: t('build.bgSkybox'), desc: t('build.bgSkyboxDesc') },
+    { id: 'solidColor', label: t('build.bgSolidColor'), desc: t('build.bgSolidColorDesc') },
+  ];
 
   const buildHelpfulErrorSummary = (text: string, logs: string[]) => {
     const combined = [text, ...logs].join('\n');
@@ -343,6 +363,51 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Background (video see-through devices only) */}
+          <div className="mb-6">
+            <label className="input-label">{t('build.background')}</label>
+            {supportsBackgroundChoice(selectedDevice) ? (
+              <>
+                <div className="space-y-2">
+                  {backgroundOptions.map(option => (
+                    <button
+                      key={option.id}
+                      onClick={() => updateARSettings({ backgroundMode: option.id })}
+                      disabled={isBuilding}
+                      className={`w-full p-3 rounded-lg border text-left text-sm ${
+                        backgroundMode === option.id
+                          ? 'border-arsist-accent bg-arsist-accent/10'
+                          : 'border-arsist-primary/30 hover:border-arsist-primary'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {option.id === 'passthrough' ? <Eye size={16} /> : option.id === 'skybox' ? <Cloud size={16} /> : <Square size={16} />}
+                        <span>{option.label}</span>
+                      </div>
+                      <p className="text-xs text-arsist-muted mt-1">{option.desc}</p>
+                    </button>
+                  ))}
+                </div>
+                {backgroundMode === 'solidColor' && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-sm">{t('build.backgroundColorLabel')}</span>
+                    <input
+                      type="color"
+                      value={backgroundColor}
+                      onChange={(e) => updateARSettings({ backgroundColor: e.target.value })}
+                      disabled={isBuilding}
+                      className="h-8 w-14 rounded bg-transparent"
+                    />
+                    <code className="text-xs text-arsist-muted">{backgroundColor}</code>
+                  </div>
+                )}
+                <p className="text-xs text-arsist-muted mt-2">{t('build.backgroundHint')}</p>
+              </>
+            ) : (
+              <p className="text-xs text-arsist-muted">{t('build.backgroundOpticalNote')}</p>
+            )}
           </div>
 
           {/* Output Path */}

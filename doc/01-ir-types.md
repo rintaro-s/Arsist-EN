@@ -36,6 +36,8 @@ The entire project is serialised to `project.json` at the project root. Individu
 | `enableRemoteControl` | boolean | Start WebSocket server on device for runtime control |
 | `remoteControlPort` | number | WebSocket port (default 8765) |
 | `remoteControlPassword` | string | Auth password for remote control (empty = no auth) |
+| `backgroundMode` | `'passthrough' \| 'skybox' \| 'solidColor'` | How the camera clears the background (default `passthrough`). Only meaningful on video see-through headsets (Quest); optical see-through glasses (XREAL) are always passthrough because black is transparent in hardware. |
+| `backgroundColor` | string | `#RRGGBB` used when `backgroundMode === 'solidColor'` (default `#000000`) |
 
 ---
 
@@ -119,6 +121,28 @@ SceneData
 ├── id, name
 └── objects: SceneObject[]
 ```
+
+### Coordinate system — the origin *is* the user
+
+Scene coordinates are **user-relative**, not floor-relative:
+
+| | Editor viewport (IR) | Unity world |
+|---|---|---|
+| origin `(0,0,0)` | the user's spawn viewpoint (eye level, session start) | XR Origin |
+| `Z+` | forward (what the user faces) | forward — unchanged |
+| `X+` | the user's **left** | right — **negated on export** (`x → -x`) |
+| `Y+` | up | up — unchanged |
+
+The conversion (`x → -x`, rotation mirrored about X) lives in `CreateGameObject` in
+[ArsistBuildPipeline.cs](../UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs).
+
+For "origin = the user's eye" to hold on device, `ConfigureXROriginComponent` pins
+`XROrigin.RequestedTrackingOriginMode = Device` and `CameraYOffset = 0` (`PinSpawnViewpointToOrigin`).
+Left at the XR default (`NotSpecified`) the height is device-dependent and matches neither the editor nor the
+other device — see the note in [CODEMAP.md](../CODEMAP.md).
+
+The scene viewport draws this spawn viewpoint (marker + forward arrow + the device's FOV frustum out to
+`arSettings.defaultDepth`); toggle it from the toolbar.
 
 ### `SceneObject`
 

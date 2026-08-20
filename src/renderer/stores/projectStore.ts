@@ -378,11 +378,16 @@ export const useProjectStore = create<ProjectState>()(
           const uhdCount = s.project.uiLayouts.filter((l) => l.scope === 'uhd').length;
           if (uhdCount <= 1) return; // Cannot delete the last one
         }
-        // If a SceneObject has Canvas reference, clear its canvasSettings
+        // このレイアウトを参照している Canvas オブジェクトの参照だけを外す。
+        // canvasSettings ごと消してはいけない: 消すと RightPanel の
+        // キャンバス設定UI（`obj.canvasSettings` があるときだけ描画）が出なくなり、
+        // ユーザーが別レイアウトを割り当て直せなくなる。さらに UnityBridge も
+        // canvasSettings 未設定のオブジェクトを出力しないため、ビルドすると
+        // 「Fallback UI ()」だけが表示される復旧不能な状態になる。
         for (const scene of s.project.scenes) {
           for (const obj of scene.objects) {
             if (obj.type === 'canvas' && obj.canvasSettings?.layoutId === layoutId) {
-              obj.canvasSettings = undefined as any;
+              obj.canvasSettings = { ...obj.canvasSettings, layoutId: '' };
             }
           }
         }

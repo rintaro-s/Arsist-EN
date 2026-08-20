@@ -11,6 +11,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useDataValue } from '../../stores/dataStoreContext';
 import { useT } from '../../i18n';
 import type { UIElement, UIElementType } from '../../../shared/types';
+import { UNITY_TEXTURE_FILTER_EXTENSIONS } from '../../../shared/assets';
 import {
   MousePointer2,
   Hand,
@@ -661,7 +662,7 @@ function ElementRenderer({
     if (!projectPath || !window.electronAPI) return;
 
     const selected = await window.electronAPI.fs.selectFile([
-      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
+      { name: 'Images', extensions: [...UNITY_TEXTURE_FILTER_EXTENSIONS] },
     ]);
     if (!selected) return;
 

@@ -70,6 +70,7 @@ export const STRINGS: Record<string, Entry> = {
   'toolbar.scale': { en: 'Scale', ja: 'スケール' },
   'toolbar.grid': { en: 'Grid', ja: 'グリッド' },
   'toolbar.axes': { en: 'Axes', ja: '軸' },
+  'toolbar.spawnView': { en: 'Spawn viewpoint', ja: '初期視点' },
   'toolbar.snap': { en: 'Snap', ja: 'スナップ' },
   'toolbar.uiHint': { en: 'Add UI elements from the left panel / edit on the canvas', ja: '左パネルからUI要素を追加 / キャンバスで編集' },
   'toolbar.scriptHint': { en: 'JavaScript (Jint) • Add scripts from the left panel / configure triggers on the right panel', ja: 'JavaScript (Jint) • 左パネルからスクリプトを追加 / 右パネルでトリガーを設定' },
@@ -286,6 +287,31 @@ export const STRINGS: Record<string, Entry> = {
   'build.targetDevice': { en: 'Target Device', ja: 'ターゲットデバイス' },
   'build.outputDirectory': { en: 'Output Directory', ja: '出力ディレクトリ' },
   'build.outputPlaceholder': { en: '/path/to/output', ja: '/path/to/output' },
+  'build.background': { en: 'Background', ja: '背景' },
+  'build.backgroundHint': {
+    en: 'Saved with the project (arSettings.backgroundMode).',
+    ja: 'プロジェクトに保存されます（arSettings.backgroundMode）。',
+  },
+  'build.bgPassthrough': { en: 'Passthrough (MR)', ja: 'パススルー（MR）' },
+  'build.bgPassthroughDesc': {
+    en: 'Show the real world behind your content, via the headset cameras.',
+    ja: 'ヘッドセットのカメラ映像を背景にして、現実に重ねて表示します。',
+  },
+  'build.bgSkybox': { en: 'Skybox (VR)', ja: 'スカイボックス（VR）' },
+  'build.bgSkyboxDesc': {
+    en: 'Hide the real world and draw Unity\'s skybox instead.',
+    ja: '現実を隠し、Unity のスカイボックスを背景にします。',
+  },
+  'build.bgSolidColor': { en: 'Solid color (VR)', ja: '単色（VR）' },
+  'build.bgSolidColorDesc': {
+    en: 'Hide the real world and fill the background with one color.',
+    ja: '現実を隠し、背景を単色で塗りつぶします。',
+  },
+  'build.backgroundColorLabel': { en: 'Background color', ja: '背景色' },
+  'build.backgroundOpticalNote': {
+    en: 'Optical see-through glasses are always passthrough: black pixels are transparent, so there is nothing to choose here.',
+    ja: '光学シースルー型のグラスは常にパススルーです（黒がそのまま透過するため、選択の余地がありません）。',
+  },
   'build.options': { en: 'Options', ja: 'オプション' },
   'build.developmentBuild': { en: 'Development Build', ja: '開発ビルド' },
   'build.cleanBuild': { en: 'Clean build (rebuild from scratch)', ja: 'クリーンビルド（最初から作り直す）' },
@@ -341,7 +367,14 @@ export const STRINGS: Record<string, Entry> = {
   'preview.static': { en: 'Static', ja: '静的' },
 
   // ── scene viewport ────────────────────────────────────
-  'scene.startMarker': { en: 'Start (0,0,0) m', ja: 'スタート (0,0,0) m' },
+  'scene.spawnView': { en: 'Spawn viewpoint', ja: '初期視点' },
+  'scene.spawnViewOrigin': { en: 'origin (0,0,0) = eye level', ja: '原点(0,0,0) = 目線の高さ' },
+  'scene.spawnViewForward': { en: 'forward', ja: '正面' },
+  'scene.spawnViewFov': { en: 'FOV {h}° x {v}° @ {d} m', ja: '視野 {h}° x {v}° @ {d} m' },
+  'scene.spawnViewFovUnknown': {
+    en: 'FOV unknown for this device',
+    ja: 'このデバイスの視野角は不明です',
+  },
   'scene.addLabel': { en: 'Add:', ja: '追加:' },
   'scene.addCube': { en: 'Add Cube', ja: 'キューブを追加' },
   'scene.addSphere': { en: 'Add Sphere', ja: '球を追加' },
@@ -512,6 +545,11 @@ export const STRINGS: Record<string, Entry> = {
   'rightPanel.scale': { en: 'scale', ja: 'スケール' },
   'rightPanel.material': { en: 'Material', ja: 'マテリアル' },
   'rightPanel.canvasSettings': { en: 'Canvas Settings', ja: 'キャンバス設定' },
+  'rightPanel.uiLayoutUnassigned': { en: '(not assigned)', ja: '（未割り当て）' },
+  'rightPanel.uiLayoutMissingHint': {
+    en: 'No UI layout assigned. This canvas will show a placeholder in the build until you pick one.',
+    ja: 'UIレイアウトが未割り当てです。選択するまで、このキャンバスはビルドでプレースホルダ表示になります。',
+  },
   'rightPanel.uiLayout': { en: 'UI Layout', ja: 'UIレイアウト' },
   'rightPanel.widthMeters': { en: 'Width (m)', ja: '幅（m）' },
   'rightPanel.heightMeters': { en: 'Height (m)', ja: '高さ（m）' },

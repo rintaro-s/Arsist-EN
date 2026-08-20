@@ -1804,6 +1804,7 @@ namespace Arsist.Builder
             //  └── XREAL Session Config
 
             bool isXreal = IsXrealTargetDevice();
+            var backgroundMode = GetBackgroundMode();
 
             GameObject rigRoot = null;
             if (isXreal)
@@ -1840,8 +1841,7 @@ namespace Arsist.Builder
 
                 var cam = mainCamera.AddComponent<Camera>();
                 // Critical: Configure camera for proper WorldSpace Canvas rendering
-                cam.clearFlags = CameraClearFlags.SolidColor;
-                cam.backgroundColor = new Color(0f, 0f, 0f, 0f); // Transparent for AR
+                // clearFlags / backgroundColor は背景モードに応じて後段で設定する
                 cam.cullingMask = -1; // Everything（HUDレイヤーだけ後で除外する）
                 cam.depth = 0; // Main camera renders first
                 cam.nearClipPlane = 0.1f;
@@ -1876,9 +1876,21 @@ namespace Arsist.Builder
                 xrOrigin.AddComponent(setupType);
             }
 
+            // XROrigin.prefab 経由の場合 originCamera が未取得なので、ここで拾い直す。
+            if (originCamera == null)
+            {
+                originCamera = xrOrigin.GetComponentInChildren<Camera>(true);
+            }
+
+            // 背景（カメラの clear）は「ビルド時のカメラ設定」と「ランタイムの XROriginSetup」の
+            // 両方で決まる。片方だけ直すともう片方に上書きされるため、必ず両方に流す。
+            ApplyBackgroundToCamera(originCamera, backgroundMode);
+            ApplyBackgroundToXROriginSetup(xrOrigin, setupType, backgroundMode);
+
             if (IsQuestTargetDevice())
             {
                 EnsureQuestOvrManager(xrOrigin);
+                ConfigureQuestPassthrough(xrOrigin, originCamera, backgroundMode);
             }
 
             // XREAL: AR Session + SDK の安定化コンポーネントをリグに付与
@@ -2061,55 +2073,34 @@ namespace Arsist.Builder
                 }
                 else
                 {
-                    Debug.LogError($"[Arsist] ❌ UI layout root is NULL for layoutId: {layoutId}");
-                    Debug.LogError($"[Arsist] Layout JSON: {layout.ToString()}");
-                    // Create fallback UI
-                    CreateFallbackUI(canvasGO.transform, layoutId);
+                    // 黙ってプレースホルダを出すと「ビルドは成功したのに実機で何も出ない」に
+                    // なって原因が追えないため、ビルドごと失敗させる。
+                    throw new Exception(
+                        $"Canvas '{name}': UI layout '{layoutId}' has no root element. " +
+                        "Re-create the layout in the UI editor.");
                 }
             }
             else
             {
-                Debug.LogError($"[Arsist] ❌ UI layout NOT FOUND in cache for layoutId: '{layoutId}'");
-                Debug.LogError($"[Arsist] Cache has {_uiLayoutCache?.Count ?? 0} layouts");
-                if (_uiLayoutCache != null)
-                {
-                    foreach (var key in _uiLayoutCache.Keys)
-                    {
-                        Debug.LogError($"[Arsist]   - Cache key: '{key}'");
-                    }
-                }
-                // Create fallback UI
-                CreateFallbackUI(canvasGO.transform, layoutId ?? "missing");
+                var known = _uiLayoutCache != null && _uiLayoutCache.Count > 0
+                    ? string.Join(", ", _uiLayoutCache.Keys)
+                    : "(none)";
+                var detail = string.IsNullOrEmpty(layoutId)
+                    ? "no UI layout is assigned (canvasSettings.layoutId is empty)"
+                    : $"UI layout '{layoutId}' does not exist";
+
+                // 以前はここでプレースホルダ（Fallback UI）を作ってビルドを続行していたが、
+                // 「ビルド成功 → 実機でプレースホルダだけ表示」となり原因が分からなかった。
+                // Electron 側でも同じ検証をしているので、ここに来るのは MCP 等で
+                // 直接 IR を書いた場合の保険。
+                throw new Exception(
+                    $"Canvas '{name}': {detail}. " +
+                    "Select the Canvas in the scene and pick a UI Layout under Canvas Settings. " +
+                    $"Known layout ids: {known}");
             }
             Debug.Log($"[Arsist] ========== CANVAS TEXT DEBUG END ==========");
             
             return root;
-        }
-
-        private static void CreateFallbackUI(Transform parent, string reason)
-        {
-            Debug.Log($"[Arsist] Creating fallback UI for reason: {reason}");
-            
-            var fallbackRoot = new JObject
-            {
-                ["id"] = Guid.NewGuid().ToString(),
-                ["type"] = "Text",
-                ["content"] = $"Fallback UI ({reason})",
-                ["layout"] = "Absolute",
-                ["style"] = new JObject
-                {
-                    ["width"] = 800,
-                    ["height"] = 200,
-                    ["top"] = 100,
-                    ["left"] = 100,
-                    ["fontSize"] = 96,
-                    ["color"] = "#FFFF00",
-                    ["textAlign"] = "center",
-                },
-                ["children"] = new JArray()
-            };
-            
-            CreateUIElement(fallbackRoot, parent);
         }
 
         private static string ImportModelAsAsset(string sourceAssetPath, string modelName)
@@ -2297,6 +2288,40 @@ ScriptedImporter:
             var wiredOffset = TrySetMemberValue(xrOriginComponent, "CameraFloorOffsetObject", cameraOffset);
 
             Debug.Log($"[Arsist] XROrigin wired (camera={wiredCamera}, floorOffset={wiredOffset}) -> {camera.name}");
+
+            PinSpawnViewpointToOrigin(xrOriginComponent);
+        }
+
+        /// <summary>
+        /// 「原点 = ユーザーの初期視点（スポーン時の視点）」という Arsist の座標系契約を、
+        /// 実機でも成立させる。
+        ///
+        /// XROrigin の既定は RequestedTrackingOriginMode = NotSpecified で、実際のモードは
+        /// デバイス任せになる。その結果:
+        ///   - Device モード（XREAL 等）: XROrigin が CameraYOffset(既定 1.1176m) を
+        ///     CameraFloorOffsetObject に適用するので、原点に置いたものが目線より約1.1m下に出る。
+        ///   - Floor モード（Quest 等）: オフセット0 + ポーズに実身長が乗るので、
+        ///     原点に置いたものが足元に出る。
+        /// どちらもエディタのビューポート（原点＝視点）と食い違い、しかもデバイスごとに違う。
+        ///
+        /// Device + CameraYOffset=0 に固定すると、セッション開始時のヘッド位置が
+        /// そのまま (0,0,0) になり、エディタの初期視点マーカーと一致する。
+        /// </summary>
+        private static void PinSpawnViewpointToOrigin(Component xrOriginComponent)
+        {
+            if (xrOriginComponent == null) return;
+
+            var modeType = xrOriginComponent.GetType().GetNestedType("TrackingOriginMode");
+            if (modeType == null || !modeType.IsEnum)
+            {
+                Debug.LogWarning("[Arsist] XROrigin.TrackingOriginMode not found; spawn viewpoint height is left to the device default.");
+                return;
+            }
+
+            var wiredMode = TrySetMemberValue(xrOriginComponent, "RequestedTrackingOriginMode", Enum.Parse(modeType, "Device"));
+            var wiredOffset = TrySetMemberValue(xrOriginComponent, "CameraYOffset", 0f);
+
+            Debug.Log($"[Arsist] Spawn viewpoint pinned to the origin (trackingOriginMode=Device:{wiredMode}, cameraYOffset=0:{wiredOffset})");
         }
 
         /// <summary>
@@ -3638,6 +3663,15 @@ ScriptedImporter:
                         "PatchAndroidManifest",
                         manifestPath
                     );
+                    // 背景モードに合わせてパススルー関連のマニフェスト宣言を出し入れする。
+                    // （Quest のマニフェストは基本 Meta SDK の OVRManifestPreprocessor が
+                    //   OVRProjectConfig から生成するため、テンプレートが無い場合は no-op）
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "ConfigurePassthrough",
+                        manifestPath,
+                        GetBackgroundMode() == BACKGROUND_PASSTHROUGH
+                    );
                 }
             }
             catch (Exception e)
@@ -4425,6 +4459,242 @@ ScriptedImporter:
             return normalizedTarget.Contains("xreal");
         }
 
+        // ─────────────────────────────────────────
+        // 背景（カメラの clear）モード
+        // ─────────────────────────────────────────
+
+        private const string BACKGROUND_PASSTHROUGH = "passthrough";
+        private const string BACKGROUND_SKYBOX = "skybox";
+        private const string BACKGROUND_SOLID_COLOR = "solidcolor";
+
+        /// <summary>
+        /// arSettings.backgroundMode を正規化して返す。
+        ///
+        /// 背景を選べるのはビデオシースルー機（Quest）だけ。XREAL のような光学シースルー機は
+        /// 黒(RGB0)がハードウェア的にそのまま素通しになるため、Skybox や単色を選んでも
+        /// 「現実が隠れる」わけではなく、視界に色ムラが乗るだけの壊れ方をする。
+        /// よって XREAL では常に passthrough に固定する。
+        /// </summary>
+        private static string GetBackgroundMode()
+        {
+            var raw = _manifest?["arSettings"]?["backgroundMode"]?.ToString();
+
+            if (IsXrealTargetDevice())
+            {
+                if (!string.IsNullOrWhiteSpace(raw)
+                    && !string.Equals(raw.Trim(), BACKGROUND_PASSTHROUGH, StringComparison.OrdinalIgnoreCase))
+                {
+                    Debug.LogWarning(
+                        $"[Arsist] arSettings.backgroundMode='{raw}' is ignored on optical see-through glasses " +
+                        "(black is transparent in hardware); using passthrough.");
+                }
+                return BACKGROUND_PASSTHROUGH;
+            }
+
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return BACKGROUND_PASSTHROUGH;
+            }
+
+            var normalized = raw.Trim().ToLowerInvariant().Replace("_", "").Replace("-", "");
+            switch (normalized)
+            {
+                case BACKGROUND_SKYBOX:
+                    return BACKGROUND_SKYBOX;
+                case BACKGROUND_SOLID_COLOR:
+                case "solid":
+                case "color":
+                    return BACKGROUND_SOLID_COLOR;
+                case BACKGROUND_PASSTHROUGH:
+                case "mr":
+                    return BACKGROUND_PASSTHROUGH;
+                default:
+                    Debug.LogWarning($"[Arsist] Unknown arSettings.backgroundMode '{raw}'. Falling back to passthrough.");
+                    return BACKGROUND_PASSTHROUGH;
+            }
+        }
+
+        /// <summary>arSettings.backgroundColor (#RRGGBB) を読む。不正・未指定なら黒。</summary>
+        private static Color GetBackgroundColor()
+        {
+            var raw = _manifest?["arSettings"]?["backgroundColor"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(raw) && ColorUtility.TryParseHtmlString(raw.Trim(), out var parsed))
+            {
+                // VR 背景は不透過。alpha を落とすと Quest 側でパススルーが透けてしまう。
+                return new Color(parsed.r, parsed.g, parsed.b, 1f);
+            }
+            return Color.black;
+        }
+
+        /// <summary>メインカメラの clearFlags / backgroundColor を背景モードに合わせる。</summary>
+        private static void ApplyBackgroundToCamera(Camera cam, string backgroundMode)
+        {
+            if (cam == null)
+            {
+                Debug.LogWarning("[Arsist] Main camera not found; background mode not applied.");
+                return;
+            }
+
+            switch (backgroundMode)
+            {
+                case BACKGROUND_SKYBOX:
+                    EnsureSceneSkybox();
+                    cam.clearFlags = CameraClearFlags.Skybox;
+                    break;
+
+                case BACKGROUND_SOLID_COLOR:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    cam.backgroundColor = GetBackgroundColor();
+                    break;
+
+                default:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    // 光学シースルー(XREAL)は黒がそのまま透過。
+                    // Quest のパススルーも、アンダーレイ合成のために alpha=0 の黒でクリアする必要がある。
+                    cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                    break;
+            }
+
+            Debug.Log($"[Arsist] Background mode: {backgroundMode} (clearFlags={cam.clearFlags}, color={cam.backgroundColor})");
+        }
+
+        /// <summary>
+        /// 空シーン（NewSceneSetup.EmptyScene）には Skybox マテリアルが無いため、
+        /// Skybox 背景を選んだときだけ Unity 組み込みのデフォルト Skybox を割り当てる。
+        /// </summary>
+        private static void EnsureSceneSkybox()
+        {
+            if (RenderSettings.skybox != null) return;
+
+            var defaultSkybox = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Skybox.mat");
+            if (defaultSkybox == null)
+            {
+                Debug.LogWarning("[Arsist] Default-Skybox.mat not found; the skybox background will render black.");
+                return;
+            }
+
+            RenderSettings.skybox = defaultSkybox;
+            Debug.Log("[Arsist] Assigned Default-Skybox.mat to the scene (empty scenes have no skybox).");
+        }
+
+        /// <summary>
+        /// ランタイム側 (Arsist.Runtime.XROriginSetup) にも背景モードを流す。
+        ///
+        /// XROriginSetup.Awake() はカメラ設定を上書きするので、ここを合わせないと
+        /// ビルド時にどれを選んでも実機では必ず透過になる。
+        /// </summary>
+        private static void ApplyBackgroundToXROriginSetup(GameObject xrOrigin, Type setupType, string backgroundMode)
+        {
+            if (xrOrigin == null || setupType == null) return;
+
+            var setup = xrOrigin.GetComponent(setupType);
+            if (setup == null) return;
+
+            var modeType = setupType.GetNestedType("BackgroundMode");
+            if (modeType == null || !modeType.IsEnum)
+            {
+                Debug.LogWarning("[Arsist] XROriginSetup.BackgroundMode enum not found; runtime background may override the build-time setting.");
+                return;
+            }
+
+            string enumName;
+            switch (backgroundMode)
+            {
+                case BACKGROUND_SKYBOX: enumName = "Skybox"; break;
+                case BACKGROUND_SOLID_COLOR: enumName = "SolidColor"; break;
+                default: enumName = "Passthrough"; break;
+            }
+
+            var wiredMode = TrySetMemberValue(setup, "backgroundMode", Enum.Parse(modeType, enumName));
+            var wiredColor = TrySetMemberValue(setup, "backgroundColor", GetBackgroundColor());
+            Debug.Log($"[Arsist] XROriginSetup background wired (mode={wiredMode}, color={wiredColor})");
+        }
+
+        /// <summary>
+        /// Quest のパススルー合成 (OVRPassthroughLayer) をシーンに用意する。
+        ///
+        /// Quest はビデオシースルーなので、カメラを透明にしただけでは黒画面になる。
+        /// アンダーレイとして OVRPassthroughLayer を置いて初めて外カメラ映像が背景に出る。
+        /// VR 背景（Skybox / 単色）を選んだ場合は、逆にレイヤーが残っていると
+        /// 背景が現実で塗り潰されてしまうので無効化する。
+        /// </summary>
+        private static void ConfigureQuestPassthrough(GameObject xrOrigin, Camera cam, string backgroundMode)
+        {
+            var wantPassthrough = backgroundMode == BACKGROUND_PASSTHROUGH;
+
+            var layerType = FindType("OVRPassthroughLayer") ?? FindTypeInLoadedAssemblies("OVRPassthroughLayer");
+            if (layerType == null)
+            {
+                if (wantPassthrough)
+                {
+                    Debug.LogWarning("[Arsist] OVRPassthroughLayer type not found. Passthrough background will not work (is com.meta.xr.sdk.core installed?).");
+                }
+                return;
+            }
+
+            var host = cam != null ? cam.gameObject : xrOrigin;
+            if (host == null) return;
+
+            var existing = host.GetComponent(layerType);
+
+            if (!wantPassthrough)
+            {
+                if (existing != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(existing);
+                    Debug.Log($"[Arsist] Removed OVRPassthroughLayer (background mode = {backgroundMode}).");
+                }
+                return;
+            }
+
+            var layer = existing != null ? existing : host.AddComponent(layerType);
+
+            // Underlay = シーンの描画より奥にパススルー映像を合成する（＝背景になる）。
+            var overlayTypeField = layerType.GetField("overlayType", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (overlayTypeField != null && overlayTypeField.FieldType.IsEnum)
+            {
+                try
+                {
+                    overlayTypeField.SetValue(layer, Enum.Parse(overlayTypeField.FieldType, "Underlay"));
+                    EditorUtility.SetDirty(layer);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[Arsist] Failed to set OVRPassthroughLayer.overlayType to Underlay: {e.Message}");
+                }
+            }
+
+            TrySetMemberValue(layer, "textureOpacity", 1f);
+            TrySetMemberValue(layer, "hidden", false);
+
+            // OVRManager 側でも Insight Passthrough を有効にしておく（未設定だと実機で真っ黒になる）。
+            EnableInsightPassthroughOnOvrManager(xrOrigin);
+
+            Debug.Log($"[Arsist] OVRPassthroughLayer configured as Underlay on '{host.name}'.");
+        }
+
+        /// <summary>シーン内の OVRManager に isInsightPassthroughEnabled を立てる。</summary>
+        private static void EnableInsightPassthroughOnOvrManager(GameObject xrOrigin)
+        {
+            var ovrManagerType = FindType("OVRManager") ?? FindTypeInLoadedAssemblies("OVRManager");
+            if (ovrManagerType == null) return;
+
+            // EnsureQuestOvrManager が付けた直後のものを最優先で拾う（非アクティブでも取れる）。
+            var manager = xrOrigin != null ? xrOrigin.GetComponentInChildren(ovrManagerType, true) : null;
+            if (manager != null)
+            {
+                TrySetMemberValue(manager, "isInsightPassthroughEnabled", true);
+                return;
+            }
+
+            var managers = UnityEngine.Object.FindObjectsByType(ovrManagerType, FindObjectsSortMode.None);
+            if (managers == null) return;
+            foreach (var found in managers)
+            {
+                TrySetMemberValue(found, "isInsightPassthroughEnabled", true);
+            }
+        }
+
         private static void ApplyQuestBuildBootstrap()
         {
             if (!IsQuestTargetDevice()) return;
@@ -4609,6 +4879,13 @@ ScriptedImporter:
                 var assetPath = "Assets/Oculus/OculusProjectConfig.asset";
                 var configAsset = AssetDatabase.LoadMainAssetAtPath(assetPath);
 
+                // 背景モードに応じて Passthrough の要求レベルを変える。
+                // VR 背景なのに Required にしてしまうと、パススルー非対応機で
+                // ストア/インストール時に弾かれる（かつ機能自体使わない）ので落とす。
+                var passthrough = GetBackgroundMode() == BACKGROUND_PASSTHROUGH;
+                // _insightPassthroughSupport: 0 = None, 1 = Supported, 2 = Required
+                var passthroughSupport = passthrough ? 2 : 0;
+
                 if (configAsset != null)
                 {
                     var serialized = new SerializedObject(configAsset);
@@ -4616,8 +4893,8 @@ ScriptedImporter:
 
                     changed |= SetSerializedIntOrBool(serialized, "handTrackingSupport", 1, true);
                     changed |= SetSerializedIntOrBool(serialized, "handTrackingFrequency", 1, true);
-                    changed |= SetSerializedIntOrBool(serialized, "insightPassthroughEnabled", 1, true);
-                    changed |= SetSerializedIntOrBool(serialized, "_insightPassthroughSupport", 2, true);
+                    changed |= SetSerializedIntOrBool(serialized, "insightPassthroughEnabled", passthrough ? 1 : 0, passthrough);
+                    changed |= SetSerializedIntOrBool(serialized, "_insightPassthroughSupport", passthroughSupport, passthrough);
                     changed |= SetSerializedIntOrBool(serialized, "focusAware", 1, true);
                     changed |= SetSerializedIntOrBool(serialized, "sceneSupport", 1, true);
 
@@ -4629,7 +4906,7 @@ ScriptedImporter:
                         AssetDatabase.Refresh();
                     }
 
-                    Debug.Log("[Arsist] OculusProjectConfig applied for Quest: HandTracking=1, Passthrough=1, FocusAware=1, SceneSupport=1");
+                    Debug.Log($"[Arsist] OculusProjectConfig applied for Quest: HandTracking=1, Passthrough={(passthrough ? 1 : 0)}, FocusAware=1, SceneSupport=1");
                     return;
                 }
 
@@ -4680,11 +4957,13 @@ ScriptedImporter:
                 return;
             }
 
+            var passthrough = GetBackgroundMode() == BACKGROUND_PASSTHROUGH;
+
             var yaml = File.ReadAllText(path);
             yaml = ReplaceYamlNumericValue(yaml, "handTrackingSupport", 1);
             yaml = ReplaceYamlNumericValue(yaml, "handTrackingFrequency", 1);
-            yaml = ReplaceYamlNumericValue(yaml, "insightPassthroughEnabled", 1);
-            yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", 2);
+            yaml = ReplaceYamlNumericValue(yaml, "insightPassthroughEnabled", passthrough ? 1 : 0);
+            yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", passthrough ? 2 : 0);
             yaml = ReplaceYamlNumericValue(yaml, "focusAware", 1);
             yaml = ReplaceYamlNumericValue(yaml, "sceneSupport", 1);
 
