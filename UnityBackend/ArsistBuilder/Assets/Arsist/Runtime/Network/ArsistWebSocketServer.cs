@@ -23,18 +23,51 @@ namespace Arsist.Runtime.Network
         [SerializeField] private int port = 8765;
         [SerializeField] private bool autoStart = true;
         [SerializeField] private string password = "";
+        [Tooltip("受理した全コマンドを Debug.Log する。毎フレーム送る用途では実機性能を落とすため既定は OFF。")]
+        [SerializeField] private bool verboseLog = false;
+
+        /// <summary>1 batch で受け付けるサブコマンド数の上限。</summary>
+        private const int MaxBatchCommands = 256;
 
         private TcpListener _listener;
         private Thread _listenerThread;
-        private List<TcpClient> _clients = new List<TcpClient>();
+        private readonly List<ClientState> _clients = new List<ClientState>();
         private Queue<PendingMessage> _messageQueue = new Queue<PendingMessage>();
         private bool _isRunning = false;
 
-        /// <summary>受信メッセージとその送信元ストリームのペア</summary>
+        /// <summary>1メッセージあたりの上限。超えたら接続を切る（メモリ枯渇の防止）。</summary>
+        private const int MaxMessageBytes = 4 * 1024 * 1024;
+        /// <summary>受信バッファの上限。未完成フレームがこれを超えたら接続を切る。</summary>
+        private const int MaxReceiveBufferBytes = 8 * 1024 * 1024;
+
+        /// <summary>受信メッセージとその送信元クライアントのペア</summary>
         private class PendingMessage
         {
             public string Json;
-            public System.Net.Sockets.NetworkStream Stream;
+            public ClientState Client;
+        }
+
+        /// <summary>
+        /// 1接続分の状態。
+        ///
+        /// TCP は「1回の Read = 1 WebSocket フレーム」を保証しない。複数フレームが
+        /// まとめて届くことも、1フレームが分割して届くこともある。以前の実装は
+        /// 読み取りバッファの先頭1フレームだけをデコードして残りを捨てていたため、
+        /// 連続送信するとコマンドが黙って消えていた。ここで per-connection の
+        /// 受信バッファを持ち、完成したフレームだけを順に取り出す。
+        /// </summary>
+        private class ClientState
+        {
+            public TcpClient Tcp;
+            public NetworkStream Stream;
+            /// <summary>同一ストリームへの書き込みは受信スレッドとメインスレッドの両方から起きる。</summary>
+            public readonly object SendLock = new object();
+            public bool HandshakeDone;
+            public byte[] Buffer = new byte[8192];
+            public int Length;
+            /// <summary>継続フレーム（opcode 0）を跨いだメッセージの組み立て先。</summary>
+            public readonly List<byte> Assembling = new List<byte>();
+            public bool Assembled;
         }
 
         public static ArsistWebSocketServer Instance { get; private set; }
@@ -68,7 +101,32 @@ namespace Arsist.Runtime.Network
             _listenerThread.IsBackground = true;
             _listenerThread.Start();
 
+            // 外部クライアントは端末の IP を知らないと繋げない。adb logcat から拾えるように出しておく。
             Debug.Log($"[ArsistWebSocket] Server started on port {port} (auth: {(string.IsNullOrEmpty(password) ? "none" : "required")})");
+            foreach (var address in GetLocalIPv4Addresses())
+            {
+                Debug.Log($"[ArsistWebSocket] Listening at ws://{address}:{port}");
+            }
+        }
+
+        /// <summary>この端末の LAN IPv4 アドレスを列挙する（ループバックは除く）。</summary>
+        private static List<string> GetLocalIPv4Addresses()
+        {
+            var result = new List<string>();
+            try
+            {
+                foreach (var address in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
+                {
+                    if (address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    if (IPAddress.IsLoopback(address)) continue;
+                    result.Add(address.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ArsistWebSocket] Failed to enumerate local IP addresses: {ex.Message}");
+            }
+            return result;
         }
 
         public void Configure(int serverPort, string serverPassword, bool startAutomatically = true)
@@ -90,11 +148,14 @@ namespace Arsist.Runtime.Network
                 _listener.Stop();
             }
 
-            foreach (var client in _clients)
+            lock (_clients)
             {
-                client?.Close();
+                foreach (var client in _clients)
+                {
+                    try { client?.Tcp?.Close(); } catch { /* ignore */ }
+                }
+                _clients.Clear();
             }
-            _clients.Clear();
 
             Debug.Log("[ArsistWebSocket] Server stopped");
         }
@@ -110,10 +171,14 @@ namespace Arsist.Runtime.Network
                 {
                     if (_listener.Pending())
                     {
-                        TcpClient client = _listener.AcceptTcpClient();
-                        _clients.Add(client);
-                        
-                        Thread clientThread = new Thread(() => HandleClient(client));
+                        TcpClient tcp = _listener.AcceptTcpClient();
+                        var state = new ClientState { Tcp = tcp, Stream = tcp.GetStream() };
+                        lock (_clients)
+                        {
+                            _clients.Add(state);
+                        }
+
+                        Thread clientThread = new Thread(() => HandleClient(state));
                         clientThread.IsBackground = true;
                         clientThread.Start();
                     }
@@ -126,110 +191,232 @@ namespace Arsist.Runtime.Network
             }
         }
 
-        private void HandleClient(TcpClient client)
+        private void HandleClient(ClientState state)
         {
-            NetworkStream stream = client.GetStream();
-            byte[] buffer = new byte[65536];  // 64KB バッファ（大きなメッセージに対応）
+            var readBuffer = new byte[8192];
 
             try
             {
-                while (_isRunning && client.Connected)
+                while (_isRunning && state.Tcp.Connected)
                 {
-                    if (stream.DataAvailable)
+                    if (!state.Stream.DataAvailable)
                     {
-                        int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                        if (bytesRead > 0)
-                        {
-                            string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                            
-                            // WebSocketハンドシェイク処理
-                            if (message.Contains("Sec-WebSocket-Key"))
-                            {
-                                PerformHandshake(stream, message);
-                            }
-                            else
-                            {
-                                // WebSocketフレームをデコード
-                                string decoded = DecodeWebSocketFrame(buffer, bytesRead);
-                                if (!string.IsNullOrEmpty(decoded))
-                                {
-                                    lock (_messageQueue)
-                                    {
-                                        _messageQueue.Enqueue(new PendingMessage { Json = decoded, Stream = stream });
-                                    }
-                                }
-                            }
-                        }
+                        Thread.Sleep(5);
+                        continue;
                     }
-                    Thread.Sleep(10);
+
+                    int bytesRead = state.Stream.Read(readBuffer, 0, readBuffer.Length);
+                    if (bytesRead <= 0) break;          // 対向が閉じた
+
+                    if (!AppendToBuffer(state, readBuffer, bytesRead)) break;
+
+                    if (!state.HandshakeDone)
+                    {
+                        if (!TryPerformHandshake(state)) continue;   // ヘッダがまだ揃っていない
+                    }
+
+                    if (!DrainFrames(state)) break;                 // close / プロトコル違反
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[ArsistWebSocket] Client error: {ex.Message}");
+                Debug.LogWarning($"[ArsistWebSocket] Client error: {ex.Message}");
             }
             finally
             {
-                client.Close();
-                _clients.Remove(client);
+                try { state.Tcp.Close(); } catch { /* ignore */ }
+                lock (_clients)
+                {
+                    _clients.Remove(state);
+                }
             }
         }
 
-        private void PerformHandshake(NetworkStream stream, string request)
+        /// <summary>受信バイトを接続バッファ末尾に追加する。上限超過なら false。</summary>
+        private static bool AppendToBuffer(ClientState state, byte[] data, int count)
         {
-            // WebSocketハンドシェイク
-            string swk = System.Text.RegularExpressions.Regex.Match(request, "Sec-WebSocket-Key: (.*)").Groups[1].Value.Trim();
+            if (state.Length + count > MaxReceiveBufferBytes)
+            {
+                Debug.LogWarning("[ArsistWebSocket] Receive buffer overflow; dropping connection.");
+                return false;
+            }
+
+            if (state.Length + count > state.Buffer.Length)
+            {
+                int capacity = state.Buffer.Length;
+                while (capacity < state.Length + count) capacity *= 2;
+                Array.Resize(ref state.Buffer, capacity);
+            }
+
+            Buffer.BlockCopy(data, 0, state.Buffer, state.Length, count);
+            state.Length += count;
+            return true;
+        }
+
+        /// <summary>バッファ先頭から count バイトを取り除く。</summary>
+        private static void ConsumeBuffer(ClientState state, int count)
+        {
+            if (count <= 0) return;
+            int remaining = state.Length - count;
+            if (remaining > 0)
+            {
+                Buffer.BlockCopy(state.Buffer, count, state.Buffer, 0, remaining);
+            }
+            state.Length = Math.Max(0, remaining);
+        }
+
+        /// <summary>
+        /// HTTP アップグレード要求が揃っていればハンドシェイクを返す。
+        /// ヘッダ終端 (CRLFCRLF) が来るまでは false を返して待つ。
+        /// </summary>
+        private bool TryPerformHandshake(ClientState state)
+        {
+            var text = Encoding.UTF8.GetString(state.Buffer, 0, state.Length);
+            int headerEnd = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            if (headerEnd < 0) return false;
+
+            var header = text.Substring(0, headerEnd);
+            var match = System.Text.RegularExpressions.Regex.Match(
+                header, @"Sec-WebSocket-Key:\s*(\S+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                Debug.LogWarning("[ArsistWebSocket] Handshake without Sec-WebSocket-Key; dropping connection.");
+                state.Length = 0;
+                try { state.Tcp.Close(); } catch { /* ignore */ }
+                return false;
+            }
+
+            string swk = match.Groups[1].Value.Trim();
             string swka = swk + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-            byte[] swkaSha1 = System.Security.Cryptography.SHA1.Create().ComputeHash(Encoding.UTF8.GetBytes(swka));
-            string swkaSha1Base64 = Convert.ToBase64String(swkaSha1);
+            byte[] swkaSha1;
+            using (var sha1 = System.Security.Cryptography.SHA1.Create())
+            {
+                swkaSha1 = sha1.ComputeHash(Encoding.UTF8.GetBytes(swka));
+            }
 
             string response = "HTTP/1.1 101 Switching Protocols\r\n" +
-                            "Connection: Upgrade\r\n" +
-                            "Upgrade: websocket\r\n" +
-                            "Sec-WebSocket-Accept: " + swkaSha1Base64 + "\r\n\r\n";
+                              "Connection: Upgrade\r\n" +
+                              "Upgrade: websocket\r\n" +
+                              "Sec-WebSocket-Accept: " + Convert.ToBase64String(swkaSha1) + "\r\n\r\n";
 
             byte[] responseBytes = Encoding.UTF8.GetBytes(response);
-            stream.Write(responseBytes, 0, responseBytes.Length);
+            lock (state.SendLock)
+            {
+                state.Stream.Write(responseBytes, 0, responseBytes.Length);
+            }
+
+            // ヘッダ部だけを消費する。直後に最初のフレームが続いていることがある。
+            int consumed = Encoding.UTF8.GetByteCount(text.Substring(0, headerEnd + 4));
+            ConsumeBuffer(state, consumed);
+            state.HandshakeDone = true;
+            return true;
         }
 
-        private string DecodeWebSocketFrame(byte[] buffer, int length)
+        /// <summary>
+        /// バッファ内の「完成しているフレーム」をすべて処理する。
+        /// 未完成のフレームはバッファに残して次の Read を待つ。
+        /// 戻り値 false は接続終了。
+        /// </summary>
+        private bool DrainFrames(ClientState state)
         {
-            if (length < 2) return null;
-
-            bool fin    = (buffer[0] & 0b10000000) != 0;
-            bool mask   = (buffer[1] & 0b10000000) != 0;
-            int opcode  = buffer[0] & 0b00001111;
-            int msglen  = buffer[1] & 0b01111111;
-            int offset  = 2;
-
-            // opcode 1=text, 2=binary のみ処理。
-            // 0=continuation, 8=close, 9=ping, 10=pong は無視する。
-            if (opcode != 1 && opcode != 2) return null;
-
-            if (msglen == 126)
+            while (true)
             {
-                if (length < 4) return null;
-                msglen = BitConverter.ToUInt16(new byte[] { buffer[3], buffer[2] }, 0);
-                offset = 4;
+                if (state.Length < 2) return true;
+
+                var buf = state.Buffer;
+                bool fin = (buf[0] & 0x80) != 0;
+                int opcode = buf[0] & 0x0F;
+                bool masked = (buf[1] & 0x80) != 0;
+                long payloadLen = buf[1] & 0x7F;
+                int offset = 2;
+
+                if (payloadLen == 126)
+                {
+                    if (state.Length < 4) return true;
+                    payloadLen = (buf[2] << 8) | buf[3];
+                    offset = 4;
+                }
+                else if (payloadLen == 127)
+                {
+                    if (state.Length < 10) return true;
+                    payloadLen = 0;
+                    for (int i = 0; i < 8; i++) payloadLen = (payloadLen << 8) | buf[2 + i];
+                    offset = 10;
+                }
+
+                if (payloadLen < 0 || payloadLen > MaxMessageBytes)
+                {
+                    Debug.LogWarning($"[ArsistWebSocket] Frame too large ({payloadLen} bytes); dropping connection.");
+                    return false;
+                }
+
+                int maskLen = masked ? 4 : 0;
+                long frameLen = offset + maskLen + payloadLen;
+                if (state.Length < frameLen) return true;   // まだ届いていない
+
+                var payload = new byte[payloadLen];
+                Buffer.BlockCopy(buf, offset + maskLen, payload, 0, (int)payloadLen);
+                if (masked)
+                {
+                    for (int i = 0; i < payloadLen; i++)
+                        payload[i] = (byte)(payload[i] ^ buf[offset + (i % 4)]);
+                }
+
+                ConsumeBuffer(state, (int)frameLen);
+
+                switch (opcode)
+                {
+                    case 0x8:   // close
+                        SendFrame(state, 0x8, Array.Empty<byte>());
+                        return false;
+
+                    case 0x9:   // ping → pong を返さないと切断してくるクライアントがある
+                        SendFrame(state, 0xA, payload);
+                        continue;
+
+                    case 0xA:   // pong
+                        continue;
+
+                    case 0x0:   // continuation
+                        if (!state.Assembled)
+                        {
+                            Debug.LogWarning("[ArsistWebSocket] Continuation frame without a start frame; ignoring.");
+                            continue;
+                        }
+                        break;
+
+                    case 0x1:   // text
+                    case 0x2:   // binary
+                        state.Assembling.Clear();
+                        state.Assembled = true;
+                        break;
+
+                    default:
+                        Debug.LogWarning($"[ArsistWebSocket] Unsupported opcode {opcode}; ignoring frame.");
+                        continue;
+                }
+
+                if (state.Assembling.Count + payload.Length > MaxMessageBytes)
+                {
+                    Debug.LogWarning("[ArsistWebSocket] Assembled message too large; dropping connection.");
+                    return false;
+                }
+                state.Assembling.AddRange(payload);
+
+                if (!fin) continue;   // 続きのフレームを待つ
+
+                var json = Encoding.UTF8.GetString(state.Assembling.ToArray());
+                state.Assembling.Clear();
+                state.Assembled = false;
+
+                if (!string.IsNullOrWhiteSpace(json))
+                {
+                    lock (_messageQueue)
+                    {
+                        _messageQueue.Enqueue(new PendingMessage { Json = json, Client = state });
+                    }
+                }
             }
-            else if (msglen == 127)
-            {
-                if (length < 10) return null;
-                msglen = (int)BitConverter.ToUInt64(new byte[] { buffer[9], buffer[8], buffer[7], buffer[6], buffer[5], buffer[4], buffer[3], buffer[2] }, 0);
-                offset = 10;
-            }
-
-            if (msglen <= 0 || !mask) return null;
-            if (offset + 4 + msglen > length) return null;  // バッファ範囲外チェック
-
-            byte[] decoded = new byte[msglen];
-            byte[] masks   = new byte[4] { buffer[offset], buffer[offset + 1], buffer[offset + 2], buffer[offset + 3] };
-            offset += 4;
-
-            for (int i = 0; i < msglen; ++i)
-                decoded[i] = (byte)(buffer[offset + i] ^ masks[i % 4]);
-
-            return Encoding.UTF8.GetString(decoded);
         }
 
         private void Update()
@@ -240,12 +427,12 @@ namespace Arsist.Runtime.Network
                 while (_messageQueue.Count > 0)
                 {
                     var pending = _messageQueue.Dequeue();
-                    ProcessCommand(pending.Json, pending.Stream);
+                    ProcessCommand(pending.Json, pending.Client);
                 }
             }
         }
 
-        private void ProcessCommand(string jsonCommand, System.Net.Sockets.NetworkStream responseStream)
+        private void ProcessCommand(string jsonCommand, ClientState responseClient)
         {
             // 空文字・非JSON を弾く
             if (string.IsNullOrWhiteSpace(jsonCommand)) return;
@@ -261,7 +448,7 @@ namespace Arsist.Runtime.Network
                 {
                     Debug.LogWarning("[ArsistWebSocket] Command rejected: invalid auth token.");
                     if (!string.IsNullOrEmpty(cmd.requestId))
-                        SendWebSocketFrame(responseStream, BuildResponse(cmd.requestId, false, null, "Authentication failed"));
+                        SendWebSocketFrame(responseClient, BuildResponse(cmd.requestId, false, null, "Authentication failed"));
                     return;
                 }
 
@@ -269,51 +456,23 @@ namespace Arsist.Runtime.Network
                 if (scriptEngine == null)
                 {
                     if (!string.IsNullOrEmpty(cmd.requestId))
-                        SendWebSocketFrame(responseStream, BuildResponse(cmd.requestId, false, null, "ScriptEngineManager not ready"));
+                        SendWebSocketFrame(responseClient, BuildResponse(cmd.requestId, false, null, "ScriptEngineManager not ready"));
                     return;
                 }
 
-                object responseData = null;
-                string errorMsg = null;
+                object responseData;
+                string errorMsg;
 
-                var commandType = cmd.type?.ToLowerInvariant();
-                var methodName = cmd.method?.ToLowerInvariant();
-                cmd.type = commandType;
-                cmd.method = methodName;
-
-                switch (commandType)
+                if (string.Equals(cmd.type, "batch", StringComparison.OrdinalIgnoreCase))
                 {
-                    case "scene":
-                    case "transform":
-                        ExecuteSceneCommand(scriptEngine.SceneWrapper, cmd);
-                        responseData = new { ok = true };
-                        break;
-                    case "vrm":
-                        // 互換: vrm タイプでクエリ系メソッドが来た場合も応答を返す
-                        if (methodName == "getcapabilities" || methodName == "getinfo" || methodName == "getids" || methodName == "getbones" || methodName == "getexpressions" || methodName == "getstate" || methodName == "ping")
-                        {
-                            responseData = ExecuteQueryCommand(scriptEngine, cmd, out errorMsg);
-                        }
-                        else
-                        {
-                            ExecuteVRMCommand(scriptEngine.VRMWrapper, scriptEngine.SceneWrapper, cmd);
-                            responseData = new { ok = true };
-                        }
-                        break;
-                    case "query":
-                        responseData = ExecuteQueryCommand(scriptEngine, cmd, out errorMsg);
-                        break;
-                    case "script":
-                        ExecuteScript(scriptEngine, cmd);
-                        responseData = new { ok = true };
-                        break;
-                    default:
-                        errorMsg = $"Unknown command type: {cmd.type}";
-                        Debug.LogWarning($"[ArsistWebSocket] {errorMsg}");
-                        break;
+                    responseData = ExecuteBatch(scriptEngine, cmd, out errorMsg);
+                }
+                else
+                {
+                    responseData = DispatchCommand(scriptEngine, cmd, out errorMsg);
                 }
 
-                if (string.IsNullOrEmpty(errorMsg))
+                if (verboseLog && string.IsNullOrEmpty(errorMsg))
                 {
                     Debug.Log($"[ArsistWebSocket] Command accepted: type={cmd.type}, method={cmd.method}, requestId={cmd.requestId}");
                 }
@@ -322,7 +481,7 @@ namespace Arsist.Runtime.Network
                 if (!string.IsNullOrEmpty(cmd.requestId))
                 {
                     bool success = errorMsg == null;
-                    SendWebSocketFrame(responseStream, BuildResponse(cmd.requestId, success, responseData, errorMsg));
+                    SendWebSocketFrame(responseClient, BuildResponse(cmd.requestId, success, responseData, errorMsg));
                 }
             }
             catch (Exception ex)
@@ -333,7 +492,7 @@ namespace Arsist.Runtime.Network
                     var cmd = JsonConvert.DeserializeObject<RemoteCommand>(jsonCommand);
                     if (cmd != null && !string.IsNullOrEmpty(cmd.requestId))
                     {
-                        SendWebSocketFrame(responseStream, BuildResponse(cmd.requestId, false, null, ex.Message));
+                        SendWebSocketFrame(responseClient, BuildResponse(cmd.requestId, false, null, ex.Message));
                     }
                 }
                 catch
@@ -341,6 +500,117 @@ namespace Arsist.Runtime.Network
                     // ignore secondary parse error
                 }
             }
+        }
+
+        /// <summary>
+        /// 1コマンドを種別に応じて実行する。batch の各要素からも呼ばれるため、
+        /// 認証・レスポンス送信は含めない（呼び出し側の責務）。
+        /// </summary>
+        private object DispatchCommand(Scripting.ScriptEngineManager scriptEngine, RemoteCommand cmd, out string errorMsg)
+        {
+            errorMsg = null;
+
+            var commandType = cmd.type?.ToLowerInvariant();
+            var methodName = cmd.method?.ToLowerInvariant();
+            cmd.type = commandType;
+            cmd.method = methodName;
+
+            switch (commandType)
+            {
+                case "scene":
+                case "transform":
+                    ExecuteSceneCommand(scriptEngine.SceneWrapper, cmd);
+                    return new { ok = true };
+
+                case "vrm":
+                    // 互換: vrm タイプでクエリ系メソッドが来た場合も応答を返す
+                    if (methodName == "getcapabilities" || methodName == "getinfo" || methodName == "getids"
+                        || methodName == "getbones" || methodName == "getexpressions" || methodName == "getstate"
+                        || methodName == "ping")
+                    {
+                        return ExecuteQueryCommand(scriptEngine, cmd, out errorMsg);
+                    }
+                    ExecuteVRMCommand(scriptEngine.VRMWrapper, scriptEngine.SceneWrapper, cmd);
+                    return new { ok = true };
+
+                case "query":
+                    return ExecuteQueryCommand(scriptEngine, cmd, out errorMsg);
+
+                case "script":
+                    ExecuteScript(scriptEngine, cmd);
+                    return new { ok = true };
+
+                case "batch":
+                    // ネストした batch は許可しない（再帰的な増幅を避ける）
+                    errorMsg = "Nested batch is not allowed";
+                    return null;
+
+                default:
+                    errorMsg = $"Unknown command type: {cmd.type}";
+                    Debug.LogWarning($"[ArsistWebSocket] {errorMsg}");
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// 複数コマンドを1フレームでまとめて適用する。
+        ///
+        /// ポーズ同期のように「1ティックで十数個のボーンを更新する」用途では、
+        /// 1コマンド1メッセージだと WebSocket フレームもキュー処理も無駄が大きい。
+        /// batch なら1メッセージ・1フレーム内で全部が適用されるので、
+        /// 「腕だけ次のフレームに反映される」といったティアリングも起きない。
+        /// </summary>
+        private object ExecuteBatch(Scripting.ScriptEngineManager scriptEngine, RemoteCommand cmd, out string errorMsg)
+        {
+            errorMsg = null;
+
+            var commands = cmd.parameters?.commands;
+            if (commands == null || commands.Count == 0)
+            {
+                errorMsg = "batch requires parameters.commands (non-empty array)";
+                return null;
+            }
+
+            if (commands.Count > MaxBatchCommands)
+            {
+                errorMsg = $"batch too large: {commands.Count} commands (max {MaxBatchCommands})";
+                return null;
+            }
+
+            int applied = 0;
+            List<string> errors = null;
+
+            foreach (var sub in commands)
+            {
+                if (sub == null) continue;
+
+                string subError;
+                try
+                {
+                    DispatchCommand(scriptEngine, sub, out subError);
+                }
+                catch (Exception ex)
+                {
+                    subError = ex.Message;
+                }
+
+                if (string.IsNullOrEmpty(subError))
+                {
+                    applied++;
+                }
+                else
+                {
+                    (errors ?? (errors = new List<string>())).Add(subError);
+                }
+            }
+
+            return new
+            {
+                ok = errors == null,
+                applied,
+                failed = errors?.Count ?? 0,
+                errors = (object)errors,
+            };
         }
 
         /// <summary>クエリコマンドを実行してレスポンスデータを返す</summary>
@@ -390,26 +660,31 @@ namespace Arsist.Runtime.Network
         }
 
         /// <summary>WebSocket テキストフレームを送信する</summary>
-        private void SendWebSocketFrame(System.Net.Sockets.NetworkStream stream, string message)
+        private void SendWebSocketFrame(ClientState client, string message)
         {
-            if (stream == null || !stream.CanWrite) return;
+            SendFrame(client, 0x1, Encoding.UTF8.GetBytes(message));
+        }
+
+        /// <summary>任意 opcode の（マスクなし＝サーバ→クライアント）フレームを送る。</summary>
+        private void SendFrame(ClientState client, int opcode, byte[] payload)
+        {
+            if (client?.Stream == null || !client.Stream.CanWrite) return;
+
             try
             {
-                byte[] payload = Encoding.UTF8.GetBytes(message);
+                payload = payload ?? Array.Empty<byte>();
                 int len = payload.Length;
                 byte[] frame;
 
                 if (len < 126)
                 {
                     frame = new byte[2 + len];
-                    frame[0] = 0x81;            // FIN + text opcode
-                    frame[1] = (byte)len;       // no mask
+                    frame[1] = (byte)len;
                     Buffer.BlockCopy(payload, 0, frame, 2, len);
                 }
                 else if (len < 65536)
                 {
                     frame = new byte[4 + len];
-                    frame[0] = 0x81;
                     frame[1] = 126;
                     frame[2] = (byte)(len >> 8);
                     frame[3] = (byte)(len & 0xFF);
@@ -417,19 +692,28 @@ namespace Arsist.Runtime.Network
                 }
                 else
                 {
+                    // 64bit 長。int を 32bit 超シフトすると C# ではシフト量が 31 で
+                    // マスクされて壊れるので、上位 4 バイトは 0 固定で書く。
                     frame = new byte[10 + len];
-                    frame[0] = 0x81;
                     frame[1] = 127;
-                    for (int i = 7; i >= 0; i--)
-                        frame[2 + (7 - i)] = (byte)((len >> (i * 8)) & 0xFF);
+                    frame[2] = 0; frame[3] = 0; frame[4] = 0; frame[5] = 0;
+                    frame[6] = (byte)((len >> 24) & 0xFF);
+                    frame[7] = (byte)((len >> 16) & 0xFF);
+                    frame[8] = (byte)((len >> 8) & 0xFF);
+                    frame[9] = (byte)(len & 0xFF);
                     Buffer.BlockCopy(payload, 0, frame, 10, len);
                 }
 
-                stream.Write(frame, 0, frame.Length);
+                frame[0] = (byte)(0x80 | (opcode & 0x0F));   // FIN + opcode
+
+                lock (client.SendLock)
+                {
+                    client.Stream.Write(frame, 0, frame.Length);
+                }
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[ArsistWebSocket] Failed to send response: {ex.Message}");
+                Debug.LogWarning($"[ArsistWebSocket] Failed to send frame: {ex.Message}");
             }
         }
 
@@ -527,6 +811,22 @@ namespace Arsist.Runtime.Network
                 case "lookat":
                     vrm.lookAt(p.id, p.x ?? 0, p.y ?? 0, p.z ?? 0);
                     break;
+                case "clearLookAt":
+                case "clearlookat":
+                    vrm.clearLookAt(p.id);
+                    break;
+                case "setHeight":
+                case "setheight":
+                    vrm.setHeight(p.id, p.value ?? p.y ?? 0f);
+                    break;
+                case "setHandTarget":
+                case "sethandtarget":
+                    vrm.setHandTarget(p.id, p.side, p.x ?? 0, p.y ?? 0, p.z ?? 0);
+                    break;
+                case "clearHandTarget":
+                case "clearhandtarget":
+                    vrm.clearHandTarget(p.id, p.side);
+                    break;
                 case "playAnimation":
                 case "playanimation":
                     vrm.playAnimation(p.id, p.animName);
@@ -582,9 +882,12 @@ namespace Arsist.Runtime.Network
             public bool? visible;
             public string boneName;
             public string expressionName;
+            public string side;           // setHandTarget 用: "left" / "right"
             public string name;           // Python/legacy互換: setExpression 用
             public float? value;
             public string code;
+            /// <summary>type="batch" のときに実行するサブコマンド列。</summary>
+            public List<RemoteCommand> commands;
         }
     }
 }

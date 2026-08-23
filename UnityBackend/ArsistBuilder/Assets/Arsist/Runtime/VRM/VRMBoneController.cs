@@ -170,19 +170,26 @@ namespace Arsist.Runtime.VRM
         }
 
         /// <summary>
-        /// ボーンの回転を設定（絶対指定）
+        /// ボーンの回転を設定する。角度は **バインドポーズ（起動時の localRotation）からの相対**。
+        ///
+        /// 以前は Quaternion.Euler(...) を localRotation にそのまま代入していたが、それだと
+        /// (0,0,0) が「親の軸に揃った姿勢」を意味し、モデルごとに全く違う（多くの場合壊れた）
+        /// ポーズになっていた。呼ぶ側が期待するのは「素の姿勢から何度曲げるか」なので、
+        /// rest * delta を適用する。(0,0,0) は必ず元の姿勢に戻る。
+        ///
         /// ※ Animator が Update() でボーンを上書きするため、LateUpdate() でキャッシュを適用する
         /// </summary>
         public bool SetBoneRotation(string boneName, float pitch, float yaw, float roll)
         {
-            var rotation = Quaternion.Euler(pitch, yaw, roll);
+            var delta = Quaternion.Euler(pitch, yaw, roll);
 
             // 名前ベースフォールバック
             if (_useNameFallback)
             {
                 if (_nameBoneCache.ContainsKey(boneName))
                 {
-                    _pendingNameBoneRotations[boneName] = rotation;
+                    var rest = _nameOriginalRotations.TryGetValue(boneName, out var nr) ? nr : Quaternion.identity;
+                    _pendingNameBoneRotations[boneName] = rest * delta;
                     _hasPendingRotations = true;
                     return true;
                 }
@@ -213,9 +220,16 @@ namespace Arsist.Runtime.VRM
                     return false;
                 }
                 _boneCache[bone] = boneTransformDirect;
+                // 遅延登録したボーンも rest を必ず控える（控えないと下で identity 扱いになり、
+                // そのボーンだけ基準がズレる）
+                if (!_originalBoneRotations.ContainsKey(bone))
+                {
+                    _originalBoneRotations[bone] = boneTransformDirect.localRotation;
+                }
             }
 
-            _pendingBoneRotations[bone] = rotation;
+            var restRotation = _originalBoneRotations.TryGetValue(bone, out var or) ? or : Quaternion.identity;
+            _pendingBoneRotations[bone] = restRotation * delta;
             _hasPendingRotations = true;
             return true;
         }

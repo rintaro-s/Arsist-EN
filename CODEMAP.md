@@ -164,6 +164,11 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
 - **In-app JS scripting (Jint)** → `UnityBackend/.../Runtime/Scripting/`.
 - **Runtime remote control (Python/WebSocket)** → [python/](python/) + `UnityBackend/.../Runtime/Network/ArsistWebSocketServer.cs`.
 - **AI/MCP authoring tools** → [scripts/mcp-ir-server.mjs](scripts/mcp-ir-server.mjs); see `doc/09-mcp-server.md`.
+- **Remote control wire protocol / batch commands** → `ArsistWebSocketServer.cs`
+  (`DrainFrames` for framing, `ExecuteBatch` / `DispatchCommand` for dispatch). Note the remote API works in
+  **runtime Unity world space**, not editor IR space.
+- **Applied products built on the engine** → [products/](products/); e.g.
+  [products/VirtualReal](products/VirtualReal/README.md) (VRChat → AR avatar mirroring).
 
 ## Gotchas / non-obvious constraints
 
