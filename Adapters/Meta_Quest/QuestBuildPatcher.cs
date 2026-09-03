@@ -95,7 +95,8 @@ namespace Arsist.Adapters.MetaQuest
             EnsureMetaData(doc, ns, app, "com.oculus.ossplash", "false");
 
             // ─── ハンドトラッキング パーミッション ───
-            EnsurePermission(doc, ns, manifest, "com.oculus.permission.HAND_TRACKING");
+            // HAND_TRACKING は arSettings.interaction.handTracking の有無で
+            // ConfigureHandTracking() が出し入れする（使わない機能で対応端末を絞らないため）。
             EnsurePermission(doc, ns, manifest, "com.oculus.permission.USE_SCENE");
 
             // ─── VR 機能 ───
@@ -150,6 +151,77 @@ namespace Arsist.Adapters.MetaQuest
 
             doc.Save(manifestPath);
             Debug.Log($"[QuestBuildPatcher] Passthrough 設定完了 (enabled={enabled})");
+        }
+
+        /// <summary>
+        /// ハンドトラッキング用のマニフェスト宣言を出し入れする。
+        /// arSettings.interaction.handTracking が false のビルドでは、使わない機能で
+        /// 対応端末を絞らないようパーミッション/メタデータごと落とす。
+        /// </summary>
+        public static void ConfigureHandTracking(string manifestPath, bool enabled)
+        {
+            if (!File.Exists(manifestPath)) return;
+
+            var doc = new XmlDocument();
+            doc.Load(manifestPath);
+
+            var ns = "http://schemas.android.com/apk/res/android";
+            var nsMgr = new XmlNamespaceManager(doc.NameTable);
+            nsMgr.AddNamespace("android", ns);
+
+            var manifest = doc.SelectSingleNode("/manifest");
+            var app = doc.SelectSingleNode("/manifest/application");
+            if (manifest == null || app == null) return;
+
+            if (enabled)
+            {
+                EnsurePermission(doc, ns, manifest, "com.oculus.permission.HAND_TRACKING");
+                EnsureMetaData(doc, ns, app, "com.oculus.handtracking.frequency", "HIGH");
+                EnsureMetaData(doc, ns, app, "com.oculus.handtracking.version", "V2.0");
+            }
+            else
+            {
+                RemoveNode(manifest, nsMgr, "uses-permission[@android:name='com.oculus.permission.HAND_TRACKING']");
+                RemoveNode(app, nsMgr, "meta-data[@android:name='com.oculus.handtracking.frequency']");
+                RemoveNode(app, nsMgr, "meta-data[@android:name='com.oculus.handtracking.version']");
+            }
+
+            doc.Save(manifestPath);
+            Debug.Log($"[QuestBuildPatcher] ハンドトラッキング設定完了 (enabled={enabled})");
+        }
+
+        /// <summary>
+        /// システムキーボード オーバーレイ (TouchScreenKeyboard) 用のマニフェスト宣言を出し入れする。
+        /// 無いと「Oculus overlay keyboard is disabled, add 'oculus.software.overlay_keyboard'
+        /// feature request to your Android manifest」エラーで実機使用時に弾かれる
+        /// （Meta公式ドキュメント "Enable Keyboard Overlay" 参照）。
+        /// Input要素を使わないプロジェクトでは付けない（ArsistBuildPipeline.ProjectHasInputElement）。
+        /// </summary>
+        public static void ConfigureSystemKeyboard(string manifestPath, bool enabled)
+        {
+            if (!File.Exists(manifestPath)) return;
+
+            var doc = new XmlDocument();
+            doc.Load(manifestPath);
+
+            var ns = "http://schemas.android.com/apk/res/android";
+            var nsMgr = new XmlNamespaceManager(doc.NameTable);
+            nsMgr.AddNamespace("android", ns);
+
+            var manifest = doc.SelectSingleNode("/manifest");
+            if (manifest == null) return;
+
+            if (enabled)
+            {
+                EnsureUsesFeature(doc, ns, manifest, "oculus.software.overlay_keyboard", false);
+            }
+            else
+            {
+                RemoveNode(manifest, nsMgr, "uses-feature[@android:name='oculus.software.overlay_keyboard']");
+            }
+
+            doc.Save(manifestPath);
+            Debug.Log($"[QuestBuildPatcher] システムキーボード設定完了 (enabled={enabled})");
         }
 
         // ─────────────────────────────────────────

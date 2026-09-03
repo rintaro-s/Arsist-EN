@@ -312,6 +312,25 @@ export const STRINGS: Record<string, Entry> = {
     en: 'Optical see-through glasses are always passthrough: black pixels are transparent, so there is nothing to choose here.',
     ja: '光学シースルー型のグラスは常にパススルーです（黒がそのまま透過するため、選択の余地がありません）。',
   },
+  'build.interaction': { en: 'Interaction', ja: '操作方法' },
+  'build.interactionControllerRay': { en: 'Controller ray', ja: 'コントローラーレイ' },
+  'build.interactionControllerRayDesc': {
+    en: 'Point with the controller and press the trigger to select. Works on XREAL and Quest.',
+    ja: 'コントローラーで指し、トリガーで選択します。XREAL・Quest 両対応。',
+  },
+  'build.interactionHandTracking': { en: 'Hand tracking', ja: 'ハンドトラッキング' },
+  'build.interactionHandTrackingDesc': {
+    en: 'Point with your index finger and pinch to select. Requires com.unity.xr.hands and the OpenXR Hand Tracking feature.',
+    ja: '人差し指で指し、ピンチで選択します。com.unity.xr.hands と OpenXR の Hand Tracking 機能が必要です。',
+  },
+  'build.interactionHandTrackingUnsupported': {
+    en: 'Not available on this device (no hand-tracking cameras).',
+    ja: 'このデバイスでは使えません（ハンドトラッキング用カメラが無いため）。',
+  },
+  'build.interactionNoneEnabledNote': {
+    en: 'Both are off: this will build as a view-only app (nothing can be selected or pressed).',
+    ja: '両方オフです。閲覧専用アプリとしてビルドされます（何も選択・操作できません）。',
+  },
   'build.options': { en: 'Options', ja: 'オプション' },
   'build.developmentBuild': { en: 'Development Build', ja: '開発ビルド' },
   'build.cleanBuild': { en: 'Clean build (rebuild from scratch)', ja: 'クリーンビルド（最初から作り直す）' },

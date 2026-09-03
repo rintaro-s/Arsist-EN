@@ -23,16 +23,26 @@ import {
   ZoomIn,
   ZoomOut,
   Upload,
+  MousePointerClick,
+  SlidersHorizontal,
+  Keyboard,
 } from 'lucide-react';
 
 type Tool = 'select' | 'pan' | UIElementType;
 
 const GRID_SIZE = 16;
 
+// Button / Slider / Input は IR (UIElementType) にも Unity 側の生成
+// (ArsistBuildPipeline.CreateUIElement) にも前から対応していたが、ここのツールバーに項目が無く
+// 配置する手段が無かった。レイキャスト式の当たり判定（コントローラーレイ/ハンドトラッキング）で
+// 実際に押せる/掴める/文字入力できる要素なので、Panel等と同列に並べる。
 const TOOLBAR_ELEMENTS: Array<{ type: UIElementType; label: string; icon: React.ReactNode }> = [
   { type: 'Panel', label: 'Panel', icon: <Square size={18} /> },
   { type: 'Text', label: 'Text', icon: <Type size={18} /> },
+  { type: 'Button', label: 'Button', icon: <MousePointerClick size={18} /> },
+  { type: 'Input', label: 'Input', icon: <Keyboard size={18} /> },
   { type: 'Image', label: 'Image', icon: <ImageIcon size={18} /> },
+  { type: 'Slider', label: 'Slider', icon: <SlidersHorizontal size={18} /> },
   { type: 'Gauge', label: 'Gauge', icon: <GaugeIcon size={18} /> },
   { type: 'Graph', label: 'Graph', icon: <TrendingUp size={18} /> },
 ];

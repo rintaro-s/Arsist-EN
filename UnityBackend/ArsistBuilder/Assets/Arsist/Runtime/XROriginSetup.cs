@@ -52,6 +52,10 @@ namespace Arsist.Runtime
         private Vector3 _lastHeadPosition;
         private Quaternion _lastHeadRotation;
 
+        // コントローラーレイの選択状態（Enter/Exit と トリガー立ち上がりでの決定を検出するため）
+        private GameObject _rayCurrentTarget;
+        private bool _rayTriggerWasPressed;
+
         [Header("Performance")]
         [Tooltip("ARグラス側のリフレッシュレートに合わせた目標フレームレート。0以下で未設定。")]
         [SerializeField] private int _targetFrameRate = 60;
@@ -390,32 +394,77 @@ namespace Arsist.Runtime
             var inputDevices = new List<InputDevice>();
             InputDevices.GetDevicesWithCharacteristics(InputDeviceCharacteristics.Controller, inputDevices);
 
-            if (inputDevices.Count > 0)
+            if (inputDevices.Count == 0)
             {
-                var controller = inputDevices[0];
-                
-                if (controller.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 pos) &&
-                    controller.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion rot))
+                _rayLine.enabled = false;
+                ReleaseRayTarget();
+                return;
+            }
+
+            var controller = inputDevices[0];
+
+            if (!controller.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 pos) ||
+                !controller.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion rot))
+            {
+                _rayLine.enabled = false;
+                ReleaseRayTarget();
+                return;
+            }
+
+            _rayLine.enabled = true;
+
+            var startPos = pos;
+            var direction = rot * Vector3.forward;
+            var endPos = startPos + direction * 10f;
+
+            GameObject hitTarget = null;
+            Vector3 hitPoint = default;
+            if (Physics.Raycast(startPos, direction, out RaycastHit hit, 10f))
+            {
+                endPos = hit.point;
+                hitPoint = hit.point;
+                hitTarget = hit.collider.gameObject;
+            }
+
+            _rayLine.SetPosition(0, startPos);
+            _rayLine.SetPosition(1, endPos);
+
+            // Enter/Exit 通知（ArsistGazeTarget と同じ SendMessage を再利用。
+            // 視線・コントローラーレイ・ハンドトラッキングのどれでも同じ IR ロジックが動く）
+            if (hitTarget != _rayCurrentTarget)
+            {
+                if (_rayCurrentTarget != null)
                 {
-                    _rayLine.enabled = true;
-                    
-                    var startPos = pos;
-                    var direction = rot * Vector3.forward;
-                    var endPos = startPos + direction * 10f;
-                    
-                    if (Physics.Raycast(startPos, direction, out RaycastHit hit, 10f))
-                    {
-                        endPos = hit.point;
-                    }
-                    
-                    _rayLine.SetPosition(0, startPos);
-                    _rayLine.SetPosition(1, endPos);
+                    _rayCurrentTarget.SendMessage("OnGazeExit", SendMessageOptions.DontRequireReceiver);
                 }
-                else
+                _rayCurrentTarget = hitTarget;
+                if (_rayCurrentTarget != null)
                 {
-                    _rayLine.enabled = false;
+                    _rayCurrentTarget.SendMessage("OnGazeEnter", hitPoint, SendMessageOptions.DontRequireReceiver);
                 }
             }
+
+            // トリガーの立ち上がりだけを「決定」として送る（押しっぱなしで連打しない）
+            var triggerPressed = controller.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigger) && trigger;
+            if (triggerPressed && !_rayTriggerWasPressed && _rayCurrentTarget != null)
+            {
+                _rayCurrentTarget.SendMessage("OnGazeDwellSelect", hitPoint, SendMessageOptions.DontRequireReceiver);
+            }
+            // 押し続けている間は毎フレーム送る（Slider を掴んでドラッグする用途。
+            // Button 等 OnGazeDrag を実装しないターゲットには何も起きない）
+            if (triggerPressed && _rayCurrentTarget != null)
+            {
+                _rayCurrentTarget.SendMessage("OnGazeDrag", hitPoint, SendMessageOptions.DontRequireReceiver);
+            }
+            _rayTriggerWasPressed = triggerPressed;
+        }
+
+        private void ReleaseRayTarget()
+        {
+            if (_rayCurrentTarget == null) return;
+            _rayCurrentTarget.SendMessage("OnGazeExit", SendMessageOptions.DontRequireReceiver);
+            _rayCurrentTarget = null;
+            _rayTriggerWasPressed = false;
         }
 
         /// <summary>

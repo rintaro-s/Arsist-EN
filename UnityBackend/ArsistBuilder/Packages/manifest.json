@@ -7,6 +7,7 @@
     "com.unity.toolchain.linux-x86_64": "2.0.11",
     "com.unity.xr.arfoundation": "6.0.6",
     "com.unity.xr.core-utils": "2.5.3",
+    "com.unity.xr.hands": "1.9.0",
     "com.unity.xr.interaction.toolkit": "3.0.8",
     "com.unity.xr.management": "4.5.3",
     "com.unity.xr.openxr": "1.15.1",

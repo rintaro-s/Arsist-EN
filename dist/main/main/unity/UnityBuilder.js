@@ -700,6 +700,9 @@ class UnityBuilder extends events_1.EventEmitter {
                     ` (actual: "${backgroundColor}")`);
             }
         }
+        // 操作方法（コントローラーレイ / ハンドトラッキング）。両方 false は「見るだけのアプリ」として
+        // 正当な選択肢なので、ここではブロックしない（以前はエラーにしていたが、閲覧専用アプリは
+        // 普通に成立するユースケースなので誤りだった）。
         return problems;
     }
     /** UI 要素ツリーを深さ優先で走査する。 */

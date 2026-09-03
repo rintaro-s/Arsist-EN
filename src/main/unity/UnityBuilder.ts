@@ -806,6 +806,10 @@ export class UnityBuilder extends EventEmitter {
       }
     }
 
+    // 操作方法（コントローラーレイ / ハンドトラッキング）。両方 false は「見るだけのアプリ」として
+    // 正当な選択肢なので、ここではブロックしない（以前はエラーにしていたが、閲覧専用アプリは
+    // 普通に成立するユースケースなので誤りだった）。
+
     return problems;
   }
 

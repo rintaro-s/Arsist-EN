@@ -97,6 +97,7 @@ to configure Unity + the scene the way the SDK expects, then get out of the way.
 | XREAL runtime pose/DoF | `XROriginSetup.cs` | `XREALUtility.MainCamera` = `XROrigin.Camera` via TrackedPoseDriver; DoF via `XREALPlugin.SwitchTrackingTypeAsync`; `TrackingType {MODE_6DOF,MODE_3DOF,MODE_0DOF,MODE_0DOF_STAB}` |
 | Quest player settings + manifest | [QuestBuildPatcher.cs](Adapters/Meta_Quest/QuestBuildPatcher.cs) | Meta XR SDK; Vulkan+GLES3, SinglePassInstanced, OVRManager |
 | Background (passthrough vs VR) | `ArsistBuildPipeline.GetBackgroundMode` / `ApplyBackgroundToCamera` / `ConfigureQuestPassthrough` + `XROriginSetup.ApplyBackground` | `OVRPassthroughLayer` (Underlay) + `OVRManager.isInsightPassthroughEnabled` + `OculusProjectConfig._insightPassthroughSupport` |
+| Interaction (controller ray / hand tracking) | `ArsistBuildPipeline.GetInteractionSettings` / `ApplyInteractionSettings` → `XROriginSetup._enableRayInteraction` (trigger-select) + [Runtime/Input/ArsistHandInteraction.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Input/ArsistHandInteraction.cs) (pinch-select, Quest only) | `Unity.XR.Hands.XRHandSubsystem` (`com.unity.xr.hands`, gated by `#if XR_HANDS`) via OpenXR Hand Tracking Subsystem feature |
 
 **Why XREAL was less stable than Quest:** the engine reimplemented (via reflection + manual manifest/scene patching)
 things the SDK does automatically, and some of it conflicted (LAUNCHER vs multi-resume; fictional `XREALSessionConfig`
@@ -157,6 +158,13 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   `ArsistBuildPipeline` (`GetBackgroundMode`, `ApplyBackgroundToCamera`, `ConfigureQuestPassthrough`,
   `ConfigureOculusProjectConfigForQuest`) **and** `XROriginSetup.ApplyBackground`. Both sides must agree —
   `XROriginSetup.Awake()` reconfigures the camera at runtime, so a build-time-only change is silently undone.
+- **Interaction: controller ray vs hand tracking** → `arSettings.interaction` in the Build dialog →
+  `ArsistBuildPipeline` (`GetInteractionSettings`, `ApplyInteractionSettings`) → `XROriginSetup._enableRayInteraction`
+  (trigger-select ray, XREAL+Quest) and/or `Arsist.Runtime.Input.ArsistHandInteraction` (pinch-select, Quest only,
+  `#if XR_HANDS`). Both call `SendMessage("OnGaze{Enter,Exit,DwellSelect}")` on the hit object — the same messages
+  `ArsistGazeInput`/`ArsistGazeTarget` use — so any interactable authored for gaze also works with the other two.
+  Building with both `controllerRay` and `handTracking` off is rejected (`UnityBuilder.ts` validation, and
+  `ArsistBuildPipeline` as a defense-in-depth check) since the built app would be unoperable.
 - **Add a new device** → new folder in [Adapters/](Adapters/) (`adapter.json` + manifest + patcher); see `doc/05-adapter-manager.md`.
 - **IR schema / a new project field** → [src/shared/types.ts](src/shared/types.ts) (then bridge + Unity consumer).
 - **IR → Unity JSON mapping** → [src/bridge/UnityBridge.ts](src/bridge/UnityBridge.ts).
@@ -167,8 +175,27 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
 - **Remote control wire protocol / batch commands** → `ArsistWebSocketServer.cs`
   (`DrainFrames` for framing, `ExecuteBatch` / `DispatchCommand` for dispatch). Note the remote API works in
   **runtime Unity world space**, not editor IR space.
-- **Applied products built on the engine** → [products/](products/); e.g.
-  [products/VirtualReal](products/VirtualReal/README.md) (VRChat → AR avatar mirroring).
+- **Applied products (some built on the engine, some standalone)** → [products/](products/); e.g.
+  [products/VirtualReal](products/VirtualReal/README.md) (VRChat → AR avatar mirroring, built on this
+  engine's Unity runtime), [products/ArsistAIChat](products/ArsistAIChat/README.md) (AI chat over
+  passthrough + hand tracking, built the normal way through this engine's editor/build pipeline — the
+  reference example for `ArsistScriptEvent`-on-select, `api.post` with headers, and the `Input` element's
+  system-keyboard bridge, see below), and [products/QuestAIChat](products/QuestAIChat/README.md) (the
+  same idea but standalone WebXR — no Unity, no dependency on this engine's runtime at all, with its own
+  hand-tracking-driven virtual keyboard instead of the OS system keyboard).
+- **`Input` UI element → Quest system keyboard** → selecting an `Input` element (gaze/ray/hand, same path
+  as Button) calls `Arsist.Runtime.Input.ArsistSystemKeyboardTarget.OpenKeyboard()`, which opens Unity's
+  `TouchScreenKeyboard` — Quest's OS-level keyboard overlay, not a custom in-app keyboard. Requires the
+  `oculus.software.overlay_keyboard` manifest `uses-feature` (added automatically, only when a project has
+  an `Input` element — `ArsistBuildPipeline.ProjectHasInputElement`/`QuestBuildPatcher.ConfigureSystemKeyboard`)
+  and (unconfirmed field name, best-effort) `OVRManager.requireSystemKeyboard`.
+- **Script engine (Jint, JS) → UI selection wiring** → a UI element selected via gaze/controller-ray/hand
+  (any of them; they all funnel through `ArsistGazeTarget.OnGazeDwellSelect`) fires
+  `ArsistScriptEvent.Fire(bindingId)`, which a script with `trigger: {type: "event", value: bindingId}`
+  picks up (`ScriptTriggerManager.cs`). `ApiWrapper.cs`'s `api.get`/`api.post` take an optional
+  `headersJson` overload for `Authorization` etc. — needed for calling any keyed external API from a
+  script. Globals exposed to script JS: `api`, `ui`, `store`, `scene`, `vrm`, `remote`, `log`, `error`
+  (`ScriptEngineManager.cs`).
 
 ## Gotchas / non-obvious constraints
 

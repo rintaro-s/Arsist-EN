@@ -1,3 +1,4 @@
+using Arsist.Runtime.Scripting;
 using UnityEngine;
 
 namespace Arsist.Runtime.Input
@@ -5,6 +6,8 @@ namespace Arsist.Runtime.Input
     /// <summary>
     /// 視線インタラクション可能なオブジェクトに付けるコンポーネント
     /// OnGazeEnter/OnGazeExit/OnGazeDwellSelectを受け取る
+    /// （ArsistGazeInput の他に、XROriginSetup のコントローラーレイ・ArsistHandInteraction の
+    /// ハンドトラッキングも同じ SendMessage 経路でこれらを呼ぶ）
     /// </summary>
     public class ArsistGazeTarget : MonoBehaviour
     {
@@ -29,6 +32,7 @@ namespace Arsist.Runtime.Input
         private Color _originalColor;
         private Vector3 _originalScale;
         private bool _isGazed;
+        private UiBindingRegistry _binding;
 
         private void Awake()
         {
@@ -38,6 +42,7 @@ namespace Arsist.Runtime.Input
                 _originalColor = _renderer.material.color;
             }
             _originalScale = transform.localScale;
+            _binding = GetComponent<UiBindingRegistry>();
         }
 
         // ArsistGazeInputからSendMessageで呼ばれる
@@ -72,6 +77,17 @@ namespace Arsist.Runtime.Input
         public void OnGazeDwellSelect(Vector3 hitPoint)
         {
             onGazeSelect?.Invoke();
+
+            // bindingId を持つ要素（IRで bindingId を設定した Button 等）は、選択と同時に
+            // 同名の ArsistScriptEvent も発火する。スクリプトエディタで
+            //   trigger: { type: "event", value: "<bindingId>" }
+            // を設定すれば、視線・コントローラーレイ・ハンドトラッキングのどれで押しても
+            // Inspector を一切開かずにスクリプトを起動できる。
+            var bindingId = _binding != null ? _binding.bindingId : null;
+            if (!string.IsNullOrEmpty(bindingId))
+            {
+                ArsistScriptEvent.Fire(bindingId);
+            }
         }
     }
 }

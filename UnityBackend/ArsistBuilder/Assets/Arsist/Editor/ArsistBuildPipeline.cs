@@ -1887,10 +1887,17 @@ namespace Arsist.Builder
             ApplyBackgroundToCamera(originCamera, backgroundMode);
             ApplyBackgroundToXROriginSetup(xrOrigin, setupType, backgroundMode);
 
+            var (interactionControllerRay, interactionHandTracking) = GetInteractionSettings();
+            ApplyInteractionSettings(xrOrigin, setupType, interactionControllerRay, interactionHandTracking);
+
             if (IsQuestTargetDevice())
             {
                 EnsureQuestOvrManager(xrOrigin);
                 ConfigureQuestPassthrough(xrOrigin, originCamera, backgroundMode);
+                if (ProjectHasInputElement())
+                {
+                    ConfigureQuestSystemKeyboard(xrOrigin);
+                }
             }
 
             // XREAL: AR Session + SDK の安定化コンポーネントをリグに付与
@@ -3164,8 +3171,8 @@ ScriptedImporter:
                         buttonImage.color = new Color(0.91f, 0.27f, 0.38f, 1f);
                     }
                     var button = go.AddComponent<UnityEngine.UI.Button>();
-                    
-                    go.AddComponent<BoxCollider>();
+
+                    SizeBoxColliderToRect(go, rectTransform);
                     TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistGazeTarget");
                     
                     var buttonTextGO = new GameObject("Text");
@@ -3233,6 +3240,90 @@ ScriptedImporter:
                         }
                     }
                     break;
+
+                case "Gauge":
+                    // 読み取り専用のバー表示。値は bind.key 経由で ArsistUIBinding が
+                    // フィルの fillAmount に反映する（下の bind ワイヤリングで自動的に付与される）。
+                    CreateFillBar(go, style, out _, interactive: false);
+                    break;
+
+                case "Slider":
+                    // 操作可能なバー。コントローラーレイ/ハンドトラッキングで掴んでいる間、
+                    // ArsistSliderTarget が指し先の位置からフィル量を更新する。
+                    var sliderFillImage = CreateFillBar(go, style, out _, interactive: true);
+                    SizeBoxColliderToRect(go, rectTransform);
+                    var sliderTarget = TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistSliderTarget");
+                    if (sliderTarget != null)
+                    {
+                        TrySetMemberValue(sliderTarget, "trackRect", rectTransform);
+                        TrySetMemberValue(sliderTarget, "fillImage", sliderFillImage);
+                    }
+                    break;
+
+                case "Input":
+                    // 文字入力。自前の仮想キーボードは作らず、選択時に Quest の
+                    // システムキーボード オーバーレイ (TouchScreenKeyboard) を呼ぶ
+                    // (ArsistSystemKeyboardTarget)。OS標準の入力方式（音声入力・予測変換・
+                    // 他言語含む）がそのまま使える。
+                    var inputBg = go.AddComponent<UnityEngine.UI.Image>();
+                    inputBg.color = TryParseColor(style?["backgroundColor"], out var inputBgColor)
+                        ? inputBgColor
+                        : new Color(1f, 1f, 1f, 0.08f);
+
+                    var inputField = go.AddComponent<TMP_InputField>();
+
+                    var textAreaGO = new GameObject("Text Area");
+                    textAreaGO.transform.SetParent(go.transform, false);
+                    var textAreaRect = textAreaGO.AddComponent<RectTransform>();
+                    textAreaRect.anchorMin = Vector2.zero;
+                    textAreaRect.anchorMax = Vector2.one;
+                    textAreaRect.offsetMin = new Vector2(10, 6);
+                    textAreaRect.offsetMax = new Vector2(-10, -6);
+                    textAreaGO.AddComponent<RectMask2D>();
+
+                    var placeholderGO = new GameObject("Placeholder");
+                    placeholderGO.transform.SetParent(textAreaGO.transform, false);
+                    var placeholderRect = placeholderGO.AddComponent<RectTransform>();
+                    placeholderRect.anchorMin = Vector2.zero;
+                    placeholderRect.anchorMax = Vector2.one;
+                    placeholderRect.offsetMin = Vector2.zero;
+                    placeholderRect.offsetMax = Vector2.zero;
+                    var placeholderText = placeholderGO.AddComponent<TextMeshProUGUI>();
+                    placeholderText.text = elementData["content"]?.ToString() ?? "Input";
+                    placeholderText.fontStyle = FontStyles.Italic;
+                    placeholderText.color = new Color(1f, 1f, 1f, 0.4f);
+                    placeholderText.fontSize = style?["fontSize"]?.Value<int>() ?? 60;
+                    placeholderText.raycastTarget = false;
+                    if (_defaultTmpFont != null) placeholderText.font = _defaultTmpFont;
+                    if (_defaultTmpMaterial != null) placeholderText.fontSharedMaterial = _defaultTmpMaterial;
+
+                    var inputContentGO = new GameObject("Text");
+                    inputContentGO.transform.SetParent(textAreaGO.transform, false);
+                    var inputContentRect = inputContentGO.AddComponent<RectTransform>();
+                    inputContentRect.anchorMin = Vector2.zero;
+                    inputContentRect.anchorMax = Vector2.one;
+                    inputContentRect.offsetMin = Vector2.zero;
+                    inputContentRect.offsetMax = Vector2.zero;
+                    var inputContentText = inputContentGO.AddComponent<TextMeshProUGUI>();
+                    inputContentText.color = TryParseColor(style?["color"], out var inputTextColor) ? inputTextColor : Color.white;
+                    inputContentText.fontSize = style?["fontSize"]?.Value<int>() ?? 60;
+                    inputContentText.raycastTarget = false;
+                    if (_defaultTmpFont != null) inputContentText.font = _defaultTmpFont;
+                    if (_defaultTmpMaterial != null) inputContentText.fontSharedMaterial = _defaultTmpMaterial;
+
+                    inputField.textViewport = textAreaRect;
+                    inputField.textComponent = inputContentText;
+                    inputField.placeholder = placeholderText;
+                    inputField.text = "";
+
+                    SizeBoxColliderToRect(go, rectTransform);
+                    TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistGazeTarget");
+                    var keyboardTarget = TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistSystemKeyboardTarget");
+                    if (keyboardTarget != null)
+                    {
+                        TrySetMemberValue(keyboardTarget, "textComponent", inputContentText);
+                    }
+                    break;
             }
 
             var bind = elementData["bind"] as JObject;
@@ -3240,14 +3331,36 @@ ScriptedImporter:
             var bindFormat = bind?["format"]?.ToString();
             if (!string.IsNullOrEmpty(bindKey))
             {
-                var bindingComp = TryAddComponentByTypeName(go, "Arsist.Runtime.UI.ArsistUIBinding");
-                if (bindingComp != null)
+                // Input は ArsistSystemKeyboardTarget 自身が表示更新 + store 書き戻しの両方を
+                // 担うので、読み取り専用の ArsistUIBinding は付けない（同じ子TMP_Textを取り合って
+                // 無駄な二重書きになるため）。
+                if (type != "Input")
                 {
-                    var t = bindingComp.GetType();
-                    var keyField = t.GetField("key");
-                    if (keyField != null) keyField.SetValue(bindingComp, bindKey);
-                    var formatField = t.GetField("format");
-                    if (formatField != null) formatField.SetValue(bindingComp, bindFormat);
+                    var bindingComp = TryAddComponentByTypeName(go, "Arsist.Runtime.UI.ArsistUIBinding");
+                    if (bindingComp != null)
+                    {
+                        var t = bindingComp.GetType();
+                        var keyField = t.GetField("key");
+                        if (keyField != null) keyField.SetValue(bindingComp, bindKey);
+                        var formatField = t.GetField("format");
+                        if (formatField != null) formatField.SetValue(bindingComp, bindFormat);
+                    }
+                }
+
+                // Slider はドラッグした値を bind.key に書き戻す（ArsistUIBinding は読み取り専用）
+                var sliderTargetType = FindType("Arsist.Runtime.Input.ArsistSliderTarget");
+                var sliderTargetComp = sliderTargetType != null ? go.GetComponent(sliderTargetType) : null;
+                if (sliderTargetComp != null)
+                {
+                    TrySetMemberValue(sliderTargetComp, "bindKey", bindKey);
+                }
+
+                // Input はキーボードで打った内容を bind.key に書き戻す
+                var keyboardTargetType = FindType("Arsist.Runtime.Input.ArsistSystemKeyboardTarget");
+                var keyboardTargetComp = keyboardTargetType != null ? go.GetComponent(keyboardTargetType) : null;
+                if (keyboardTargetComp != null)
+                {
+                    TrySetMemberValue(keyboardTargetComp, "bindKey", bindKey);
                 }
             }
 
@@ -3494,6 +3607,53 @@ ScriptedImporter:
             );
         }
 
+        /// <summary>
+        /// Button/Slider の当たり判定用 BoxCollider を、実際の RectTransform の矩形に合わせて張る。
+        /// 既定サイズ (1,1,1) のまま付けると、World Space Canvas のスケール（ピクセル→メートル）で
+        /// 矩形とサイズが合わず、指し先が正しく当たらない。
+        /// </summary>
+        private static void SizeBoxColliderToRect(GameObject go, RectTransform rectTransform)
+        {
+            var collider = go.GetComponent<BoxCollider>() ?? go.AddComponent<BoxCollider>();
+            var rect = rectTransform.rect;
+            collider.center = new Vector3(rect.center.x, rect.center.y, 0f);
+            collider.size = new Vector3(Mathf.Max(rect.width, 1f), Mathf.Max(rect.height, 1f), 2f);
+        }
+
+        /// <summary>
+        /// Slider / Gauge 共通の「トラック＋フィル」バー表示を作る。
+        /// Slider は ArsistSliderTarget が、Gauge は ArsistUIBinding（bind 経由）が
+        /// 返した fillImage.fillAmount を書き換える。
+        /// </summary>
+        private static UnityEngine.UI.Image CreateFillBar(GameObject go, JObject style, out RectTransform fillRect, bool interactive)
+        {
+            var track = go.AddComponent<UnityEngine.UI.Image>();
+            track.color = TryParseColor(style?["backgroundColor"], out var trackColor)
+                ? trackColor
+                : new Color(1f, 1f, 1f, 0.12f);
+
+            var fillGO = new GameObject("Fill");
+            fillGO.transform.SetParent(go.transform, false);
+            fillRect = fillGO.AddComponent<RectTransform>();
+            fillRect.anchorMin = Vector2.zero;
+            fillRect.anchorMax = Vector2.one;
+            fillRect.offsetMin = Vector2.zero;
+            fillRect.offsetMax = Vector2.zero;
+
+            var fillImage = fillGO.AddComponent<UnityEngine.UI.Image>();
+            fillImage.color = TryParseColor(style?["color"], out var fillColor)
+                ? fillColor
+                : (interactive ? new Color(0.35f, 0.75f, 1f, 1f) : new Color(0.30f, 0.75f, 0.35f, 1f));
+            fillImage.type = UnityEngine.UI.Image.Type.Filled;
+            fillImage.fillMethod = UnityEngine.UI.Image.FillMethod.Horizontal;
+            fillImage.fillOrigin = (int)UnityEngine.UI.Image.OriginHorizontal.Left;
+            fillImage.fillAmount = style?["initialValue"]?.Value<float?>() ?? 0.5f;
+            // フィル画像自体はレイキャストに反応させない（当たり判定は親の BoxCollider が持つ）
+            fillImage.raycastTarget = false;
+
+            return fillImage;
+        }
+
         private static bool TryParseColor(JToken token, out Color color)
         {
             color = Color.white;
@@ -3671,6 +3831,22 @@ ScriptedImporter:
                         "ConfigurePassthrough",
                         manifestPath,
                         GetBackgroundMode() == BACKGROUND_PASSTHROUGH
+                    );
+                    // 操作方法にハンドトラッキングを選んだときだけパーミッション/メタデータを足す。
+                    var (_, handTrackingForManifest) = GetInteractionSettings();
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "ConfigureHandTracking",
+                        manifestPath,
+                        handTrackingForManifest
+                    );
+                    // Input要素（文字入力）を使っているプロジェクトだけ、
+                    // システムキーボード オーバーレイの機能宣言を足す。
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "ConfigureSystemKeyboard",
+                        manifestPath,
+                        ProjectHasInputElement()
                     );
                 }
             }
@@ -4610,6 +4786,109 @@ ScriptedImporter:
             Debug.Log($"[Arsist] XROriginSetup background wired (mode={wiredMode}, color={wiredColor})");
         }
 
+        // ─────────────────────────────────────────
+        // 操作方法（コントローラーレイ / ハンドトラッキング）
+        // ─────────────────────────────────────────
+
+        /// <summary>
+        /// arSettings.interaction を読む。両方 false は「見るだけのアプリ」として正当な選択肢なので
+        /// ここではブロックしない（以前はビルドごと失敗させていたが、閲覧専用アプリは普通に成立する
+        /// ユースケースなので誤りだった）。
+        /// </summary>
+        private static (bool controllerRay, bool handTracking) GetInteractionSettings()
+        {
+            var node = _manifest?["arSettings"]?["interaction"];
+            var controllerRay = node?["controllerRay"]?.Value<bool?>() ?? true;
+            var handTracking = node?["handTracking"]?.Value<bool?>() ?? false;
+
+            if (!controllerRay && !handTracking)
+            {
+                Debug.Log("[Arsist] No interaction method enabled (controllerRay=false, handTracking=false). " +
+                           "Building a view-only app.");
+            }
+
+            if (handTracking && !IsQuestTargetDevice())
+            {
+                Debug.LogWarning(
+                    "[Arsist] arSettings.interaction.handTracking=true is ignored on this device " +
+                    "(hand tracking cameras only exist on Quest); controllerRay will still work.");
+                handTracking = false;
+            }
+
+            return (controllerRay, handTracking);
+        }
+
+        /// <summary>
+        /// UIレイアウトのどこかに Input 要素があるかを調べる。
+        /// システムキーボードの uses-feature 宣言を、使わないプロジェクトにまで足さないため
+        /// （使わない機能で対応端末を絞らない、という他の Configure* 系と同じ方針）。
+        /// </summary>
+        private static bool ProjectHasInputElement()
+        {
+            if (_uiLayoutCache == null) return false;
+            foreach (var layout in _uiLayoutCache.Values)
+            {
+                var root = layout?["root"] as JObject;
+                if (root != null && ContainsInputElement(root)) return true;
+            }
+            return false;
+        }
+
+        private static bool ContainsInputElement(JObject element)
+        {
+            if (element["type"]?.ToString() == "Input") return true;
+            if (element["children"] is JArray children)
+            {
+                foreach (var child in children)
+                {
+                    if (child is JObject childObj && ContainsInputElement(childObj)) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// XROriginSetup にコントローラーレイの有効/無効を流し、Quest なら
+        /// ハンドトラッキング操作コンポーネント (Arsist.Runtime.Input.ArsistHandInteraction) を付与する。
+        /// </summary>
+        private static void ApplyInteractionSettings(GameObject xrOrigin, Type setupType, bool controllerRay, bool handTracking)
+        {
+            if (xrOrigin == null) return;
+
+            if (setupType != null)
+            {
+                var setup = xrOrigin.GetComponent(setupType);
+                var wired = TrySetMemberValue(setup, "enableRayInteraction", controllerRay);
+                Debug.Log($"[Arsist] XROriginSetup controller-ray interaction: {controllerRay} (wired={wired})");
+            }
+
+            if (handTracking)
+            {
+                var handType = FindType("Arsist.Runtime.Input.ArsistHandInteraction, Assembly-CSharp")
+                    ?? FindTypeInLoadedAssemblies("Arsist.Runtime.Input.ArsistHandInteraction");
+                if (handType == null)
+                {
+                    Debug.LogWarning("[Arsist] ArsistHandInteraction script not found; hand tracking will not be added.");
+                    return;
+                }
+
+                if (xrOrigin.GetComponent(handType) == null)
+                {
+                    xrOrigin.AddComponent(handType);
+                }
+                Debug.Log("[Arsist] ArsistHandInteraction added (Quest hand-tracking pinch interaction).");
+
+                if (FindType("Unity.XR.Hands.XRHandSubsystem") == null
+                    && FindTypeInLoadedAssemblies("Unity.XR.Hands.XRHandSubsystem") == null)
+                {
+                    Debug.LogWarning(
+                        "[Arsist] com.unity.xr.hands package (Unity.XR.Hands.XRHandSubsystem) not found. " +
+                        "ArsistHandInteraction will compile to a no-op at runtime; install com.unity.xr.hands " +
+                        "and enable the OpenXR 'Hand Tracking Subsystem' feature for hand tracking to actually work.");
+                }
+            }
+        }
+
         /// <summary>
         /// Quest のパススルー合成 (OVRPassthroughLayer) をシーンに用意する。
         ///
@@ -4729,6 +5008,43 @@ ScriptedImporter:
             var fallbackRoot = new GameObject("OVR Manager");
             fallbackRoot.AddComponent(ovrManagerType);
             Debug.Log("[Arsist] OVRManager added on fallback root for Quest.");
+        }
+
+        /// <summary>
+        /// OVRManager の「Require System Keyboard」(Quest Features 内のチェックボックス) を有効化する。
+        ///
+        /// これが無いと、Input要素があっても TouchScreenKeyboard.Open() が実機で機能しない
+        /// （Meta公式ドキュメント "Enable Keyboard Overlay" 参照）。フィールド名 "requireSystemKeyboard"
+        /// は、Unity Inspector が camelCase フィールド名をそのまま整形して表示する規則
+        /// （このファイル内の isInsightPassthroughEnabled と同じ規則）からの推測であり、
+        /// SDKソースで直接確認できていない best-effort 設定。TrySetMemberValue は対象フィールドが
+        /// 無ければ何もせず警告を出すだけなので、外れていてもビルド自体は壊れない。
+        /// 外れていた場合は、生成された Unity プロジェクトを開いて OVRCameraRig の OVRManager から
+        /// 手動で有効化すること。
+        /// </summary>
+        private static void ConfigureQuestSystemKeyboard(GameObject xrOrigin)
+        {
+            var ovrManagerType = FindType("OVRManager") ?? FindTypeInLoadedAssemblies("OVRManager");
+            var manager = xrOrigin != null ? xrOrigin.GetComponentInChildren(ovrManagerType, true) : null;
+            if (manager == null)
+            {
+                Debug.LogWarning("[Arsist] OVRManager not found; cannot enable system keyboard requirement.");
+                return;
+            }
+
+            var wired = TrySetMemberValue(manager, "requireSystemKeyboard", true);
+            if (wired)
+            {
+                Debug.Log("[Arsist] OVRManager.requireSystemKeyboard = true (Input要素があるため有効化)");
+            }
+            else
+            {
+                Debug.LogWarning(
+                    "[Arsist] Could not set OVRManager's system-keyboard field by reflection " +
+                    "(field name guess 'requireSystemKeyboard' didn't match). " +
+                    "Enable 'Require System Keyboard' manually under OVRManager > Quest Features " +
+                    "in the generated Unity project if on-device text input doesn't open the keyboard.");
+            }
         }
 
         private static void ExecuteBuild(JObject manifest)

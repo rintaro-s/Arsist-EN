@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle, Eye, Cloud, Square } from 'lucide-react';
-import type { BackgroundMode } from '../../../shared/types';
+import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle, Eye, Cloud, Square, MousePointer2, Hand } from 'lucide-react';
+import type { BackgroundMode, InteractionSettings } from '../../../shared/types';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ErrorDialog } from './ErrorDialog';
@@ -24,6 +24,17 @@ function supportsBackgroundChoice(deviceId: string): boolean {
   const normalized = deviceId.toLowerCase();
   return normalized.includes('quest') || normalized.includes('meta');
 }
+
+/**
+ * ハンドトラッキングを選べるのは Quest だけ。
+ * XREAL One 系にはハンドトラッキング用カメラが無いため、選んでも効果が無い。
+ */
+function supportsHandTracking(deviceId: string): boolean {
+  const normalized = deviceId.toLowerCase();
+  return normalized.includes('quest') || normalized.includes('meta');
+}
+
+const DEFAULT_INTERACTION: InteractionSettings = { controllerRay: true, handTracking: false };
 
 const devices: DeviceOption[] = [
   { id: 'XREAL_One', name: 'XREAL One (Beam Pro)', available: true },
@@ -70,6 +81,14 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     { id: 'skybox', label: t('build.bgSkybox'), desc: t('build.bgSkyboxDesc') },
     { id: 'solidColor', label: t('build.bgSolidColor'), desc: t('build.bgSolidColorDesc') },
   ];
+
+  // 操作方法（コントローラーレイ / ハンドトラッキング）。両方 OFF はビルド時にエラーになるため、
+  // ここでも警告を出す（ビルドを押すまで気付けないのは不親切なため）。
+  const interaction: InteractionSettings = project?.arSettings?.interaction ?? DEFAULT_INTERACTION;
+  const toggleInteraction = (patch: Partial<InteractionSettings>) => {
+    updateARSettings({ interaction: { ...interaction, ...patch } });
+  };
+  const noInteractionEnabled = !interaction.controllerRay && !interaction.handTracking;
 
   const buildHelpfulErrorSummary = (text: string, logs: string[]) => {
     const combined = [text, ...logs].join('\n');
@@ -407,6 +426,55 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
               </>
             ) : (
               <p className="text-xs text-arsist-muted">{t('build.backgroundOpticalNote')}</p>
+            )}
+          </div>
+
+          {/* Interaction (controller ray / hand tracking) */}
+          <div className="mb-6">
+            <label className="input-label">{t('build.interaction')}</label>
+            <div className="space-y-2">
+              <button
+                onClick={() => toggleInteraction({ controllerRay: !interaction.controllerRay })}
+                disabled={isBuilding}
+                className={`w-full p-3 rounded-lg border text-left text-sm ${
+                  interaction.controllerRay
+                    ? 'border-arsist-accent bg-arsist-accent/10'
+                    : 'border-arsist-primary/30 hover:border-arsist-primary'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <MousePointer2 size={16} />
+                  <span>{t('build.interactionControllerRay')}</span>
+                </div>
+                <p className="text-xs text-arsist-muted mt-1">{t('build.interactionControllerRayDesc')}</p>
+              </button>
+
+              <button
+                onClick={() => toggleInteraction({ handTracking: !interaction.handTracking })}
+                disabled={isBuilding || !supportsHandTracking(selectedDevice)}
+                className={`w-full p-3 rounded-lg border text-left text-sm ${
+                  interaction.handTracking
+                    ? 'border-arsist-accent bg-arsist-accent/10'
+                    : 'border-arsist-primary/30 hover:border-arsist-primary'
+                } ${!supportsHandTracking(selectedDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Hand size={16} />
+                  <span>{t('build.interactionHandTracking')}</span>
+                </div>
+                <p className="text-xs text-arsist-muted mt-1">
+                  {supportsHandTracking(selectedDevice)
+                    ? t('build.interactionHandTrackingDesc')
+                    : t('build.interactionHandTrackingUnsupported')}
+                </p>
+              </button>
+            </div>
+
+            {noInteractionEnabled && (
+              <p className="text-xs text-arsist-muted mt-2 flex items-center gap-1">
+                <Eye size={14} />
+                {t('build.interactionNoneEnabledNote')}
+              </p>
             )}
           </div>
 

@@ -14,6 +14,7 @@ namespace Arsist.Runtime.UI
 
         private TMP_Text _tmpText;
         private Text _uiText;
+        private Image _fillImage;
         private bool _subscribed;
 
         private void Awake()
@@ -23,6 +24,17 @@ namespace Arsist.Runtime.UI
 
             _uiText = GetComponent<Text>();
             if (_uiText == null) _uiText = GetComponentInChildren<Text>();
+
+            // Gauge / Slider: 「トラック＋フィル画像」構成の子 Image (Type=Filled) を探す。
+            // 値は 0..100 の百分率という規約（UIエディタのプレビューと合わせてある）。
+            foreach (var img in GetComponentsInChildren<Image>(true))
+            {
+                if (img.type == Image.Type.Filled)
+                {
+                    _fillImage = img;
+                    break;
+                }
+            }
         }
 
         private void OnEnable()
@@ -84,6 +96,25 @@ namespace Arsist.Runtime.UI
             var text = FormatValue(value);
             if (_tmpText != null) _tmpText.text = text;
             if (_uiText != null) _uiText.text = text;
+
+            if (_fillImage != null && TryToUnitInterval(value, out var fraction))
+            {
+                _fillImage.fillAmount = fraction;
+            }
+        }
+
+        /// <summary>0..100 の百分率を 0..1 に変換する。数値化できなければ false。</summary>
+        private static bool TryToUnitInterval(object value, out float fraction)
+        {
+            fraction = 0f;
+            if (value == null) return false;
+            if (!float.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture),
+                    NumberStyles.Float, CultureInfo.InvariantCulture, out var percent))
+            {
+                return false;
+            }
+            fraction = Mathf.Clamp01(percent / 100f);
+            return true;
         }
 
         private string FormatValue(object value)
