@@ -2,6 +2,10 @@
 
 Arsist is a cross-platform development engine for AR glasses. Built with Electron and React, the editor provides integrated editing of scenes, UI, and logic, generating device-ready applications through Unity batch builds.
 
+https://github.com/rintaro-s/Arsist
+↑こいつの英語verとして作成しましたが、こっち(EN)のほうが独り歩きして更新が速いです。
+コミットや試行錯誤はオリジナルの方で感じれます
+
 ## Table of Contents
 
 - [Requirements](#requirements)
@@ -431,6 +435,8 @@ See `docs/scripting-api.md` for complete documentation.
 - Check Node.js version: `node --version` (should be 18+)
 - Delete `node_modules/` and run `npm install` again
 - Check console for errors
+- If you see `Electron built-in module is not available`, your environment may have `ELECTRON_RUN_AS_NODE` set. Use the safe wrapper: `npm run start`
+- If the window fails to open due to GPU/sandbox issues on Linux, try: `ARSIST_SAFE_MODE=1 npm start`
 
 ### Build Fails with "SDK Not Found"
 - Verify SDK directory structure matches [SDK Setup](#sdk-setup)
