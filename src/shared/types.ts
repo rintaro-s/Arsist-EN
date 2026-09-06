@@ -85,6 +85,37 @@ export interface DataFlowDefinition {
 // AR 設定
 // ========================================
 
+/**
+ * 背景（カメラの clear）の描き方。
+ *
+ * XREAL のような光学シースルー機では、そもそも黒＝素通しなので選択の余地は無い
+ * （常に passthrough 相当）。Quest のようなビデオシースルー機だけが、
+ * 「パススルー映像を見せる MR」と「現実を隠す VR」を選べる。
+ */
+export type BackgroundMode =
+  | 'passthrough'   // MR: 外カメラ映像を背景に出す
+  | 'skybox'        // VR: Skybox を背景に出す
+  | 'solidColor';   // VR: 単色で塗りつぶす
+
+/**
+ * ユーザーがシーン内オブジェクトを選択・操作する方式。
+ * 少なくとも1つは有効でないと、ビルドしたアプリを一切操作できなくなるため、
+ * 両方 false でのビルドはエラーにする（UnityBuilder / ArsistBuildPipeline 側で検証）。
+ */
+export interface InteractionSettings {
+  /**
+   * コントローラー / ハンドコントローラーからのレイキャストでポインタ操作する (default: true)。
+   * XREAL・Quest とも対応。トリガーボタンで選択を確定する。
+   */
+  controllerRay: boolean;
+  /**
+   * ハンドトラッキングでのピンチ操作を有効にする (default: false)。
+   * Quest のみ対応（要 com.unity.xr.hands パッケージ、OpenXR の Hand Tracking 拡張）。
+   * XREAL One 系にはハンドトラッキング用カメラが無いため、有効にしても効果が無い。
+   */
+  handTracking: boolean;
+}
+
 export interface ARSettings {
   trackingMode: TrackingMode;
   presentationMode: PresentationMode;
@@ -102,6 +133,18 @@ export interface ARSettings {
   remoteControlPort?: number;
   /** WebSocket リモート制御の認証パスワード（空文字なら認証なし） */
   remoteControlPassword?: string;
+  /**
+   * 背景の描き方 (default: 'passthrough')。
+   * ビデオシースルー機 (Meta Quest) でのみ意味を持つ。XREAL では無視される。
+   */
+  backgroundMode?: BackgroundMode;
+  /** backgroundMode === 'solidColor' のときの背景色 (#RRGGBB, default: '#000000') */
+  backgroundColor?: string;
+  /**
+   * 操作方法 (default: { controllerRay: true, handTracking: false })。
+   * 両方 false でのビルドはエラーになる。
+   */
+  interaction?: InteractionSettings;
 }
 
 // ========================================

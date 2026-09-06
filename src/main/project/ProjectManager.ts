@@ -145,6 +145,11 @@ export class ProjectManager {
         project.arSettings = this.createARSettings(project.appType);
       }
 
+      // 後方互換: 操作方法設定が無い旧プロジェクトには既定値（コントローラーレイのみ）を補う
+      if (!project.arSettings.interaction) {
+        project.arSettings.interaction = { controllerRay: true, handTracking: false };
+      }
+
       // 後方互換: DataFlow が無ければ空で生成
       if (!project.dataFlow) {
         project.dataFlow = this.createInitialDataFlow();
@@ -404,6 +409,7 @@ export class ProjectManager {
           enableRemoteControl: false,
           remoteControlPort: 8765,
           remoteControlPassword: '',
+          interaction: { controllerRay: true, handTracking: false },
         };
       case '2d_floating_screen':
         return {
@@ -414,6 +420,7 @@ export class ProjectManager {
           enableRemoteControl: false,
           remoteControlPort: 8765,
           remoteControlPassword: '',
+          interaction: { controllerRay: true, handTracking: false },
           floatingScreen: {
             width: 1.6,
             height: 0.9,
@@ -430,6 +437,7 @@ export class ProjectManager {
           enableRemoteControl: false,
           remoteControlPort: 8765,
           remoteControlPassword: '',
+          interaction: { controllerRay: true, handTracking: false },
         };
       default:
         return {
@@ -440,6 +448,7 @@ export class ProjectManager {
           enableRemoteControl: false,
           remoteControlPort: 8765,
           remoteControlPassword: '',
+          interaction: { controllerRay: true, handTracking: false },
         };
     }
   }

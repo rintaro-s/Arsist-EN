@@ -15,6 +15,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { UIElement } from '../../../shared/types';
 import { ScriptFileList } from '../viewport/ScriptEditor';
+import { useT } from '../../i18n';
 
 export function LeftPanel() {
   const { currentView } = useUIStore();
@@ -32,6 +33,7 @@ export function LeftPanel() {
    ════════════════════════════════════════ */
 
 function SceneHierarchy() {
+  const t = useT();
   const {
     project, projectPath, currentSceneId, setCurrentScene,
     selectedObjectIds, selectObjects, addObject, addUILayout,
@@ -96,20 +98,20 @@ function SceneHierarchy() {
   return (
     <div className="flex flex-col h-full">
       <div className="panel-header">
-        <span>Scene</span>
+        <span>{t('leftPanel.scene')}</span>
         <div className="relative" ref={menuRef}>
           <button className="btn-icon" onClick={() => setMenuOpen((v) => !v)}><Plus size={15} /></button>
           {menuOpen && (
             <div className="context-menu" style={{ right: 0, top: '100%' }}>
-              <MenuItem icon={<FolderOpen size={14} />} label="Import GLB/GLTF" onClick={handleImport} />
-              <MenuItem icon={<User size={14} />} label="Import VRM" onClick={handleImportVRM} />
+              <MenuItem icon={<FolderOpen size={14} />} label={t('leftPanel.importGlbGltf')} onClick={handleImport} />
+              <MenuItem icon={<User size={14} />} label={t('leftPanel.importVrm')} onClick={handleImportVRM} />
               <div className="context-menu-separator" />
-              <MenuItem icon={<Box size={14} />} label="Cube" onClick={() => add('primitive', 'cube')} />
-              <MenuItem icon={<Circle size={14} />} label="Sphere" onClick={() => add('primitive', 'sphere')} />
-              <MenuItem icon={<Square size={14} />} label="Plane" onClick={() => add('primitive', 'plane')} />
-              <MenuItem icon={<Cylinder size={14} />} label="Cylinder" onClick={() => add('primitive', 'cylinder')} />
+              <MenuItem icon={<Box size={14} />} label={t('leftPanel.cube')} onClick={() => add('primitive', 'cube')} />
+              <MenuItem icon={<Circle size={14} />} label={t('leftPanel.sphere')} onClick={() => add('primitive', 'sphere')} />
+              <MenuItem icon={<Square size={14} />} label={t('leftPanel.plane')} onClick={() => add('primitive', 'plane')} />
+              <MenuItem icon={<Cylinder size={14} />} label={t('leftPanel.cylinder')} onClick={() => add('primitive', 'cylinder')} />
               <div className="context-menu-separator" />
-              <MenuItem icon={<Layout size={14} />} label="Canvas (UI Surface)" onClick={addCanvas} />
+              <MenuItem icon={<Layout size={14} />} label={t('leftPanel.canvasUiSurface')} onClick={addCanvas} />
             </div>
           )}
         </div>
@@ -145,7 +147,7 @@ function SceneHierarchy() {
           );
         })}
         {(!scene || scene.objects.length === 0) && (
-          <Empty icon={<Box size={20} />} text="Click + to add an object" />
+          <Empty icon={<Box size={20} />} text={t('leftPanel.clickPlusToAddObject')} />
         )}
       </div>
     </div>
@@ -157,6 +159,7 @@ function SceneHierarchy() {
    ════════════════════════════════════════ */
 
 function UIHierarchy() {
+  const t = useT();
   const {
     project, currentUILayoutId, setCurrentUILayout,
     selectedUIElementId, selectUIElement, addUIElement, addUILayout, removeUILayout,
@@ -182,12 +185,12 @@ function UIHierarchy() {
   return (
     <div className="flex flex-col h-full">
       <div className="panel-header">
-        <span>UI Layouts</span>
+        <span>{t('leftPanel.uiLayouts')}</span>
       </div>
 
       {/* UHD Section */}
       <LayoutSection
-        label="UHD (Always Visible)"
+        label={t('leftPanel.uhdAlwaysVisible')}
         layouts={uhdLayouts}
         currentId={currentUILayoutId}
         onSelect={setCurrentUILayout}
@@ -198,7 +201,7 @@ function UIHierarchy() {
 
       {/* Canvas Section */}
       <LayoutSection
-        label="Canvas (3D Space)"
+        label={t('leftPanel.canvas3dSpace')}
         layouts={canvasLayouts}
         currentId={currentUILayoutId}
         onSelect={setCurrentUILayout}
@@ -210,7 +213,7 @@ function UIHierarchy() {
       {/* Element Creation Toolbar */}
       {layout && (
         <div className="px-2 py-1.5 border-b border-arsist-border bg-arsist-hover flex items-center gap-1 flex-wrap">
-          <span className="text-[10px] text-arsist-muted mr-1">Add:</span>
+          <span className="text-[10px] text-arsist-muted mr-1">{t('leftPanel.add')}</span>
           {(['Panel', 'Text', 'Button', 'Image', 'Input', 'Slider', 'Gauge', 'Graph'] as const).map((t) => (
             <button
               key={t}
@@ -224,7 +227,7 @@ function UIHierarchy() {
       {/* Element Tree */}
       <div className="flex-1 overflow-y-auto p-1.5">
         {layout ? renderTree(layout.root) : (
-          <Empty icon={<Layout size={20} />} text="Select a layout" />
+          <Empty icon={<Layout size={20} />} text={t('leftPanel.selectLayout')} />
         )}
       </div>
     </div>
@@ -240,6 +243,7 @@ function LayoutSection({ label, layouts, currentId, onSelect, onAdd, onRemove, m
   onRemove?: (id: string) => void;
   minCount?: number;
 }) {
+  const t = useT();
   return (
     <>
       <div className="px-2 py-1 border-b border-arsist-border bg-arsist-hover flex items-center justify-between">
@@ -257,7 +261,7 @@ function LayoutSection({ label, layouts, currentId, onSelect, onAdd, onRemove, m
                 <button
                   onClick={(e) => { e.stopPropagation(); onRemove(l.id); }}
                   className="opacity-0 group-hover:opacity-100 text-arsist-muted hover:text-arsist-error transition-opacity p-0.5"
-                  title="Delete"
+                  title={t('leftPanel.delete')}
                 ><Trash2 size={11} /></button>
               )}
             </div>
@@ -273,6 +277,7 @@ function LayoutSection({ label, layouts, currentId, onSelect, onAdd, onRemove, m
    ════════════════════════════════════════ */
 
 function DataFlowList() {
+  const t = useT();
   const {
     project, selectedDataSourceId, selectDataSource, removeDataSource,
     selectedTransformId, selectTransform, removeTransform,
@@ -282,10 +287,10 @@ function DataFlowList() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="panel-header"><span>DataFlow</span></div>
+      <div className="panel-header"><span>{t('leftPanel.dataFlow')}</span></div>
 
       <div className="px-2 py-1 border-b border-arsist-border bg-arsist-hover">
-        <span className="text-[10px] text-arsist-muted uppercase tracking-wider">Sources ({sources.length})</span>
+        <span className="text-[10px] text-arsist-muted uppercase tracking-wider">{t('leftPanel.sources', { count: sources.length })}</span>
       </div>
       <div className="overflow-y-auto p-1.5 space-y-0.5 max-h-[40%]">
         {sources.map((ds) => (
@@ -299,11 +304,11 @@ function DataFlowList() {
             <button onClick={(e) => { e.stopPropagation(); removeDataSource(ds.id); }} className="text-arsist-muted hover:text-arsist-error shrink-0"><Trash2 size={11} /></button>
           </div>
         ))}
-        {sources.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">Add from DataFlow editor</div>}
+        {sources.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">{t('leftPanel.addFromDataFlowEditor')}</div>}
       </div>
 
       <div className="px-2 py-1 border-b border-t border-arsist-border bg-arsist-hover">
-        <span className="text-[10px] text-arsist-muted uppercase tracking-wider">Transforms ({transforms.length})</span>
+        <span className="text-[10px] text-arsist-muted uppercase tracking-wider">{t('leftPanel.transforms', { count: transforms.length })}</span>
       </div>
       <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
         {transforms.map((tf) => (
@@ -317,7 +322,7 @@ function DataFlowList() {
             <button onClick={(e) => { e.stopPropagation(); removeTransform(tf.id); }} className="text-arsist-muted hover:text-arsist-error shrink-0"><Trash2 size={11} /></button>
           </div>
         ))}
-        {transforms.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">Add from DataFlow editor</div>}
+        {transforms.length === 0 && <div className="text-[10px] text-arsist-muted text-center py-2">{t('leftPanel.addFromDataFlowEditor')}</div>}
       </div>
     </div>
   );

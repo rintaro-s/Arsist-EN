@@ -95,7 +95,8 @@ namespace Arsist.Adapters.MetaQuest
             EnsureMetaData(doc, ns, app, "com.oculus.ossplash", "false");
 
             // ─── ハンドトラッキング パーミッション ───
-            EnsurePermission(doc, ns, manifest, "com.oculus.permission.HAND_TRACKING");
+            // HAND_TRACKING は arSettings.interaction.handTracking の有無で
+            // ConfigureHandTracking() が出し入れする（使わない機能で対応端末を絞らないため）。
             EnsurePermission(doc, ns, manifest, "com.oculus.permission.USE_SCENE");
 
             // ─── VR 機能 ───
@@ -109,8 +110,18 @@ namespace Arsist.Adapters.MetaQuest
         // Passthrough (MR) 設定
         // ─────────────────────────────────────────
 
-        /// <summary>MR Passthrough を有効化する</summary>
-        public static void ConfigurePassthrough(string manifestPath)
+        /// <summary>
+        /// MR Passthrough 用のマニフェスト宣言を出し入れする。
+        ///
+        /// enabled=false（背景に Skybox / 単色を選んだ VR ビルド）のときに
+        /// PASSTHROUGH を required で宣言したままにすると、使いもしない機能で
+        /// 対応端末を絞ることになるので、宣言ごと落とす。
+        ///
+        /// なお Quest の AndroidManifest.xml は通常 Meta XR SDK の
+        /// OVRManifestPreprocessor が OVRProjectConfig から生成するため、
+        /// テンプレートが無いプロジェクトではここは何もしない。
+        /// </summary>
+        public static void ConfigurePassthrough(string manifestPath, bool enabled)
         {
             if (!File.Exists(manifestPath)) return;
 
@@ -126,15 +137,91 @@ namespace Arsist.Adapters.MetaQuest
 
             if (manifest == null || app == null) return;
 
-            // Passthrough メタデータ
             EnsureMetaData(doc, ns, app, "com.oculus.ossplash", "false");
-            EnsureMetaData(doc, ns, app, "com.oculus.experimental.enabled", "true");
 
-            // Passthrough パーミッション
-            EnsurePermission(doc, ns, manifest, "com.oculus.permission.RENDER_MODEL");
+            if (enabled)
+            {
+                EnsureUsesFeature(doc, ns, manifest, "com.oculus.feature.PASSTHROUGH", true);
+                EnsurePermission(doc, ns, manifest, "com.oculus.permission.RENDER_MODEL");
+            }
+            else
+            {
+                RemoveNode(manifest, nsMgr, "uses-feature[@android:name='com.oculus.feature.PASSTHROUGH']");
+            }
 
             doc.Save(manifestPath);
-            Debug.Log("[QuestBuildPatcher] Passthrough 設定完了");
+            Debug.Log($"[QuestBuildPatcher] Passthrough 設定完了 (enabled={enabled})");
+        }
+
+        /// <summary>
+        /// ハンドトラッキング用のマニフェスト宣言を出し入れする。
+        /// arSettings.interaction.handTracking が false のビルドでは、使わない機能で
+        /// 対応端末を絞らないようパーミッション/メタデータごと落とす。
+        /// </summary>
+        public static void ConfigureHandTracking(string manifestPath, bool enabled)
+        {
+            if (!File.Exists(manifestPath)) return;
+
+            var doc = new XmlDocument();
+            doc.Load(manifestPath);
+
+            var ns = "http://schemas.android.com/apk/res/android";
+            var nsMgr = new XmlNamespaceManager(doc.NameTable);
+            nsMgr.AddNamespace("android", ns);
+
+            var manifest = doc.SelectSingleNode("/manifest");
+            var app = doc.SelectSingleNode("/manifest/application");
+            if (manifest == null || app == null) return;
+
+            if (enabled)
+            {
+                EnsurePermission(doc, ns, manifest, "com.oculus.permission.HAND_TRACKING");
+                EnsureMetaData(doc, ns, app, "com.oculus.handtracking.frequency", "HIGH");
+                EnsureMetaData(doc, ns, app, "com.oculus.handtracking.version", "V2.0");
+            }
+            else
+            {
+                RemoveNode(manifest, nsMgr, "uses-permission[@android:name='com.oculus.permission.HAND_TRACKING']");
+                RemoveNode(app, nsMgr, "meta-data[@android:name='com.oculus.handtracking.frequency']");
+                RemoveNode(app, nsMgr, "meta-data[@android:name='com.oculus.handtracking.version']");
+            }
+
+            doc.Save(manifestPath);
+            Debug.Log($"[QuestBuildPatcher] ハンドトラッキング設定完了 (enabled={enabled})");
+        }
+
+        /// <summary>
+        /// システムキーボード オーバーレイ (TouchScreenKeyboard) 用のマニフェスト宣言を出し入れする。
+        /// 無いと「Oculus overlay keyboard is disabled, add 'oculus.software.overlay_keyboard'
+        /// feature request to your Android manifest」エラーで実機使用時に弾かれる
+        /// （Meta公式ドキュメント "Enable Keyboard Overlay" 参照）。
+        /// Input要素を使わないプロジェクトでは付けない（ArsistBuildPipeline.ProjectHasInputElement）。
+        /// </summary>
+        public static void ConfigureSystemKeyboard(string manifestPath, bool enabled)
+        {
+            if (!File.Exists(manifestPath)) return;
+
+            var doc = new XmlDocument();
+            doc.Load(manifestPath);
+
+            var ns = "http://schemas.android.com/apk/res/android";
+            var nsMgr = new XmlNamespaceManager(doc.NameTable);
+            nsMgr.AddNamespace("android", ns);
+
+            var manifest = doc.SelectSingleNode("/manifest");
+            if (manifest == null) return;
+
+            if (enabled)
+            {
+                EnsureUsesFeature(doc, ns, manifest, "oculus.software.overlay_keyboard", false);
+            }
+            else
+            {
+                RemoveNode(manifest, nsMgr, "uses-feature[@android:name='oculus.software.overlay_keyboard']");
+            }
+
+            doc.Save(manifestPath);
+            Debug.Log($"[QuestBuildPatcher] システムキーボード設定完了 (enabled={enabled})");
         }
 
         // ─────────────────────────────────────────
@@ -202,6 +289,15 @@ namespace Arsist.Adapters.MetaQuest
             node.SetAttribute("required", ns, required ? "true" : "false");
             if (version != null) node.SetAttribute("version", ns, version);
             manifest.AppendChild(node);
+        }
+
+        private static void RemoveNode(XmlNode parent, XmlNamespaceManager nsMgr, string xpath)
+        {
+            var node = parent.SelectSingleNode(xpath, nsMgr);
+            if (node != null)
+            {
+                parent.RemoveChild(node);
+            }
         }
 
         private static void EnsureApplicationAttribute(XmlNode application, string ns, string attributeName, string value)

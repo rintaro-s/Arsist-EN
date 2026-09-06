@@ -12,6 +12,7 @@
  * - UIがDataStoreをbindで参照（読取専用）
  */
 import React, { useState } from 'react';
+import { useT } from '../../i18n';
 import { useProjectStore } from '../../stores/projectStore';
 import type {
   DataSourceDefinition,
@@ -32,6 +33,7 @@ import {
 } from 'lucide-react';
 
 export function DataFlowEditor() {
+  const t = useT();
   const { project, addDataSource, updateDataSource, removeDataSource, addTransform, updateTransform, removeTransform } = useProjectStore();
 
   const dataFlow = project?.dataFlow || { dataSources: [], transforms: [] };
@@ -41,7 +43,7 @@ export function DataFlowEditor() {
   if (!project?.dataFlow) {
     return (
       <div className="w-full h-full flex items-center justify-center text-arsist-muted text-sm bg-[#121212]">
-        プロジェクトが読み込まれていません
+        {t('dataflow.noProjectLoaded')}
       </div>
     );
   }
@@ -51,13 +53,13 @@ export function DataFlowEditor() {
       {/* 左: DataSource */}
       <div className="flex-1 flex flex-col border-r border-[#2d2d2d] overflow-hidden bg-[#121212]">
         <div className="h-12 bg-[#1e1e1e] border-b border-[#2d2d2d] px-4 flex items-center justify-between shrink-0">
-          <h3 className="font-semibold text-sm text-[#e0e0e0]">データ入力元</h3>
+          <h3 className="font-semibold text-sm text-[#e0e0e0]">{t('dataflow.dataSource')}</h3>
           <button
             onClick={() => setEditingSourceId('new')}
             className="px-2 h-7 rounded-lg bg-[#2196F3] hover:bg-[#1976D2] text-xs text-white flex items-center gap-1 transition-colors"
           >
             <Plus size={14} />
-            追加
+            {t('common.add')}
           </button>
         </div>
 
@@ -65,7 +67,7 @@ export function DataFlowEditor() {
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {dataFlow.dataSources.length === 0 ? (
             <div className="text-xs text-arsist-muted text-center py-8">
-              データソースなし
+              {t('dataflow.noDataSources')}
             </div>
           ) : (
             dataFlow.dataSources.map((source) => (
@@ -86,13 +88,13 @@ export function DataFlowEditor() {
       {/* 中央: Transform */}
       <div className="flex-1 flex flex-col border-r border-[#2d2d2d] overflow-hidden bg-[#121212]">
         <div className="h-12 bg-[#1e1e1e] border-b border-[#2d2d2d] px-4 flex items-center justify-between shrink-0">
-          <h3 className="font-semibold text-sm text-[#e0e0e0]">データ加工</h3>
+          <h3 className="font-semibold text-sm text-[#e0e0e0]">{t('dataflow.transform')}</h3>
           <button
             onClick={() => setEditingTransformId('new')}
             className="px-2 h-7 rounded-lg bg-[#4CAF50] hover:bg-[#388E3C] text-xs text-white flex items-center gap-1 transition-colors"
           >
             <Plus size={14} />
-            追加
+            {t('common.add')}
           </button>
         </div>
 
@@ -100,7 +102,7 @@ export function DataFlowEditor() {
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {dataFlow.transforms.length === 0 ? (
             <div className="text-xs text-arsist-muted text-center py-8">
-              トランスフォームなし
+              {t('dataflow.noTransforms')}
             </div>
           ) : (
             dataFlow.transforms.map((transform) => (
@@ -121,7 +123,7 @@ export function DataFlowEditor() {
       {/* 右: DataStore（変数一覧） */}
       <div className="flex-1 flex flex-col overflow-hidden bg-[#121212]">
         <div className="h-12 bg-[#1e1e1e] border-b border-[#2d2d2d] px-4 flex items-center shrink-0">
-          <h3 className="font-semibold text-sm text-[#e0e0e0]">DataStore（変数）</h3>
+          <h3 className="font-semibold text-sm text-[#e0e0e0]">{t('dataflow.dataStore')}</h3>
         </div>
 
         {/* 変数一覧 */}
@@ -130,7 +132,7 @@ export function DataFlowEditor() {
             {/* DataSourceからの変数 */}
             {dataFlow.dataSources.length > 0 && (
               <>
-                <div className="text-xs font-semibold text-[#64B5F6] mb-2">入力元からの変数</div>
+                <div className="text-xs font-semibold text-[#64B5F6] mb-2">{t('dataflow.varsFromSources')}</div>
                 {dataFlow.dataSources.map((source) => (
                   <div key={source.id} className="text-xs bg-[#1e1e1e] px-2 py-1.5 rounded border border-[#2d2d2d]">
                     <div className="text-[#90CAF9] font-mono">{source.storeAs}</div>
@@ -143,7 +145,7 @@ export function DataFlowEditor() {
             {/* Transformからの変数 */}
             {dataFlow.transforms.length > 0 && (
               <>
-                <div className="text-xs font-semibold text-[#81C784] mb-2 mt-3">加工後の変数</div>
+                <div className="text-xs font-semibold text-[#81C784] mb-2 mt-3">{t('dataflow.varsFromTransforms')}</div>
                 {dataFlow.transforms.map((transform) => (
                   <div key={transform.id} className="text-xs bg-[#1e1e1e] px-2 py-1.5 rounded border border-[#2d2d2d]">
                     <div className="text-[#A5D6A7] font-mono">{transform.storeAs}</div>
@@ -155,7 +157,7 @@ export function DataFlowEditor() {
 
             {dataFlow.dataSources.length === 0 && dataFlow.transforms.length === 0 && (
               <div className="text-xs text-arsist-muted text-center py-8">
-                DataSourceとTransformを追加してください
+                {t('dataflow.addSourceAndTransform')}
               </div>
             )}
           </div>
@@ -308,6 +310,7 @@ interface SourceEditModalProps {
 }
 
 function SourceEditModal({ sourceId, onClose, onSave, dataSources }: SourceEditModalProps) {
+  const t = useT();
   const [type, setType] = useState<DataSourceType>('REST_Client');
   const [storeAs, setStoreAs] = useState('');
 
@@ -327,11 +330,11 @@ function SourceEditModal({ sourceId, onClose, onSave, dataSources }: SourceEditM
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg p-6 w-96">
-        <h2 className="text-lg font-semibold text-[#e0e0e0] mb-4">DataSetupの追加</h2>
+        <h2 className="text-lg font-semibold text-[#e0e0e0] mb-4">{t('dataflow.addDataSource')}</h2>
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">タイプ</label>
+            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">{t('common.type')}</label>
             <select
               value={type}
               onChange={(e) => setType(e.target.value as DataSourceType)}
@@ -346,12 +349,12 @@ function SourceEditModal({ sourceId, onClose, onSave, dataSources }: SourceEditM
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">変数名 (store_as)</label>
+            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">{t('dataflow.varName')}</label>
             <input
               type="text"
               value={storeAs}
               onChange={(e) => setStoreAs(e.target.value)}
-              placeholder="例: gps_latitude"
+              placeholder={t('dataflow.latPlaceholder')}
               className="w-full px-3 py-2 rounded-lg bg-[#0a0a0a] border border-[#2d2d2d] text-sm text-[#e0e0e0]"
             />
           </div>
@@ -362,7 +365,7 @@ function SourceEditModal({ sourceId, onClose, onSave, dataSources }: SourceEditM
             onClick={onClose}
             className="flex-1 px-4 py-2 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] text-[#e0e0e0] text-sm transition-colors"
           >
-            キャンセル
+            {t('common.cancel')}
           </button>
           <button
             onClick={() => {
@@ -372,7 +375,7 @@ function SourceEditModal({ sourceId, onClose, onSave, dataSources }: SourceEditM
             }}
             className="flex-1 px-4 py-2 rounded-lg bg-[#2196F3] hover:bg-[#1976D2] text-white text-sm transition-colors"
           >
-            保存
+            {t('common.save')}
           </button>
         </div>
       </div>
@@ -391,6 +394,7 @@ interface TransformEditModalProps {
 }
 
 function TransformEditModal({ transformId, onClose, onSave, dataStoreKeys }: TransformEditModalProps) {
+  const t = useT();
   const [type, setType] = useState<TransformType>('Formula');
   const [storeAs, setStoreAs] = useState('');
   const [inputs, setInputs] = useState<string[]>([]);
@@ -413,11 +417,11 @@ function TransformEditModal({ transformId, onClose, onSave, dataStoreKeys }: Tra
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg p-6 w-96">
-        <h2 className="text-lg font-semibold text-[#e0e0e0] mb-4">トランスフォームの追加</h2>
+        <h2 className="text-lg font-semibold text-[#e0e0e0] mb-4">{t('dataflow.addTransform')}</h2>
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">タイプ</label>
+            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">{t('common.type')}</label>
             <select
               value={type}
               onChange={(e) => setType(e.target.value as TransformType)}
@@ -432,19 +436,19 @@ function TransformEditModal({ transformId, onClose, onSave, dataStoreKeys }: Tra
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">入力元 (複数選択可、カンマ区切り)</label>
+            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">{t('dataflow.inputsLabel')}</label>
             <input
               type="text"
               value={inputs.join(', ')}
               onChange={(e) => setInputs(e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
-              placeholder="例: speed, temperature"
+              placeholder={t('dataflow.inputsPlaceholder')}
               className="w-full px-3 py-2 rounded-lg bg-[#0a0a0a] border border-[#2d2d2d] text-sm text-[#e0e0e0]"
             />
           </div>
 
           {type === 'Formula' && (
             <div>
-              <label className="block text-xs font-medium text-[#9e9e9e] mb-1">式（例：val * 1.8 + 32）</label>
+              <label className="block text-xs font-medium text-[#9e9e9e] mb-1">{t('dataflow.formulaLabel')}</label>
               <input
                 type="text"
                 value={formula}
@@ -455,12 +459,12 @@ function TransformEditModal({ transformId, onClose, onSave, dataStoreKeys }: Tra
           )}
 
           <div>
-            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">結果の変数名 (store_as)</label>
+            <label className="block text-xs font-medium text-[#9e9e9e] mb-1">{t('dataflow.resultVarName')}</label>
             <input
               type="text"
               value={storeAs}
               onChange={(e) => setStoreAs(e.target.value)}
-              placeholder="例: speed_kmh"
+              placeholder={t('dataflow.resultPlaceholder')}
               className="w-full px-3 py-2 rounded-lg bg-[#0a0a0a] border border-[#2d2d2d] text-sm text-[#e0e0e0]"
             />
           </div>
@@ -471,7 +475,7 @@ function TransformEditModal({ transformId, onClose, onSave, dataStoreKeys }: Tra
             onClick={onClose}
             className="flex-1 px-4 py-2 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] text-[#e0e0e0] text-sm transition-colors"
           >
-            キャンセル
+            {t('common.cancel')}
           </button>
           <button
             onClick={() => {
@@ -481,7 +485,7 @@ function TransformEditModal({ transformId, onClose, onSave, dataStoreKeys }: Tra
             }}
             className="flex-1 px-4 py-2 rounded-lg bg-[#4CAF50] hover:bg-[#388E3C] text-white text-sm transition-colors"
           >
-            保存
+            {t('common.save')}
           </button>
         </div>
       </div>

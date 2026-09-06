@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { spawn } = require('child_process');
 
 // Use the same compiled entrypoint Electron uses (dist/main/main/*)
 const { UnityBuilder } = require(path.join('..', 'dist', 'main', 'main', 'unity', 'UnityBuilder'));
+const { getConfigStorePath } = require(path.join(__dirname, 'lib', 'config-path'));
 
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -57,7 +57,7 @@ function parseArgs(argv) {
 (async () => {
   const { seconds } = parseArgs(process.argv);
 
-  const storePath = path.join(os.homedir(), '.config', 'arsist-engine', 'config.json');
+  const storePath = getConfigStorePath('arsist-engine');
   const store = readJson(storePath);
 
   const unityPath = process.env.ARSIST_UNITY_PATH || store.unityPath;

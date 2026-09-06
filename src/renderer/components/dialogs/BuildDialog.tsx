@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle } from 'lucide-react';
+import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle, Eye, Cloud, Square, MousePointer2, Hand } from 'lucide-react';
+import type { BackgroundMode, InteractionSettings } from '../../../shared/types';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ErrorDialog } from './ErrorDialog';
+import { useT } from '../../i18n';
 
 interface BuildDialogProps {
   onClose: () => void;
@@ -14,6 +16,26 @@ interface DeviceOption {
   available: boolean;
 }
 
+/**
+ * 背景モードを選べるのはビデオシースルー機だけ。
+ * XREAL のような光学シースルー機は黒＝素通しなので、常にパススルー相当で固定される。
+ */
+function supportsBackgroundChoice(deviceId: string): boolean {
+  const normalized = deviceId.toLowerCase();
+  return normalized.includes('quest') || normalized.includes('meta');
+}
+
+/**
+ * ハンドトラッキングを選べるのは Quest だけ。
+ * XREAL One 系にはハンドトラッキング用カメラが無いため、選んでも効果が無い。
+ */
+function supportsHandTracking(deviceId: string): boolean {
+  const normalized = deviceId.toLowerCase();
+  return normalized.includes('quest') || normalized.includes('meta');
+}
+
+const DEFAULT_INTERACTION: InteractionSettings = { controllerRay: true, handTracking: false };
+
 const devices: DeviceOption[] = [
   { id: 'XREAL_One', name: 'XREAL One (Beam Pro)', available: true },
   { id: 'Meta_Quest', name: 'Meta Quest', available: true },
@@ -23,7 +45,8 @@ const devices: DeviceOption[] = [
 ];
 
 export function BuildDialog({ onClose }: BuildDialogProps) {
-  const { project, projectPath, exportScriptBundle, saveProject, isDirty } = useProjectStore();
+  const t = useT();
+  const { project, projectPath, exportScriptBundle, saveProject, isDirty, updateARSettings } = useProjectStore();
   const { 
     isBuilding, 
     buildProgress, 
@@ -39,6 +62,9 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   const [selectedDevice, setSelectedDevice] = useState(project?.targetDevice || 'XREAL_One');
   const [outputPath, setOutputPath] = useState('');
   const [developmentBuild, setDevelopmentBuild] = useState(false);
+  // 通常は差分ビルド（作業用Unityプロジェクトの Library/ を再利用）。
+  // キャッシュ由来の不整合を疑うときだけ ON にする。
+  const [cleanBuild, setCleanBuild] = useState(false);
   const [unityPath, setUnityPath] = useState('');
   const [unityValid, setUnityValid] = useState<boolean | null>(null);
   const [unityManualLicenseFile, setUnityManualLicenseFile] = useState('');
@@ -46,20 +72,37 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
 
   const [errorModal, setErrorModal] = useState<{ summary: string; details?: string } | null>(null);
 
+  // 背景モードはプロジェクト設定 (arSettings) 側に持つ。ビルドごとの一時オプションにすると
+  // 「前回どっちでビルドしたか」が失われて、出来上がったAPKの見た目が説明できなくなるため。
+  const backgroundMode: BackgroundMode = project?.arSettings?.backgroundMode ?? 'passthrough';
+  const backgroundColor = project?.arSettings?.backgroundColor ?? '#000000';
+  const backgroundOptions: Array<{ id: BackgroundMode; label: string; desc: string }> = [
+    { id: 'passthrough', label: t('build.bgPassthrough'), desc: t('build.bgPassthroughDesc') },
+    { id: 'skybox', label: t('build.bgSkybox'), desc: t('build.bgSkyboxDesc') },
+    { id: 'solidColor', label: t('build.bgSolidColor'), desc: t('build.bgSolidColorDesc') },
+  ];
+
+  // 操作方法（コントローラーレイ / ハンドトラッキング）。両方 OFF はビルド時にエラーになるため、
+  // ここでも警告を出す（ビルドを押すまで気付けないのは不親切なため）。
+  const interaction: InteractionSettings = project?.arSettings?.interaction ?? DEFAULT_INTERACTION;
+  const toggleInteraction = (patch: Partial<InteractionSettings>) => {
+    updateARSettings({ interaction: { ...interaction, ...patch } });
+  };
+  const noInteractionEnabled = !interaction.controllerRay && !interaction.handTracking;
+
   const buildHelpfulErrorSummary = (text: string, logs: string[]) => {
     const combined = [text, ...logs].join('\n');
     const isLicensing = /Licensing::Module/i.test(combined) || /Access token is unavailable/i.test(combined);
     if (!isLicensing) return null;
 
-    const summary =
-      'Build stopped due to Unity licensing. Please sign in to Unity Hub and activate license, then rebuild.';
+    const summary = t('build.licensingSummary');
 
     const guidance = [
-      '--- Suggested Fix (Unity Licensing) ---',
-      '1) Launch Unity Hub and sign in',
-      '2) In Hub Licenses, activate Unity for this PC',
-      '3) Launch Unity Editor GUI once (for initial auth/consent), then rebuild from Arsist',
-      '4) If using proxy/corporate network, verify access to Unity auth servers',
+      t('build.licensingGuidanceHeader'),
+      t('build.licensingGuidance1'),
+      t('build.licensingGuidance2'),
+      t('build.licensingGuidance3'),
+      t('build.licensingGuidance4'),
     ].join('\n');
 
     return { summary, guidance };
@@ -147,7 +190,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     if (!window.electronAPI || !project) return;
     
     if (!unityPath || !outputPath) {
-      addNotification({ type: 'error', message: 'Please set Unity path and output directory' });
+      addNotification({ type: 'error', message: t('build.setUnityAndOutput') });
       return;
     }
 
@@ -157,26 +200,26 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     setIsBuilding(true);
 
     const showBuildFailure = (errorText: string) => {
-      addBuildLog(`[Arsist] ✗ Build failed: ${errorText}`);
+      addBuildLog(t('build.logBuildFailed', { error: errorText }));
 
       const logs = useUIStore.getState().buildLogs;
       const helpful = buildHelpfulErrorSummary(errorText, logs);
       const details = [
         ...(helpful ? [helpful.guidance, ''] : []),
-        `Error: ${errorText}`,
+        t('build.errorLabel', { error: errorText }),
         '',
-        '--- Build Logs ---',
+        t('build.buildLogsHeader'),
         ...logs,
       ].join('\n');
 
       setErrorModal({
-        summary: helpful?.summary || 'Unity build stopped with error. You can copy details to share.',
+        summary: helpful?.summary || t('build.genericBuildError'),
         details,
       });
 
       addNotification({
         type: 'error',
-        message: `Build failed: ${errorText}`,
+        message: t('build.buildFailed', { error: errorText }),
       });
     };
 
@@ -200,7 +243,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
       };
 
       // Start Unity build
-      addBuildLog('[Arsist] Starting Unity build...');
+      addBuildLog(t('build.logStarting'));
       const buildResult = await window.electronAPI.unity.build({
         projectPath: unityWorkDir,
         sourceProjectPath: projectPath,
@@ -208,6 +251,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         targetDevice: selectedDevice,
         buildTarget: 'Android',
         developmentBuild,
+        cleanBuild,
         manualLicenseFile: unityManualLicenseFile || undefined,
         manifestData,
         scenesData: project.scenes,
@@ -216,15 +260,15 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
       });
 
       if (buildResult.success) {
-        addBuildLog(`[Arsist] ✓ Build successful: ${buildResult.outputPath}`);
-        addNotification({ 
-          type: 'success', 
-          message: `Build completed: ${buildResult.outputPath}` 
+        addBuildLog(t('build.logBuildSuccess', { path: buildResult.outputPath }));
+        addNotification({
+          type: 'success',
+          message: t('build.buildCompleted', { path: buildResult.outputPath })
         });
       } else {
         const errorText = typeof buildResult.error === 'string' && buildResult.error
           ? buildResult.error
-          : 'Unknown build error';
+          : t('build.unknownError');
         showBuildFailure(errorText);
       }
 
@@ -248,7 +292,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   const handleSaveAndBuild = async () => {
     await saveProject();
     if (useProjectStore.getState().isDirty) {
-      addNotification({ type: 'error', message: 'Failed to save, cannot start build' });
+      addNotification({ type: 'error', message: t('build.saveFailedCannotBuild') });
       return;
     }
     setShowUnsavedConfirm(false);
@@ -264,11 +308,11 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     if (!window.electronAPI) return;
     const result = await window.electronAPI.unity.cancelBuild();
     if (result?.success) {
-      addBuildLog('[Arsist] Build cancel requested');
-      addNotification({ type: 'info', message: 'Build cancellation requested' });
+      addBuildLog(t('build.logCancelRequested'));
+      addNotification({ type: 'info', message: t('build.cancelRequested') });
       return;
     }
-    addNotification({ type: 'error', message: result?.error || 'Failed to cancel build' });
+    addNotification({ type: 'error', message: result?.error || t('build.cancelFailed') });
   };
 
   return (
@@ -277,7 +321,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         <div className="modal max-w-2xl" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header flex items-center justify-between">
-          <span>Build Settings</span>
+          <span>{t('build.title')}</span>
           <button onClick={onClose} className="btn-icon" disabled={isBuilding}>
             <X size={18} />
           </button>
@@ -288,7 +332,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
           {/* Unity Path */}
           <div className="mb-6">
             <label className="input-label flex items-center gap-2">
-              Unity Path
+              {t('build.unityPath')}
               {unityValid === true && <CheckCircle size={14} className="text-green-500" />}
               {unityValid === false && <AlertCircle size={14} className="text-red-500" />}
             </label>
@@ -298,7 +342,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                 value={unityPath}
                 onChange={(e) => setUnityPath(e.target.value)}
                 className="input flex-1"
-                placeholder="/path/to/Unity"
+                placeholder={t('build.unityPathPlaceholder')}
                 disabled={isBuilding}
               />
               <button 
@@ -310,13 +354,13 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
               </button>
             </div>
             <p className="text-xs text-arsist-muted mt-1">
-              Recommended: Unity 2022.3.20f1 LTS or later
+              {t('build.unityRecommended')}
             </p>
           </div>
 
           {/* Target Device */}
           <div className="mb-6">
-            <label className="input-label">Target Device</label>
+            <label className="input-label">{t('build.targetDevice')}</label>
             <div className="grid grid-cols-2 gap-2">
               {devices.map(device => (
                 <button
@@ -340,16 +384,110 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
             </div>
           </div>
 
+          {/* Background (video see-through devices only) */}
+          <div className="mb-6">
+            <label className="input-label">{t('build.background')}</label>
+            {supportsBackgroundChoice(selectedDevice) ? (
+              <>
+                <div className="space-y-2">
+                  {backgroundOptions.map(option => (
+                    <button
+                      key={option.id}
+                      onClick={() => updateARSettings({ backgroundMode: option.id })}
+                      disabled={isBuilding}
+                      className={`w-full p-3 rounded-lg border text-left text-sm ${
+                        backgroundMode === option.id
+                          ? 'border-arsist-accent bg-arsist-accent/10'
+                          : 'border-arsist-primary/30 hover:border-arsist-primary'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {option.id === 'passthrough' ? <Eye size={16} /> : option.id === 'skybox' ? <Cloud size={16} /> : <Square size={16} />}
+                        <span>{option.label}</span>
+                      </div>
+                      <p className="text-xs text-arsist-muted mt-1">{option.desc}</p>
+                    </button>
+                  ))}
+                </div>
+                {backgroundMode === 'solidColor' && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-sm">{t('build.backgroundColorLabel')}</span>
+                    <input
+                      type="color"
+                      value={backgroundColor}
+                      onChange={(e) => updateARSettings({ backgroundColor: e.target.value })}
+                      disabled={isBuilding}
+                      className="h-8 w-14 rounded bg-transparent"
+                    />
+                    <code className="text-xs text-arsist-muted">{backgroundColor}</code>
+                  </div>
+                )}
+                <p className="text-xs text-arsist-muted mt-2">{t('build.backgroundHint')}</p>
+              </>
+            ) : (
+              <p className="text-xs text-arsist-muted">{t('build.backgroundOpticalNote')}</p>
+            )}
+          </div>
+
+          {/* Interaction (controller ray / hand tracking) */}
+          <div className="mb-6">
+            <label className="input-label">{t('build.interaction')}</label>
+            <div className="space-y-2">
+              <button
+                onClick={() => toggleInteraction({ controllerRay: !interaction.controllerRay })}
+                disabled={isBuilding}
+                className={`w-full p-3 rounded-lg border text-left text-sm ${
+                  interaction.controllerRay
+                    ? 'border-arsist-accent bg-arsist-accent/10'
+                    : 'border-arsist-primary/30 hover:border-arsist-primary'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <MousePointer2 size={16} />
+                  <span>{t('build.interactionControllerRay')}</span>
+                </div>
+                <p className="text-xs text-arsist-muted mt-1">{t('build.interactionControllerRayDesc')}</p>
+              </button>
+
+              <button
+                onClick={() => toggleInteraction({ handTracking: !interaction.handTracking })}
+                disabled={isBuilding || !supportsHandTracking(selectedDevice)}
+                className={`w-full p-3 rounded-lg border text-left text-sm ${
+                  interaction.handTracking
+                    ? 'border-arsist-accent bg-arsist-accent/10'
+                    : 'border-arsist-primary/30 hover:border-arsist-primary'
+                } ${!supportsHandTracking(selectedDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Hand size={16} />
+                  <span>{t('build.interactionHandTracking')}</span>
+                </div>
+                <p className="text-xs text-arsist-muted mt-1">
+                  {supportsHandTracking(selectedDevice)
+                    ? t('build.interactionHandTrackingDesc')
+                    : t('build.interactionHandTrackingUnsupported')}
+                </p>
+              </button>
+            </div>
+
+            {noInteractionEnabled && (
+              <p className="text-xs text-arsist-muted mt-2 flex items-center gap-1">
+                <Eye size={14} />
+                {t('build.interactionNoneEnabledNote')}
+              </p>
+            )}
+          </div>
+
           {/* Output Path */}
           <div className="mb-6">
-            <label className="input-label">Output Directory</label>
+            <label className="input-label">{t('build.outputDirectory')}</label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={outputPath}
                 onChange={(e) => setOutputPath(e.target.value)}
                 className="input flex-1"
-                placeholder="/path/to/output"
+                placeholder={t('build.outputPlaceholder')}
                 disabled={isBuilding}
               />
               <button 
@@ -364,7 +502,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
 
           {/* Options */}
           <div className="mb-6">
-            <label className="input-label">Options</label>
+            <label className="input-label">{t('build.options')}</label>
             <div className="space-y-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -374,8 +512,19 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                   className="rounded"
                   disabled={isBuilding}
                 />
-                <span className="text-sm">Development Build</span>
+                <span className="text-sm">{t('build.developmentBuild')}</span>
               </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={cleanBuild}
+                  onChange={(e) => setCleanBuild(e.target.checked)}
+                  className="rounded"
+                  disabled={isBuilding}
+                />
+                <span className="text-sm">{t('build.cleanBuild')}</span>
+              </label>
+              <p className="text-xs text-arsist-muted">{t('build.cleanBuildHint')}</p>
             </div>
           </div>
 
@@ -383,7 +532,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
           {isBuilding && (
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">Build Progress</span>
+                <span className="text-sm font-medium">{t('build.buildProgress')}</span>
                 <span className="text-sm text-arsist-muted">{buildProgress}%</span>
               </div>
               <div className="progress-bar">
@@ -399,7 +548,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
           {/* Build Log */}
           {buildLogs.length > 0 && (
             <div>
-              <label className="input-label">Build Log</label>
+              <label className="input-label">{t('build.buildLog')}</label>
               <div className="h-40 overflow-y-auto bg-arsist-bg rounded-lg p-2 font-mono text-xs">
                 {buildLogs.map((log, i) => (
                   <div 
@@ -426,14 +575,14 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
               onClick={handleCancelBuild}
               className="btn btn-danger"
             >
-              Cancel Build
+              {t('build.cancelBuild')}
             </button>
           ) : (
             <button 
               onClick={onClose}
               className="btn btn-ghost"
             >
-              Close
+              {t('common.close')}
             </button>
           )}
           <button
@@ -444,12 +593,12 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
             {isBuilding ? (
               <>
                 <div className="spinner" />
-                Building...
+                {t('build.building')}
               </>
             ) : (
               <>
                 <Play size={18} />
-                Start Build
+                {t('build.startBuild')}
               </>
             )}
           </button>
@@ -461,25 +610,25 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         <div className="modal-overlay" style={{ zIndex: 1001 }}>
           <div className="modal max-w-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header flex items-center justify-between">
-              <span>Unsaved Changes</span>
+              <span>{t('build.unsavedChanges')}</span>
               <button onClick={() => setShowUnsavedConfirm(false)} className="btn-icon">
                 <X size={18} />
               </button>
             </div>
             <div className="modal-body">
               <p className="text-sm text-arsist-muted">
-                Save before building?
+                {t('build.saveBeforeBuilding')}
               </p>
             </div>
             <div className="modal-footer flex justify-end gap-2">
               <button onClick={() => setShowUnsavedConfirm(false)} className="btn btn-ghost">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button onClick={handleBuildWithoutSave} className="btn btn-secondary">
-                Build Without Saving
+                {t('build.buildWithoutSaving')}
               </button>
               <button onClick={handleSaveAndBuild} className="btn btn-primary">
-                Save and Build
+                {t('build.saveAndBuild')}
               </button>
             </div>
           </div>
@@ -489,7 +638,7 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
       {/* Render after BuildDialog overlay to appear at front */}
       {errorModal && (
         <ErrorDialog
-          title="Build Error"
+          title={t('build.buildError')}
           summary={errorModal.summary}
           details={errorModal.details}
           onClose={() => setErrorModal(null)}

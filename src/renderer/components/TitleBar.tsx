@@ -1,9 +1,13 @@
 import React from 'react';
-import { Minus, Square, X } from 'lucide-react';
+import { Minus, Square, X, Sun, Moon } from 'lucide-react';
 import { useProjectStore } from '../stores/projectStore';
+import { useTheme } from '../theme';
+import { useT } from '../i18n';
 
 export function TitleBar() {
   const { project, isDirty } = useProjectStore();
+  const { theme, toggleTheme } = useTheme();
+  const t = useT();
 
   const handleMinimize = () => {
     window.electronAPI?.window.minimize();
@@ -18,7 +22,7 @@ export function TitleBar() {
   };
 
   return (
-    <div className="h-10 bg-arsist-surface border-b border-arsist-border flex items-center justify-between select-none" 
+    <div className="h-10 bg-arsist-surface hairline-b flex items-center justify-between select-none"
          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
       {/* Left: App Logo and Title */}
       <div className="flex items-center gap-3 px-4">
@@ -35,8 +39,15 @@ export function TitleBar() {
         </span>
       </div>
 
-      {/* Right: Window Controls */}
+      {/* Right: Theme toggle + Window Controls */}
       <div className="flex items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? t('common.themeLight') : t('common.themeDark')}
+          className="w-10 h-10 flex items-center justify-center hover:bg-arsist-hover transition-colors text-arsist-muted hover:text-arsist-text"
+        >
+          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
         <button
           onClick={handleMinimize}
           className="w-12 h-10 flex items-center justify-center hover:bg-arsist-hover transition-colors text-arsist-muted hover:text-arsist-text"

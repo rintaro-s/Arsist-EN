@@ -23,5 +23,5 @@
     }
   },
   "include": ["src/main/**/*", "src/shared/**/*", "src/bridge/**/*"],
-  "exclude": ["src/renderer/**/*", "node_modules"]
+  "exclude": ["src/renderer/**/*", "node_modules", "**/*.test.ts", "**/*.spec.ts"]
 }

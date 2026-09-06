@@ -12,6 +12,18 @@ import { spawn, ChildProcess } from 'child_process';
 import { UnityBuilder } from './unity/UnityBuilder';
 import { ProjectManager } from './project/ProjectManager';
 import { AdapterManager } from './adapters/AdapterManager';
+import {
+  isUnsupportedTextureExtension,
+  isUnityTextureExtension,
+  UNITY_TEXTURE_EXTENSIONS,
+} from '../shared/assets';
+import {
+  liveContext,
+  getUnitySearchRoots,
+  getUnityExeRelative,
+  getUnityDirectCandidates,
+  isWaylandSession,
+} from './platform/paths';
 
 // どんな環境でも起動できるよう、Linux では安全な環境変数を最初に設定
 // （wrapper 経由で起動しない場合の保険も兼ねる）
@@ -116,10 +128,20 @@ const store = new Store({
     defaultOutputPath: '',
     defaultProjectPath: '',
     sdkDir: '',
+    // GPUドライバ指紋と、次回起動時にシェーダキャッシュを消すかのフラグ
+    gpuFingerprint: '',
+    gpuCachePurgePending: false,
   },
 });
 
 let mainWindow: BrowserWindow | null = null;
+// 起動安定化: GPU初期化失敗などでウィンドウが描画されない環境向けの
+// 「ソフトウェアレンダリングで再起動」を1回だけ試みるためのフラグ。
+// 環境変数で無限ループを防ぐ（再起動時に ARSIST_SOFTWARE_RENDER=1 を渡す）。
+const softwareRenderRequested =
+  process.env.ARSIST_SOFTWARE_RENDER === '1' ||
+  process.env.ARSIST_DISABLE_GPU === '1';
+let paintFallbackTried = softwareRenderRequested;
 let projectManager: ProjectManager | null = null;
 let unityBuilder: UnityBuilder | null = null;
 let adapterManager: AdapterManager | null = null;
@@ -129,6 +151,246 @@ let mcpServerEnabled = false;
 let mcpServerPort = 0; // stdio transport なので不要だが、情報として保持
 
 const isDev = process.env.NODE_ENV === 'development';
+
+// ── UI language (native menu / dialogs follow the renderer's language) ──
+type AppLang = 'en' | 'ja';
+
+function getAppLang(): AppLang {
+  try {
+    const v = store.get('language' as any) as unknown as string;
+    return v === 'en' ? 'en' : 'ja';
+  } catch {
+    return 'ja';
+  }
+}
+
+const MENU_STRINGS: Record<string, { en: string; ja: string }> = {
+  'menu.file': { en: 'File', ja: 'ファイル' },
+  'menu.newProject': { en: 'New Project', ja: '新規プロジェクト' },
+  'menu.openProject': { en: 'Open Project', ja: 'プロジェクトを開く' },
+  'menu.save': { en: 'Save', ja: '保存' },
+  'menu.saveAs': { en: 'Save As', ja: '名前を付けて保存' },
+  'menu.buildSettings': { en: 'Build Settings', ja: 'ビルド設定' },
+  'menu.build': { en: 'Build', ja: 'ビルド' },
+  'menu.settings': { en: 'Settings', ja: '設定' },
+  'menu.quit': { en: 'Quit', ja: '終了' },
+  'menu.edit': { en: 'Edit', ja: '編集' },
+  'menu.undo': { en: 'Undo', ja: '元に戻す' },
+  'menu.redo': { en: 'Redo', ja: 'やり直す' },
+  'menu.cut': { en: 'Cut', ja: '切り取り' },
+  'menu.copy': { en: 'Copy', ja: 'コピー' },
+  'menu.paste': { en: 'Paste', ja: '貼り付け' },
+  'menu.delete': { en: 'Delete', ja: '削除' },
+  'menu.selectAll': { en: 'Select All', ja: 'すべて選択' },
+  'menu.view': { en: 'View', ja: '表示' },
+  'menu.view3d': { en: '3D View', ja: '3Dビュー' },
+  'menu.view2d': { en: '2D Canvas View', ja: '2D Canvasビュー' },
+  'menu.viewDataflow': { en: 'DataFlow Editor', ja: 'DataFlowエディタ' },
+  'menu.viewScript': { en: 'Script Editor', ja: 'スクリプトエディタ' },
+  'menu.devtools': { en: 'Developer Tools', ja: '開発者ツール' },
+  'menu.help': { en: 'Help', ja: 'ヘルプ' },
+  'menu.resetGpuCache': {
+    en: 'Reset GPU Shader Cache and Restart',
+    ja: 'GPUシェーダキャッシュをリセットして再起動',
+  },
+  'menu.docs': { en: 'Documentation', ja: 'ドキュメント' },
+  'menu.github': { en: 'GitHub Repository', ja: 'GitHubリポジトリ' },
+  'menu.about': { en: 'About Arsist', ja: 'Arsistについて' },
+  'dialog.selectProjectFolder': { en: 'Select project folder', ja: 'プロジェクトフォルダを選択' },
+  'about.detail': {
+    en: 'Cross-platform development engine for AR glasses.\n\nGenerate apps for different AR glasses (XREAL, Rokid, VITURE, etc.) from a single source.',
+    ja: 'ARグラス・クロスプラットフォーム開発エンジン\n\nXREAL, Rokid, VITURE等の異なるARグラス向けアプリを単一ソースから生成可能。',
+  },
+};
+
+function mt(key: string): string {
+  const entry = MENU_STRINGS[key];
+  const lang = getAppLang();
+  return entry ? (entry[lang] ?? entry.en) : key;
+}
+
+// 起動安定化: GPUが壊れている/使えない環境（ドライバ不整合・ヘッドレス・
+// リモート・VM等）ではハードウェアアクセラレーションを無効化して、
+// 必ずソフトウェア合成でウィンドウが描画されるようにする。
+// 既定はGPU有効（3Dビューの性能のため）だが、
+//   - 環境変数 ARSIST_DISABLE_GPU=1 / ARSIST_SOFTWARE_RENDER=1
+//   - もしくは初回描画に失敗した際の自動再起動（後述のwatchdog）
+// でソフトウェアレンダリングに切り替わる。
+if (softwareRenderRequested) {
+  try {
+    app.disableHardwareAcceleration();
+  } catch {
+    // ignore
+  }
+  try {
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-gpu-compositing');
+    // GPUが無い環境でもWebGL(three.js 3Dビュー)が動くようソフトGLを許可
+    app.commandLine.appendSwitch('use-gl', 'angle');
+    app.commandLine.appendSwitch('use-angle', 'swiftshader');
+    app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+  } catch {
+    // ignore
+  }
+}
+
+// ── GPUシェーダキャッシュの自動無効化 ────────────────────────────────
+//
+// Chromium/ANGLE はリンク済みシェーダプログラムのバイナリを userData/GPUCache に
+// 保存する。GPUドライバを更新するとこのバイナリは互換性を失い、
+//   "Program binary could not be loaded. Binary is not compatible with
+//    current driver/hardware combination."
+// で全シェーダのリンクが失敗する（ウィンドウは出るが3Dビューだけ死ぬ）。
+// ブラウザは別プロファイルなので無事に見え、「Electronだけ GPU が壊れている」
+// ように見えるのが厄介なところ。
+//
+// 対策は「ドライバが変わったらキャッシュを捨てる」だけ。ただし GPU 情報は
+// GPUプロセスが起動しないと取れず、その時点では既にキャッシュを掴んでいる
+// （Windows では削除できない）ため、
+//   1. 起動直後（GPUプロセス起動前）に、前回のフラグを見て同期的に削除
+//   2. ready 後にドライバ指紋を取り、変化していたらフラグを立てて1回だけ再起動
+// の2段構えにしている。
+const GPU_CACHE_DIRS = ['GPUCache', 'DawnCache', 'ShaderCache', 'GrShaderCache'];
+const GPU_FINGERPRINT_KEY = 'gpuFingerprint';
+const GPU_PURGE_PENDING_KEY = 'gpuCachePurgePending';
+
+function purgeGpuCaches(reason: string): void {
+  let userDataDir: string;
+  try {
+    userDataDir = app.getPath('userData');
+  } catch {
+    return;
+  }
+
+  const removed: string[] = [];
+  for (const dirName of GPU_CACHE_DIRS) {
+    const dir = path.join(userDataDir, dirName);
+    try {
+      if (!fs.pathExistsSync(dir)) continue;
+      fs.removeSync(dir);
+      removed.push(dirName);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(`[arsist] GPUキャッシュの削除に失敗: ${dir}: ${(error as Error).message}`);
+    }
+  }
+
+  if (removed.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(`[arsist] GPUシェーダキャッシュを削除しました (${reason}): ${removed.join(', ')}`);
+  }
+}
+
+// 1) GPUプロセスが起動する前に、保留中の削除を実行する
+{
+  const manualReset = process.env.ARSIST_RESET_GPU_CACHE === '1';
+  let purgePending = false;
+  try {
+    purgePending = store.get(GPU_PURGE_PENDING_KEY) === true;
+  } catch {
+    purgePending = false;
+  }
+
+  if (manualReset || purgePending) {
+    purgeGpuCaches(manualReset ? 'ARSIST_RESET_GPU_CACHE=1' : 'GPU driver change detected on the previous run');
+    try {
+      store.set(GPU_PURGE_PENDING_KEY, false);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** GPUドライバ/レンダラの指紋。これが変わるとキャッシュ済みバイナリは無効になる。 */
+function buildGpuFingerprint(info: unknown): string | null {
+  if (!info || typeof info !== 'object') return null;
+  const gpuInfo = info as Record<string, any>;
+  const aux = (gpuInfo.auxAttributes ?? {}) as Record<string, any>;
+  const devices = Array.isArray(gpuInfo.gpuDevice) ? gpuInfo.gpuDevice : [];
+
+  const parts = [
+    aux.glRenderer,
+    aux.glVendor,
+    aux.glVersion,
+    ...devices.map((d: Record<string, any>) => `${d?.vendorId}:${d?.deviceId}:${d?.driverVersion ?? ''}`),
+  ].filter((v) => typeof v === 'string' ? v.length > 0 : v !== undefined && v !== null);
+
+  if (parts.length === 0) return null;
+  return createHash('sha1').update(parts.join('|')).digest('hex');
+}
+
+/**
+ * 2) ドライバ指紋が前回と変わっていたら、次回起動時に削除するようフラグを立て、
+ *    1回だけ自動で再起動する（キャッシュを掴んでいない状態で消すため）。
+ */
+async function checkGpuDriverChange(): Promise<void> {
+  // 再起動直後は再度判定しない（ループ防止）
+  if (process.env.ARSIST_GPU_CACHE_RESET_DONE === '1') return;
+  if (softwareRenderRequested) return;
+
+  let fingerprint: string | null = null;
+  try {
+    fingerprint = buildGpuFingerprint(await app.getGPUInfo('complete'));
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn(`[arsist] GPU情報を取得できませんでした: ${(error as Error).message}`);
+    return;
+  }
+  if (!fingerprint) return;
+
+  let previous: string | null = null;
+  try {
+    const stored = store.get(GPU_FINGERPRINT_KEY);
+    previous = typeof stored === 'string' && stored ? stored : null;
+  } catch {
+    previous = null;
+  }
+
+  if (previous === fingerprint) return;
+
+  try {
+    store.set(GPU_FINGERPRINT_KEY, fingerprint);
+  } catch {
+    // ignore
+  }
+
+  // 初回起動時は比較対象が無いだけなので、記録するだけで再起動しない
+  if (!previous) return;
+
+  // eslint-disable-next-line no-console
+  console.warn('[arsist] GPUドライバの変更を検出しました → シェーダキャッシュを破棄して再起動します');
+  try {
+    store.set(GPU_PURGE_PENDING_KEY, true);
+  } catch {
+    // ignore
+  }
+  process.env.ARSIST_GPU_CACHE_RESET_DONE = '1';
+  try {
+    app.relaunch();
+  } catch {
+    // ignore
+  }
+  app.exit(0);
+}
+
+/**
+ * 手動リセット（ヘルプメニュー）。自動検出が効かないケース
+ * （キャッシュ破損、指紋が変わらないドライバ更新など）の逃げ道。
+ * 削除自体は次回起動時（GPUプロセスがキャッシュを掴む前）に行う。
+ */
+function resetGpuCacheAndRelaunch(): void {
+  try {
+    store.set(GPU_PURGE_PENDING_KEY, true);
+  } catch {
+    // ignore
+  }
+  try {
+    app.relaunch();
+  } catch {
+    // ignore
+  }
+  app.exit(0);
+}
 
 // Linux向け：Vulkan周りの警告/不安定さを避ける（WebGLは通常OpenGL経由）
 if (process.platform === 'linux') {
@@ -140,10 +402,17 @@ if (process.platform === 'linux') {
   // ファイルダイアログのGTKエラー回避のため、portalを優先
   process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL = process.env.ELECTRON_USE_XDG_DESKTOP_PORTAL || '1';
   process.env.GTK_USE_PORTAL = process.env.GTK_USE_PORTAL || '1';
-  // Wayland環境でGtkFileChooserNativeが不安定なケースがあるので、未指定ならX11ヒントを優先
-  process.env.ELECTRON_OZONE_PLATFORM_HINT = process.env.ELECTRON_OZONE_PLATFORM_HINT || 'x11';
+  // ozone-platform-hint の決定:
+  //   - ユーザーが明示指定していればそれを尊重
+  //   - 純粋なWayland環境ではX11を強制しない（XWaylandが無いとウィンドウ生成に失敗しうる）。
+  //     'auto' にしてElectronにセッションを判定させる。
+  //   - それ以外（X11/不明）は従来通りX11ヒントで安定側に倒す。
+  const ozoneHint =
+    process.env.ELECTRON_OZONE_PLATFORM_HINT ||
+    (isWaylandSession(process.env) ? 'auto' : 'x11');
+  process.env.ELECTRON_OZONE_PLATFORM_HINT = ozoneHint;
   try {
-    app.commandLine.appendSwitch('ozone-platform-hint', process.env.ELECTRON_OZONE_PLATFORM_HINT);
+    app.commandLine.appendSwitch('ozone-platform-hint', ozoneHint);
   } catch {
     // ignore
   }
@@ -165,7 +434,7 @@ function updateRecentProjects(projectPath: string) {
 function detectAssetKindByExt(filePath: string): 'model' | 'texture' | 'video' | 'other' {
   const ext = path.extname(filePath).toLowerCase();
   if (['.glb', '.gltf'].includes(ext)) return 'model';
-  if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) return 'texture';
+  if (isUnityTextureExtension(filePath) || isUnsupportedTextureExtension(filePath)) return 'texture';
   if (['.mp4', '.webm', '.mov'].includes(ext)) return 'video';
   return 'other';
 }
@@ -194,49 +463,23 @@ function compareUnityVersionsDesc(a?: string, b?: string): number {
 
 async function findUnityCandidates(): Promise<{ candidates: string[]; details: UnityCandidate[] }> {
   const details: UnityCandidate[] = [];
+  const ctx = liveContext(os.homedir());
 
-  if (process.platform === 'linux') {
-    const home = os.homedir();
-    const hubEditorRoot = path.join(home, 'Unity', 'Hub', 'Editor');
-    if (await fs.pathExists(hubEditorRoot)) {
-      const entries = await fs.readdir(hubEditorRoot, { withFileTypes: true });
-      for (const ent of entries) {
-        if (!ent.isDirectory()) continue;
-        const p = path.join(hubEditorRoot, ent.name, 'Editor', 'Unity');
-        if (await fs.pathExists(p)) details.push({ path: p, version: ent.name });
-      }
-    }
-    // PATH上のUnityも候補に（見つからなければ無視）
-    const pathUnity = '/usr/bin/unity-editor';
-    if (await fs.pathExists(pathUnity)) details.push({ path: pathUnity });
-  }
-
-  if (process.platform === 'win32') {
-    const roots = [
-      path.join(process.env['ProgramFiles'] || 'C:/Program Files', 'Unity', 'Hub', 'Editor'),
-      path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Unity', 'Hub', 'Editor'),
-    ];
-    for (const root of roots) {
-      if (!await fs.pathExists(root)) continue;
-      const entries = await fs.readdir(root, { withFileTypes: true });
-      for (const ent of entries) {
-        if (!ent.isDirectory()) continue;
-        const p = path.join(root, ent.name, 'Editor', 'Unity.exe');
-        if (await fs.pathExists(p)) details.push({ path: p, version: ent.name });
-      }
+  // Hub-managed installs: <root>/<version>/Editor/<unityExe>
+  const exeRel = getUnityExeRelative(ctx);
+  for (const root of getUnitySearchRoots(ctx)) {
+    if (!await fs.pathExists(root)) continue;
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const p = path.join(root, ent.name, 'Editor', exeRel);
+      if (await fs.pathExists(p)) details.push({ path: path.normalize(p), version: ent.name });
     }
   }
 
-  if (process.platform === 'darwin') {
-    const hubEditorRoot = path.join('/Applications', 'Unity', 'Hub', 'Editor');
-    if (await fs.pathExists(hubEditorRoot)) {
-      const entries = await fs.readdir(hubEditorRoot, { withFileTypes: true });
-      for (const ent of entries) {
-        if (!ent.isDirectory()) continue;
-        const p = path.join(hubEditorRoot, ent.name, 'Unity.app', 'Contents', 'MacOS', 'Unity');
-        if (await fs.pathExists(p)) details.push({ path: p, version: ent.name });
-      }
-    }
+  // Explicit override (UNITY_PATH / ARSIST_UNITY_PATH) + distro/package installs.
+  for (const p of getUnityDirectCandidates(ctx)) {
+    if (await fs.pathExists(p)) details.push({ path: p });
   }
 
   // 重複排除 + 新しい順に並べ替え
@@ -245,6 +488,46 @@ async function findUnityCandidates(): Promise<{ candidates: string[]; details: U
   const arr = Array.from(unique.values());
   arr.sort((a, b) => compareUnityVersionsDesc(a.version, b.version));
   return { candidates: arr.map((d) => d.path), details: arr };
+}
+
+// ソフトウェアレンダリングで一度だけ再起動する（GPU初期化失敗時のフォールバック）。
+function relaunchWithSoftwareRendering(reason: string): void {
+  if (paintFallbackTried) return;
+  paintFallbackTried = true;
+  // eslint-disable-next-line no-console
+  console.warn(`[arsist] GPU描画に失敗した可能性 (${reason}) → ソフトウェアレンダリングで再起動します`);
+  // relaunchされる子プロセスは現在のenvを引き継ぐ
+  process.env.ARSIST_SOFTWARE_RENDER = '1';
+  try {
+    app.relaunch();
+  } catch {
+    // ignore
+  }
+  app.exit(0);
+}
+
+// 画面が真っ白/真っ黒になるのを防ぐため、読み込み失敗時は必ず可視のエラー画面を出す。
+function showLoadErrorPage(win: BrowserWindow, message: string): void {
+  const safe = message.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    html,body{height:100%;margin:0;background:#1e1e1e;color:#d4d4d4;
+      font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center}
+    .box{max-width:640px;padding:32px;text-align:center;line-height:1.6}
+    h1{font-size:18px;margin:0 0 12px}
+    code{display:block;margin-top:16px;padding:12px;background:#2a2a2a;border-radius:6px;
+      font-size:12px;white-space:pre-wrap;text-align:left;color:#ff9e9e}
+  </style></head><body><div class="box">
+    <h1>Arsist Engine を表示できませんでした / Failed to render UI</h1>
+    <div>アプリの読み込みに失敗しました。下記のエラーを確認してください。<br>
+    The application failed to load. See the error below.</div>
+    <code>${safe}</code>
+  </div></body></html>`;
+  try {
+    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    if (!win.isVisible()) win.show();
+  } catch {
+    // ignore
+  }
 }
 
 function createWindow(): void {
@@ -256,6 +539,8 @@ function createWindow(): void {
       minHeight: 700,
       title: 'Arsist Engine',
       backgroundColor: '#1a1a2e',
+      // 描画準備が整ってから表示（真っ白なフレームのちらつき/ブランク対策）
+      show: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -275,16 +560,72 @@ function createWindow(): void {
     return;
   }
 
+  const win = mainWindow;
+  let shown = false;
+  const reveal = () => {
+    if (shown || win.isDestroyed()) return;
+    shown = true;
+    if (paintWatchdog) {
+      clearTimeout(paintWatchdog);
+      paintWatchdog = null;
+    }
+    if (!win.isVisible()) win.show();
+  };
+
+  // 通常はこれで表示される
+  win.once('ready-to-show', reveal);
+  // 実際に描画されたら確実に表示（ready-to-showが来ない環境の保険）
+  win.webContents.once('did-finish-load', reveal);
+
+  // Watchdog: 一定時間内に描画されない場合、GPUが原因の可能性が高い。
+  //   - まだソフトレンダリングを試していなければ、無効化して自動再起動。
+  //   - 既に試済みなら、とにかくウィンドウを表示する（永久ブランク回避）。
+  let paintWatchdog: NodeJS.Timeout | null = setTimeout(() => {
+    if (shown || win.isDestroyed()) return;
+    if (!paintFallbackTried) {
+      relaunchWithSoftwareRendering('first-paint-timeout');
+    } else {
+      reveal();
+    }
+  }, 10000);
+
+  // 描画/GPUプロセスが落ちた場合のフォールバック
+  win.webContents.on('render-process-gone', (_e, details) => {
+    // eslint-disable-next-line no-console
+    console.error('[arsist] render-process-gone:', details.reason);
+    if (!paintFallbackTried && details.reason !== 'clean-exit') {
+      relaunchWithSoftwareRendering(`render-process-gone:${details.reason}`);
+    }
+  });
+
+  // 読み込み失敗（アセット欠落・devサーバ未起動など）→ 可視のエラー画面
+  win.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL) => {
+    // -3 (ERR_ABORTED) はリダイレクト等で発生し得るので無視
+    if (errorCode === -3) return;
+    // eslint-disable-next-line no-console
+    console.error(`[arsist] did-fail-load ${errorCode} ${errorDesc} @ ${validatedURL}`);
+    showLoadErrorPage(win, `${errorDesc} (${errorCode})\n${validatedURL}`);
+  });
+
   // 開発モードかプロダクションかで読み込みURLを変更
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
+    win.loadURL('http://localhost:5173').catch((err) => {
+      showLoadErrorPage(win, `dev server (http://localhost:5173) に接続できません。\n${String(err)}`);
+    });
+    win.webContents.openDevTools();
   } else {
     // __dirname points to dist/main/main in production; renderer lives at dist/renderer
-    mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
+    const indexPath = path.join(__dirname, '../../renderer/index.html');
+    win.loadFile(indexPath).catch((err) => {
+      showLoadErrorPage(win, `UI (${indexPath}) を読み込めません。\nnpm run build を実行してください。\n${String(err)}`);
+    });
   }
 
-  mainWindow.on('closed', () => {
+  win.on('closed', () => {
+    if (paintWatchdog) {
+      clearTimeout(paintWatchdog);
+      paintWatchdog = null;
+    }
     mainWindow = null;
   });
 
@@ -295,54 +636,56 @@ function createWindow(): void {
 function createMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: 'ファイル',
+      label: mt('menu.file'),
       submenu: [
-        { label: '新規プロジェクト', accelerator: 'CmdOrCtrl+N', click: () => handleNewProject() },
-        { label: 'プロジェクトを開く', accelerator: 'CmdOrCtrl+O', click: () => handleOpenProject() },
+        { label: mt('menu.newProject'), accelerator: 'CmdOrCtrl+N', click: () => handleNewProject() },
+        { label: mt('menu.openProject'), accelerator: 'CmdOrCtrl+O', click: () => handleOpenProject() },
         { type: 'separator' },
-        { label: '保存', accelerator: 'CmdOrCtrl+S', click: () => mainWindow?.webContents.send('menu:save') },
-        { label: '名前を付けて保存', accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow?.webContents.send('menu:save-as') },
+        { label: mt('menu.save'), accelerator: 'CmdOrCtrl+S', click: () => mainWindow?.webContents.send('menu:save') },
+        { label: mt('menu.saveAs'), accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow?.webContents.send('menu:save-as') },
         { type: 'separator' },
-        { label: 'ビルド設定', accelerator: 'CmdOrCtrl+Shift+B', click: () => mainWindow?.webContents.send('menu:build-settings') },
-        { label: 'ビルド', accelerator: 'CmdOrCtrl+B', click: () => mainWindow?.webContents.send('menu:build') },
+        { label: mt('menu.buildSettings'), accelerator: 'CmdOrCtrl+Shift+B', click: () => mainWindow?.webContents.send('menu:build-settings') },
+        { label: mt('menu.build'), accelerator: 'CmdOrCtrl+B', click: () => mainWindow?.webContents.send('menu:build') },
         { type: 'separator' },
-        { label: '設定', accelerator: 'CmdOrCtrl+,', click: () => mainWindow?.webContents.send('menu:settings') },
+        { label: mt('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => mainWindow?.webContents.send('menu:settings') },
         { type: 'separator' },
-        { label: '終了', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() },
+        { label: mt('menu.quit'), accelerator: 'CmdOrCtrl+Q', click: () => app.quit() },
       ],
     },
     {
-      label: '編集',
+      label: mt('menu.edit'),
       submenu: [
-        { label: '元に戻す', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
-        { label: 'やり直す', accelerator: 'CmdOrCtrl+Shift+Z', role: 'redo' },
+        { label: mt('menu.undo'), accelerator: 'CmdOrCtrl+Z', role: 'undo' },
+        { label: mt('menu.redo'), accelerator: 'CmdOrCtrl+Shift+Z', role: 'redo' },
         { type: 'separator' },
-        { label: '切り取り', accelerator: 'CmdOrCtrl+X', role: 'cut' },
-        { label: 'コピー', accelerator: 'CmdOrCtrl+C', role: 'copy' },
-        { label: '貼り付け', accelerator: 'CmdOrCtrl+V', role: 'paste' },
-        { label: '削除', accelerator: 'Delete', click: () => mainWindow?.webContents.send('menu:delete') },
+        { label: mt('menu.cut'), accelerator: 'CmdOrCtrl+X', role: 'cut' },
+        { label: mt('menu.copy'), accelerator: 'CmdOrCtrl+C', role: 'copy' },
+        { label: mt('menu.paste'), accelerator: 'CmdOrCtrl+V', role: 'paste' },
+        { label: mt('menu.delete'), accelerator: 'Delete', click: () => mainWindow?.webContents.send('menu:delete') },
         { type: 'separator' },
-        { label: 'すべて選択', accelerator: 'CmdOrCtrl+A', role: 'selectAll' },
+        { label: mt('menu.selectAll'), accelerator: 'CmdOrCtrl+A', role: 'selectAll' },
       ],
     },
     {
-      label: '表示',
+      label: mt('menu.view'),
       submenu: [
-        { label: '3Dビュー', accelerator: 'F1', click: () => mainWindow?.webContents.send('menu:view', '3d') },
-        { label: '2D Canvasビュー', accelerator: 'F2', click: () => mainWindow?.webContents.send('menu:view', '2d') },
-        { label: 'DataFlowエディタ', accelerator: 'F3', click: () => mainWindow?.webContents.send('menu:view', 'dataflow') },
-        { label: 'スクリプトエディタ', accelerator: 'F4', click: () => mainWindow?.webContents.send('menu:view', 'script') },
+        { label: mt('menu.view3d'), accelerator: 'F1', click: () => mainWindow?.webContents.send('menu:view', '3d') },
+        { label: mt('menu.view2d'), accelerator: 'F2', click: () => mainWindow?.webContents.send('menu:view', '2d') },
+        { label: mt('menu.viewDataflow'), accelerator: 'F3', click: () => mainWindow?.webContents.send('menu:view', 'dataflow') },
+        { label: mt('menu.viewScript'), accelerator: 'F4', click: () => mainWindow?.webContents.send('menu:view', 'script') },
         { type: 'separator' },
-        { label: '開発者ツール', accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
+        { label: mt('menu.devtools'), accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
       ],
     },
     {
-      label: 'ヘルプ',
+      label: mt('menu.help'),
       submenu: [
-        { label: 'ドキュメント', click: () => shell.openExternal('https://arsist.dev/docs') },
-        { label: 'GitHubリポジトリ', click: () => shell.openExternal('https://github.com/arsist') },
+        { label: mt('menu.docs'), click: () => shell.openExternal('https://arsist.dev/docs') },
+        { label: mt('menu.github'), click: () => shell.openExternal('https://github.com/arsist') },
         { type: 'separator' },
-        { label: 'Arsistについて', click: () => showAboutDialog() },
+        { label: mt('menu.resetGpuCache'), click: () => resetGpuCacheAndRelaunch() },
+        { type: 'separator' },
+        { label: mt('menu.about'), click: () => showAboutDialog() },
       ],
     },
   ];
@@ -359,7 +702,7 @@ async function handleOpenProject(): Promise<void> {
   try {
     const result = await showOpenDialogSafe({
       properties: ['openDirectory'],
-      title: 'プロジェクトフォルダを選択',
+      title: mt('dialog.selectProjectFolder'),
     });
 
     if (!result.canceled && result.filePaths.length > 0) {
@@ -376,7 +719,7 @@ function showAboutDialog(): void {
     type: 'info',
     title: 'Arsist Engine',
     message: 'Arsist Engine v1.0.0',
-    detail: 'ARグラス・クロスプラットフォーム開発エンジン\n\nXREAL, Rokid, VITURE等の異なるARグラス向けアプリを単一ソースから生成可能。',
+    detail: mt('about.detail'),
   });
 }
 
@@ -404,6 +747,18 @@ async function showOpenDialogSafe(options: Electron.OpenDialogOptions) {
 // ========================================
 
 // プロジェクト管理
+ipcMain.handle('app:set-language', async (_, lang: string) => {
+  const next: AppLang = lang === 'en' ? 'en' : 'ja';
+  try {
+    store.set('language' as any, next as any);
+  } catch { /* ignore */ }
+  // Rebuild the native menu so its labels follow the selected UI language.
+  try {
+    createMenu();
+  } catch { /* ignore */ }
+  return { success: true, lang: next };
+});
+
 ipcMain.handle('project:create', async (_, options) => {
   if (!projectManager) {
     projectManager = new ProjectManager();
@@ -708,9 +1063,23 @@ ipcMain.handle('assets:import', async (_, params: { projectPath: string; sourceP
     }
 
     const ext = path.extname(sourcePath).toLowerCase();
+
+    // Unity が取り込めない画像形式はここで断る。
+    // 通してしまうとエディタ上は正常に見えるのに、ビルドすると
+    // UI.Image が sprite=null のまま「真っ白な四角」になる。
+    if (isUnsupportedTextureExtension(sourcePath)) {
+      return {
+        success: false,
+        error:
+          `${ext} は Unity が対応していない画像形式のため取り込めません（ビルドすると白い四角になります）。\n` +
+          `${ext} is not a texture format Unity can import; it would render as a blank white box in the build.\n` +
+          `対応形式 / supported: ${UNITY_TEXTURE_EXTENSIONS.join(', ')}`,
+      };
+    }
+
     const kind = params.kind || (
       ['.glb', '.gltf'].includes(ext) ? 'model' :
-      ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext) ? 'texture' :
+      isUnityTextureExtension(sourcePath) ? 'texture' :
       ['.mp4', '.webm', '.mov'].includes(ext) ? 'video' :
       'other'
     );
@@ -1047,6 +1416,10 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+
+  // GPUドライバが更新されていたらシェーダキャッシュを捨てて1回だけ再起動する。
+  // ウィンドウ生成をブロックしないよう await しない。
+  void checkGpuDriverChange();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

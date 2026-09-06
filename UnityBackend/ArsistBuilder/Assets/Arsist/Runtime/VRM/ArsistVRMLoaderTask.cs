@@ -226,6 +226,39 @@ namespace Arsist.Runtime.VRM
                 Debug.LogWarning($"[ArsistVRMLoaderTask] VRMExpressionController add failed (non-critical): {e.Message}");
             }
 
+            // 5.4. VRMBodyScaler / VRMArmIK を追加（実寸合わせ・腕 IK 用）
+            try
+            {
+                if (vrmInstance.GetComponent<VRMBodyScaler>() == null)
+                {
+                    var scaler = vrmInstance.AddComponent<VRMBodyScaler>();
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ VRMBodyScaler added for '{actualAssetId}' (rest eye height = {scaler.RestEyeHeight:F3} m)");
+                }
+                if (vrmInstance.GetComponent<VRMArmIK>() == null)
+                {
+                    vrmInstance.AddComponent<VRMArmIK>();
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ VRMArmIK added for '{actualAssetId}'");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] VRMBodyScaler/VRMArmIK add failed (non-critical): {e.Message}");
+            }
+
+            // 5.5. VRMLookAtController を追加（視線制御用）
+            try
+            {
+                if (vrmInstance.GetComponent<VRMLookAtController>() == null)
+                {
+                    vrmInstance.AddComponent<VRMLookAtController>();
+                    Debug.Log($"[ArsistVRMLoaderTask] ✅ VRMLookAtController added for '{actualAssetId}'");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] VRMLookAtController add failed (non-critical): {e.Message}");
+            }
+
             // 4. VRMMetadataDisplay を追加（Editor表示用）
             try
             {

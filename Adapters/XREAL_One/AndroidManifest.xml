@@ -86,16 +86,15 @@
                     android:host="launch" />
             </intent-filter>
         </activity>
-        
-        <!-- XREAL Launcher Registration -->
-        <receiver
-            android:name="com.unity3d.player.UnityPlayerActivity$XRealReceiver"
-            android:exported="true"
-            tools:ignore="ExportedReceiver">
-            <intent-filter>
-                <action android:name="com.xreal.ar.LAUNCH_APP" />
-            </intent-filter>
-        </receiver>
+
+        <!--
+          Note: XREAL SDK 3.1.0 injects its own manifest requirements at build time via
+          Unity.XR.XREAL.Editor.XREALManifestProvider (nreal_sdk, com.nreal.supportDevices,
+          autoLog, and — when SupportMultiResume is enabled — removal of the LAUNCHER
+          intent-filter for XREAL's multi-resume launch flow). Do NOT hand-roll a launch
+          receiver here; a previous "$XRealReceiver" entry referenced a non-existent inner
+          class and was removed.
+        -->
     </application>
     
     <!-- === Queries (Android 11+) === -->

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useT } from '../../i18n';
 import {
   X,
   ChevronRight,
@@ -30,11 +31,11 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { id: 'welcome',      label: 'Welcome',        icon: <Glasses size={14} /> },
-  { id: 'unity',        label: 'Unity',          icon: <Cpu size={14} /> },
-  { id: 'sdk-dir',      label: 'SDK Folder',     icon: <HardDrive size={14} /> },
-  { id: 'sdk-packages', label: 'SDK Packages',   icon: <Package size={14} /> },
-  { id: 'complete',     label: 'Complete',       icon: <Rocket size={14} /> },
+  { id: 'welcome',      label: 'setup.stepWelcome',      icon: <Glasses size={14} /> },
+  { id: 'unity',        label: 'setup.stepUnity',        icon: <Cpu size={14} /> },
+  { id: 'sdk-dir',      label: 'setup.stepSdkFolder',    icon: <HardDrive size={14} /> },
+  { id: 'sdk-packages', label: 'setup.stepSdkPackages',  icon: <Package size={14} /> },
+  { id: 'complete',     label: 'setup.stepComplete',     icon: <Rocket size={14} /> },
 ];
 
 // ────────────────────────────────────────────────────────────
@@ -42,6 +43,7 @@ const STEPS: Step[] = [
 // ────────────────────────────────────────────────────────────
 
 function StepBar({ current }: { current: StepId }) {
+  const t = useT();
   const idx = STEPS.findIndex((s) => s.id === current);
   return (
     <div className="flex items-center gap-0 px-6 py-4 border-b border-arsist-border bg-arsist-bg">
@@ -56,7 +58,7 @@ function StepBar({ current }: { current: StepId }) {
                   : 'text-arsist-muted'}`}
           >
             {i < idx ? <CheckCircle2 size={13} /> : step.icon}
-            <span className="hidden sm:inline">{step.label}</span>
+            <span className="hidden sm:inline">{t(step.label)}</span>
           </div>
           {i < STEPS.length - 1 && (
             <div className={`w-6 h-px mx-1 ${i < idx ? 'bg-arsist-success' : 'bg-arsist-border'}`} />
@@ -83,6 +85,7 @@ function InfoBox({ children, type = 'info' }: { children: React.ReactNode; type?
 }
 
 function CodePath({ path }: { path: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard.writeText(path).catch(() => {});
@@ -92,7 +95,7 @@ function CodePath({ path }: { path: string }) {
   return (
     <span className="inline-flex items-center gap-1 font-mono text-[11px] bg-arsist-bg border border-arsist-border rounded px-2 py-0.5 text-arsist-text">
       {path}
-      <button onClick={copy} className="text-arsist-muted hover:text-arsist-text ml-1 shrink-0" title="コピー">
+      <button onClick={copy} className="text-arsist-muted hover:text-arsist-text ml-1 shrink-0" title={t('common.copy')}>
         {copied ? <CheckCircle2 size={11} className="text-arsist-success" /> : <Copy size={11} />}
       </button>
     </span>
@@ -113,42 +116,43 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
 // ────────────────────────────────────────────────────────────
 
 function StepWelcome() {
+  const t = useT();
   return (
     <div className="space-y-5">
       <div className="text-center py-4">
         <div className="w-16 h-16 bg-arsist-accent/20 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-arsist-accent/30">
           <Glasses size={32} className="text-arsist-accent" />
         </div>
-        <h2 className="text-xl font-bold text-arsist-text mb-1">Setup Wizard</h2>
-        <p className="text-xs text-arsist-muted">Configure Arsist Engine for AR development with guided setup.</p>
+        <h2 className="text-xl font-bold text-arsist-text mb-1">{t('setup.title')}</h2>
+        <p className="text-xs text-arsist-muted">{t('setup.welcomeSubtitle')}</p>
       </div>
 
       <InfoBox type="info">
-        This wizard will help you configure:<br />
+        {t('setup.welcomeConfigIntro')}<br />
         <ul className="mt-1.5 space-y-1 list-disc list-inside">
-          <li><strong>Unity Editor Path</strong> — Location of Unity executable for builds</li>
-          <li><strong>SDK Folder</strong> — Root directory for device SDKs (XREAL, Quest, etc.)</li>
-          <li><strong>SDK Packages</strong> — Verify required SDK files are present</li>
+          <li><strong>{t('setup.unityEditorPath')}</strong> — {t('setup.welcomeUnityPathDesc')}</li>
+          <li><strong>{t('setup.stepSdkFolder')}</strong> — {t('setup.welcomeSdkFolderDesc')}</li>
+          <li><strong>{t('setup.stepSdkPackages')}</strong> — {t('setup.welcomeSdkPackagesDesc')}</li>
         </ul>
       </InfoBox>
 
       <div className="p-3 bg-arsist-surface border border-arsist-border rounded-lg">
-        <h4 className="text-xs font-medium text-arsist-text mb-2">What You'll Need</h4>
+        <h4 className="text-xs font-medium text-arsist-text mb-2">{t('setup.welcomeNeedTitle')}</h4>
         <div className="space-y-2 text-xs text-arsist-muted">
           <div className="flex gap-2">
             <Cpu size={13} className="text-arsist-primary shrink-0 mt-0.5" />
-            <span><strong className="text-arsist-text">Unity Hub + Unity Editor</strong><br />
-              Version 2022.3 LTS or later recommended. Android Build Support module required.</span>
+            <span><strong className="text-arsist-text">{t('setup.welcomeUnityHubLabel')}</strong><br />
+              {t('setup.welcomeUnityHubDesc')}</span>
           </div>
           <div className="flex gap-2">
             <HardDrive size={13} className="text-arsist-accent shrink-0 mt-0.5" />
-            <span><strong className="text-arsist-text">SDK Folder</strong><br />
-              Root directory containing device SDKs (XREAL, Quest, etc.) for your target platforms.</span>
+            <span><strong className="text-arsist-text">{t('setup.stepSdkFolder')}</strong><br />
+              {t('setup.welcomeSdkFolderDesc2')}</span>
           </div>
           <div className="flex gap-2">
             <Package size={13} className="text-arsist-warning shrink-0 mt-0.5" />
-            <span><strong className="text-arsist-text">(Optional) Device SDK Packages</strong><br />
-              Specific SDK files from device manufacturers. Required only for those platforms.</span>
+            <span><strong className="text-arsist-text">{t('setup.welcomeOptionalSdkLabel')}</strong><br />
+              {t('setup.welcomeOptionalSdkDesc')}</span>
           </div>
         </div>
       </div>
@@ -173,6 +177,7 @@ function StepUnity({
   candidates, setCandidates,
   detecting, setDetecting,
 }: StepUnityProps) {
+  const t = useT();
   const api = (window as any).electronAPI as any;
 
   const guessExe = async (p: string): Promise<string> => {
@@ -227,52 +232,50 @@ function StepUnity({
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="text-sm font-semibold text-arsist-text mb-1">Unity Editor Path</h3>
+        <h3 className="text-sm font-semibold text-arsist-text mb-1">{t('setup.unityEditorPath')}</h3>
         <p className="text-xs text-arsist-muted">
-          Arsist launches Unity in <strong>headless mode</strong> during builds.
-          Specify the path to your Unity Editor executable installed via Unity Hub.
+          {t('setup.unityHeadlessDesc')}
         </p>
       </div>
 
       <InfoBox type="info">
-        <strong>Why is this needed?</strong><br />
-        AR app builds use Unity's compiler and Android build pipeline.
-        Arsist directly invokes the Unity executable to automate the build process.
+        <strong>{t('setup.whyNeeded')}</strong><br />
+        {t('setup.unityWhyDesc')}
       </InfoBox>
 
       <div className="space-y-2">
-        <label className="input-label">Unity Executable Path</label>
+        <label className="input-label">{t('setup.unityExecutablePath')}</label>
         <div className="flex gap-2">
           <input
             type="text"
             value={unityPath}
             onChange={(e) => setUnityPath(e.target.value)}
             className="input flex-1 text-xs"
-            placeholder="Auto-detect or browse for folder..."
+            placeholder={t('setup.unityPathPlaceholder')}
           />
           <button onClick={handleBrowse} className="btn btn-secondary text-xs">
             <FolderOpen size={14} />
-            Browse
+            {t('setup.browse')}
           </button>
           <button onClick={handleAutoDetect} className="btn btn-secondary text-xs" disabled={detecting}>
             <Search size={14} />
-            {detecting ? 'Searching...' : 'Auto-Detect'}
+            {detecting ? t('setup.searching') : t('setup.autoDetect')}
           </button>
         </div>
 
         {detected && (
           <div className="flex items-center gap-2">
-            <StatusBadge ok label={`Version verified: ${detected}`} />
+            <StatusBadge ok label={t('setup.versionVerified', { version: detected })} />
           </div>
         )}
         {unityPath && !detected && (
-          <StatusBadge ok={false} label="Version not verified (path will be used as-is)" />
+          <StatusBadge ok={false} label={t('setup.versionNotVerified')} />
         )}
       </div>
 
       {candidates.length > 0 && (
         <div className="p-2 bg-arsist-bg border border-arsist-border rounded-lg">
-          <p className="text-[10px] text-arsist-muted mb-1.5">Detected candidates (click to select)</p>
+          <p className="text-[10px] text-arsist-muted mb-1.5">{t('setup.detectedCandidates')}</p>
           <div className="space-y-1 max-h-28 overflow-y-auto">
             {candidates.map((c) => (
               <button
@@ -289,7 +292,7 @@ function StepUnity({
       )}
 
       <div className="p-3 bg-arsist-bg border border-arsist-border rounded-lg space-y-2">
-        <p className="text-[10px] font-medium text-arsist-muted uppercase tracking-wide">Platform Examples</p>
+        <p className="text-[10px] font-medium text-arsist-muted uppercase tracking-wide">{t('setup.platformExamples')}</p>
         {Object.entries(platformExamples).map(([os, ex]) => (
           <div key={os}>
             <p className="text-[10px] text-arsist-muted mb-0.5">{os}</p>
@@ -299,10 +302,8 @@ function StepUnity({
       </div>
 
       <InfoBox type="warn">
-        <strong>Android Build Requirements:</strong><br />
-        In Unity Hub, install the following modules for your editor version:
-        "Android Build Support", "OpenJDK", and "Android SDK &amp; NDK Tools".
-        Check via Unity Hub → Editor Settings → Add Modules.
+        <strong>{t('setup.androidReqTitle')}</strong><br />
+        {t('setup.androidReqDesc')}
       </InfoBox>
     </div>
   );
@@ -316,6 +317,7 @@ interface StepSdkDirProps {
 }
 
 function StepSdkDir({ sdkDir, setSdkDir, sdkDirStatus, setSdkDirStatus }: StepSdkDirProps) {
+  const t = useT();
   const api = (window as any).electronAPI as any;
 
   const checkDir = async (p: string) => {
@@ -341,66 +343,54 @@ function StepSdkDir({ sdkDir, setSdkDir, sdkDirStatus, setSdkDirStatus }: StepSd
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="text-sm font-semibold text-arsist-text mb-1">SDK Folder Configuration</h3>
+        <h3 className="text-sm font-semibold text-arsist-text mb-1">{t('setup.sdkFolderConfigTitle')}</h3>
         <p className="text-xs text-arsist-muted">
-          The SDK folder is the root directory containing device-specific SDK packages (XREAL, Quest, etc.).
+          {t('setup.sdkFolderConfigDesc')}
         </p>
       </div>
 
       <InfoBox type="info">
-        <strong>Why is this needed?</strong><br />
-        During builds, Arsist automatically copies SDK files from this folder into your Unity project.
-        If you received an SDK folder, specify it directly or reorganize it to match the structure below.
+        <strong>{t('setup.whyNeeded')}</strong><br />
+        {t('setup.sdkWhyDesc')}
       </InfoBox>
 
       {/* Expected structure */}
       <div className="p-3 bg-arsist-bg border border-arsist-border rounded-lg">
-        <p className="text-[10px] font-medium text-arsist-muted uppercase tracking-wide mb-2">Recommended SDK Folder Structure</p>
-        <pre className="text-[11px] text-arsist-text font-mono leading-relaxed whitespace-pre-wrap">{`sdk/                          ← Specify this folder
-  com.xreal.xr/
-    package/
-      package.json             ← XREAL SDK (UPM)
-      ...
-  quest/
-    com.meta.xr.sdk.core-*.tgz   ← Quest Core SDK
-    com.meta.xr.mrutilitykit-*.tgz  (optional)
-  nupkg/
-    jint.4.x.x.nupkg           ← Script engine
-    acornima.1.x.x.nupkg`}
+        <p className="text-[10px] font-medium text-arsist-muted uppercase tracking-wide mb-2">{t('setup.sdkStructureTitle')}</p>
+        <pre className="text-[11px] text-arsist-text font-mono leading-relaxed whitespace-pre-wrap">{t('setup.sdkStructure')}
         </pre>
       </div>
 
       <InfoBox type="warn">
-        <strong>If you received an SDK folder:</strong><br />
-        If the received folder already matches the structure above, specify it directly via "Browse".
-        If the structure differs, reorganize the files to match the above layout first.
+        <strong>{t('setup.sdkReceivedTitle')}</strong><br />
+        {t('setup.sdkReceivedDesc')}
       </InfoBox>
 
       <div className="space-y-2">
-        <label className="input-label">SDK Root Folder</label>
+        <label className="input-label">{t('setup.sdkRootFolder')}</label>
         <div className="flex gap-2">
           <input
             type="text"
             value={sdkDir}
             onChange={(e) => { setSdkDir(e.target.value); setSdkDirStatus('unknown'); }}
             className="input flex-1 text-xs"
-            placeholder="Leave blank to use bundled sdk/ folder"
+            placeholder={t('setup.sdkDirPlaceholder')}
           />
           <button onClick={handleBrowse} className="btn btn-secondary text-xs">
             <FolderOpen size={14} />
-            Browse
+            {t('setup.browse')}
           </button>
           {sdkDir && (
-            <button onClick={handleClear} className="btn btn-ghost text-xs">Clear</button>
+            <button onClick={handleClear} className="btn btn-ghost text-xs">{t('setup.clear')}</button>
           )}
         </div>
         {!sdkDir && (
           <p className="text-[11px] text-arsist-muted">
-            If left blank, the bundled <code className="font-mono">sdk/</code> folder will be used.
+            {t('setup.sdkBlankHint')}
           </p>
         )}
-        {sdkDir && sdkDirStatus === 'ok' && <StatusBadge ok label="Folder verified" />}
-        {sdkDir && sdkDirStatus === 'missing' && <StatusBadge ok={false} label="Folder not found" />}
+        {sdkDir && sdkDirStatus === 'ok' && <StatusBadge ok label={t('setup.folderVerified')} />}
+        {sdkDir && sdkDirStatus === 'missing' && <StatusBadge ok={false} label={t('setup.folderNotFound')} />}
       </div>
     </div>
   );
@@ -419,20 +409,20 @@ interface StepSdkPackagesProps {
 }
 
 function StepSdkPackages({ sdkStatus, loading, onRefresh }: StepSdkPackagesProps) {
+  const t = useT();
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="text-sm font-semibold text-arsist-text mb-1">SDK Packages Verification</h3>
+        <h3 className="text-sm font-semibold text-arsist-text mb-1">{t('setup.sdkPackagesTitle')}</h3>
         <p className="text-xs text-arsist-muted">
-          Verify that device-specific SDKs are correctly placed in the SDK folder.
-          Missing SDKs only affect builds for those specific devices.
+          {t('setup.sdkPackagesDesc')}
         </p>
       </div>
 
       <div className="flex justify-end">
         <button onClick={onRefresh} className="btn btn-secondary text-xs" disabled={loading}>
           <Search size={13} />
-          {loading ? 'Checking...' : 'Re-Check'}
+          {loading ? t('setup.checking') : t('setup.recheck')}
         </button>
       </div>
 
@@ -440,19 +430,19 @@ function StepSdkPackages({ sdkStatus, loading, onRefresh }: StepSdkPackagesProps
       <div className="p-3 bg-arsist-bg border border-arsist-border rounded-lg space-y-2">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-arsist-text">XREAL SDK (XREAL One / Air 2)</p>
-            <p className="text-[10px] text-arsist-muted mt-0.5">UPM Package Format</p>
+            <p className="text-xs font-medium text-arsist-text">{t('setup.xrealSdkTitle')}</p>
+            <p className="text-[10px] text-arsist-muted mt-0.5">{t('setup.upmFormat')}</p>
           </div>
           {sdkStatus.xreal !== null && (
-            <StatusBadge ok={sdkStatus.xreal.exists} label={sdkStatus.xreal.exists ? 'OK' : 'Not Found'} />
+            <StatusBadge ok={sdkStatus.xreal.exists} label={sdkStatus.xreal.exists ? t('setup.ok') : t('setup.notFound')} />
           )}
         </div>
 
         <div className="text-[10px] space-y-1">
-          <p className="text-arsist-muted">Required file structure:</p>
+          <p className="text-arsist-muted">{t('setup.requiredFileStructure')}</p>
           <CodePath path="sdk/com.xreal.xr/package/package.json" />
           {sdkStatus.xreal?.version && (
-            <p className="text-arsist-success">SDK Version: {sdkStatus.xreal.version}</p>
+            <p className="text-arsist-success">{t('setup.sdkVersion', { version: sdkStatus.xreal.version })}</p>
           )}
           {sdkStatus.xreal?.error && (
             <p className="text-arsist-error whitespace-pre-wrap">{sdkStatus.xreal.error}</p>
@@ -460,9 +450,7 @@ function StepSdkPackages({ sdkStatus, loading, onRefresh }: StepSdkPackagesProps
         </div>
 
         <InfoBox type="info">
-          <strong>How to get:</strong> Download "NRSDK" from the XREAL Developer Portal.
-          Place the <code className="font-mono">com.xreal.xr/</code> folder (containing UPM
-          <code className="font-mono"> package.json</code>) under <code className="font-mono">sdk/</code>.
+          <strong>{t('setup.howToGet')}</strong> {t('setup.xrealHowToDesc')}
         </InfoBox>
       </div>
 
@@ -470,24 +458,24 @@ function StepSdkPackages({ sdkStatus, loading, onRefresh }: StepSdkPackagesProps
       <div className="p-3 bg-arsist-bg border border-arsist-border rounded-lg space-y-2">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-arsist-text">Meta Quest SDK (Quest 3 / 3S)</p>
-            <p className="text-[10px] text-arsist-muted mt-0.5">.tgz Package Format</p>
+            <p className="text-xs font-medium text-arsist-text">{t('setup.questSdkTitle')}</p>
+            <p className="text-[10px] text-arsist-muted mt-0.5">{t('setup.tgzFormat')}</p>
           </div>
           {sdkStatus.quest !== null && (
-            <StatusBadge ok={sdkStatus.quest.exists} label={sdkStatus.quest.exists ? 'OK' : 'Not Found'} />
+            <StatusBadge ok={sdkStatus.quest.exists} label={sdkStatus.quest.exists ? t('setup.ok') : t('setup.notFound')} />
           )}
         </div>
 
         <div className="text-[10px] space-y-1">
-          <p className="text-arsist-muted">Required file structure:</p>
+          <p className="text-arsist-muted">{t('setup.requiredFileStructure')}</p>
           <CodePath path="sdk/quest/com.meta.xr.sdk.core-*.tgz" />
-          <p className="text-arsist-muted mt-1">Optional (MRUK):</p>
+          <p className="text-arsist-muted mt-1">{t('setup.optionalMruk')}</p>
           <CodePath path="sdk/quest/com.meta.xr.mrutilitykit-*.tgz" />
           {sdkStatus.quest?.corePackage && (
-            <p className="text-arsist-success">Core: {sdkStatus.quest.corePackage}</p>
+            <p className="text-arsist-success">{t('setup.questCore', { pkg: sdkStatus.quest.corePackage })}</p>
           )}
           {sdkStatus.quest?.mrukPackage && (
-            <p className="text-arsist-success">MRUK: {sdkStatus.quest.mrukPackage}</p>
+            <p className="text-arsist-success">{t('setup.questMruk', { pkg: sdkStatus.quest.mrukPackage })}</p>
           )}
           {sdkStatus.quest?.error && (
             <p className="text-arsist-error whitespace-pre-wrap">{sdkStatus.quest.error}</p>
@@ -495,26 +483,25 @@ function StepSdkPackages({ sdkStatus, loading, onRefresh }: StepSdkPackagesProps
         </div>
 
         <InfoBox type="info">
-          <strong>How to get:</strong> Download "Meta XR SDK" .tgz files from Meta's
+          <strong>{t('setup.howToGet')}</strong> {t('setup.questHowToBefore')}
           {' '}<a
             href="https://developer.oculus.com/downloads/"
             target="_blank"
             rel="noreferrer"
             className="text-arsist-accent underline inline-flex items-center gap-0.5"
           >
-            Developer Download Center <ExternalLink size={10} />
+            {t('setup.questHowToLink')} <ExternalLink size={10} />
           </a>{' '}
-          and place them in <code className="font-mono">sdk/quest/</code>.
+          {t('setup.questHowToAfter')}
         </InfoBox>
       </div>
 
       {/* Bundled deps */}
       {sdkStatus.bundled.length > 0 && (
         <div className="p-3 bg-arsist-bg border border-arsist-border rounded-lg space-y-2">
-          <p className="text-xs font-medium text-arsist-text">Bundled Dependencies (sdk/nupkg/)</p>
+          <p className="text-xs font-medium text-arsist-text">{t('setup.bundledDepsTitle')}</p>
           <p className="text-[10px] text-arsist-muted">
-            .nupkg files required for script functionality (Jint).
-            If missing, they will be auto-downloaded from NuGet during builds.
+            {t('setup.bundledDepsDesc')}
           </p>
           <div className="space-y-1">
             {sdkStatus.bundled.map((dep) => (
@@ -523,7 +510,7 @@ function StepSdkPackages({ sdkStatus, loading, onRefresh }: StepSdkPackagesProps
                   <span className="text-[11px] text-arsist-text font-medium">{dep.name}</span>
                   <span className="text-[10px] text-arsist-muted ml-2">{dep.description}</span>
                 </div>
-                <StatusBadge ok={dep.exists} label={dep.exists ? 'OK' : 'Auto-DL'} />
+                <StatusBadge ok={dep.exists} label={dep.exists ? t('setup.ok') : t('setup.autoDl')} />
               </div>
             ))}
           </div>
@@ -541,6 +528,7 @@ interface StepCompleteProps {
 }
 
 function StepComplete({ unityPath, detected, sdkDir, sdkStatus }: StepCompleteProps) {
+  const t = useT();
   const unityOk = !!unityPath;
   const xrealOk = sdkStatus.xreal?.exists ?? false;
   const questOk = sdkStatus.quest?.exists ?? false;
@@ -551,43 +539,43 @@ function StepComplete({ unityPath, detected, sdkDir, sdkStatus }: StepCompletePr
         <div className="w-14 h-14 bg-arsist-success/20 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-arsist-success/30">
           <Rocket size={28} className="text-arsist-success" />
         </div>
-        <h2 className="text-lg font-bold text-arsist-text mb-1">Setup Complete!</h2>
-        <p className="text-xs text-arsist-muted">Review your settings and get started building.</p>
+        <h2 className="text-lg font-bold text-arsist-text mb-1">{t('setup.completeTitle')}</h2>
+        <p className="text-xs text-arsist-muted">{t('setup.completeSubtitle')}</p>
       </div>
 
       <div className="p-3 bg-arsist-bg border border-arsist-border rounded-lg space-y-3">
-        <p className="text-[10px] font-medium text-arsist-muted uppercase tracking-wide">Configuration Summary</p>
+        <p className="text-[10px] font-medium text-arsist-muted uppercase tracking-wide">{t('setup.configSummary')}</p>
 
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-xs text-arsist-muted">Unity Editor</p>
-              <p className="text-[11px] font-mono text-arsist-text truncate">{unityPath || 'Not Set'}</p>
-              {detected && <p className="text-[10px] text-arsist-success">Version: {detected}</p>}
+              <p className="text-xs text-arsist-muted">{t('setup.unityEditor')}</p>
+              <p className="text-[11px] font-mono text-arsist-text truncate">{unityPath || t('setup.notSet')}</p>
+              {detected && <p className="text-[10px] text-arsist-success">{t('setup.versionLabel', { version: detected })}</p>}
             </div>
-            <StatusBadge ok={unityOk} label={unityOk ? 'OK' : 'Not Set'} />
+            <StatusBadge ok={unityOk} label={unityOk ? t('setup.ok') : t('setup.notSet')} />
           </div>
 
           <div className="h-px bg-arsist-border" />
 
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-xs text-arsist-muted">SDK Folder</p>
-              <p className="text-[11px] font-mono text-arsist-text truncate">{sdkDir || 'Using bundled sdk/'}</p>
+              <p className="text-xs text-arsist-muted">{t('setup.stepSdkFolder')}</p>
+              <p className="text-[11px] font-mono text-arsist-text truncate">{sdkDir || t('setup.usingBundledSdk')}</p>
             </div>
-            <StatusBadge ok label="Configured" />
+            <StatusBadge ok label={t('setup.configured')} />
           </div>
 
           <div className="h-px bg-arsist-border" />
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <p className="text-[10px] text-arsist-muted mb-0.5">XREAL SDK</p>
-              <StatusBadge ok={xrealOk} label={xrealOk ? 'Present' : 'Not Found'} />
+              <p className="text-[10px] text-arsist-muted mb-0.5">{t('setup.xrealSdk')}</p>
+              <StatusBadge ok={xrealOk} label={xrealOk ? t('setup.present') : t('setup.notFound')} />
             </div>
             <div>
-              <p className="text-[10px] text-arsist-muted mb-0.5">Quest SDK</p>
-              <StatusBadge ok={questOk} label={questOk ? 'Present' : 'Not Found'} />
+              <p className="text-[10px] text-arsist-muted mb-0.5">{t('setup.questSdk')}</p>
+              <StatusBadge ok={questOk} label={questOk ? t('setup.present') : t('setup.notFound')} />
             </div>
           </div>
         </div>
@@ -595,20 +583,19 @@ function StepComplete({ unityPath, detected, sdkDir, sdkStatus }: StepCompletePr
 
       {!unityOk && (
         <InfoBox type="warn">
-          Unity path is not set. You can configure it later via Settings → Unity Settings.
+          {t('setup.unityNotSetWarn')}
         </InfoBox>
       )}
 
       {!xrealOk && !questOk && (
         <InfoBox type="info">
-          No SDK packages were found. If you plan to build for XREAL or Quest, place the SDKs
-          in the SDK folder as described in the previous step. Jint script functionality works without SDKs.
+          {t('setup.noSdkInfo')}
         </InfoBox>
       )}
 
       <InfoBox type="ok">
-        You can change these settings anytime via <strong>Ctrl+,</strong> (Settings dialog).<br />
-        Create a new project and try building to get started!
+        {t('setup.completeSettingsHint')}<strong>Ctrl+,</strong>{t('setup.completeSettingsHintTail')}<br />
+        {t('setup.completeGetStarted')}
       </InfoBox>
     </div>
   );
@@ -619,6 +606,7 @@ function StepComplete({ unityPath, detected, sdkDir, sdkStatus }: StepCompletePr
 // ────────────────────────────────────────────────────────────
 
 export function SetupWizard({ onClose }: SetupWizardProps) {
+  const t = useT();
   const stepIds = STEPS.map((s) => s.id);
   const [stepIdx, setStepIdx] = useState(0);
   const currentStep = stepIds[stepIdx];
@@ -719,7 +707,7 @@ export function SetupWizard({ onClose }: SetupWizardProps) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-arsist-border bg-arsist-hover">
-          <span className="text-sm font-semibold text-arsist-text">Setup Wizard</span>
+          <span className="text-sm font-semibold text-arsist-text">{t('setup.title')}</span>
           <button onClick={onClose} className="btn-icon">
             <X size={16} />
           </button>
@@ -780,7 +768,7 @@ export function SetupWizard({ onClose }: SetupWizardProps) {
             className="btn btn-ghost text-xs"
           >
             <ChevronLeft size={14} />
-            Back
+            {t('setup.back')}
           </button>
 
           <span className="text-[11px] text-arsist-muted">
@@ -790,11 +778,11 @@ export function SetupWizard({ onClose }: SetupWizardProps) {
           {isLast ? (
             <button onClick={handleFinish} className="btn btn-success text-xs">
               <CheckCircle2 size={14} />
-              Finish
+              {t('setup.finish')}
             </button>
           ) : (
             <button onClick={handleNext} className="btn btn-primary text-xs">
-              Next
+              {t('setup.next')}
               <ChevronRight size={14} />
             </button>
           )}

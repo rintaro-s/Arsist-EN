@@ -22,23 +22,27 @@ if (-not $UnityPath) {
         $UnityPath = $env:ARSIST_UNITY_PATH
         Write-Host "✅ Using ARSIST_UNITY_PATH: $UnityPath" -ForegroundColor Green
     } else {
-        # Unity Hubからパスを探す
-        $hubPaths = @(
-            "C:\Program Files\Unity\Hub\Editor\2022.3.*\Editor\Unity.exe",
-            "C:\Program Files\Unity\Hub\Editor\2023.1.*\Editor\Unity.exe",
-            "C:\Program Files\Unity\Hub\Editor\2023.2.*\Editor\Unity.exe"
+        # Unity Hub のインストール先を、バージョンに依存せず走査する
+        # (このプロジェクトは ProjectVersion.txt でピン留めした Unity 6000.x を使うため、
+        #  2022/2023 固定の glob では検出できなかった)
+        $hubRoots = @(
+            (Join-Path $env:ProgramFiles "Unity\Hub\Editor"),
+            (Join-Path ${env:ProgramFiles(x86)} "Unity\Hub\Editor")
         )
-        
-        foreach ($pattern in $hubPaths) {
-            $parent = Split-Path $pattern -Parent
-            if (Test-Path $parent) {
-                $found = Get-ChildItem -Path $parent -Filter "Unity.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($found) {
-                    $UnityPath = $found.FullName
+
+        foreach ($root in $hubRoots) {
+            if (-not $root -or -not (Test-Path $root)) { continue }
+            # 新しいバージョン順（辞書順降順）で最初に見つかった Unity.exe を採用
+            $versionDirs = Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
+            foreach ($dir in $versionDirs) {
+                $candidate = Join-Path $dir.FullName "Editor\Unity.exe"
+                if (Test-Path $candidate) {
+                    $UnityPath = $candidate
                     Write-Host "✅ Auto-detected: $UnityPath" -ForegroundColor Green
                     break
                 }
             }
+            if ($UnityPath) { break }
         }
     }
 }

@@ -23,7 +23,7 @@ https://github.com/rintaro-s/Arsist
 ### Development Environment
 
 - **Node.js**: 18 or higher
-- **Unity**: 2022.3.20f1 LTS or higher
+- **Unity**: **6000.0.40f1** (the version the Unity template is pinned to — see `UnityBackend/ArsistBuilder/ProjectSettings/ProjectVersion.txt`). Newer Unity 6 patch releases generally work; older LTS lines (2022.3 etc.) may require opening/upgrading the template project first.
 - **XREAL SDK**: 3.1.0 or higher
 - **Meta Quest SDK**: Core package (`com.meta.xr.sdk.core-*.tgz`)
 - **UniVRM**: 0.131.0 or higher (for VRM avatar support)
@@ -281,11 +281,16 @@ See `docs/scripting-api.md` for complete API reference.
 
 ## Building Applications
 
+> **Packaging the editor itself** (`npm run package`) bundles the `sdk/` directory as an extra resource
+> (see `package.json` → `build.extraResources`). Because `sdk/` is gitignored and user-supplied, it **must exist**
+> before you run `npm run package`, otherwise electron-builder will fail or ship an empty resource. Populate `sdk/`
+> per [SDK Setup](#sdk-setup) first.
+
 ### Build Configuration
 
 1. Open Build Dialog: Ctrl+B or Build → Build Settings
 2. Configure:
-   - **Unity Path**: Path to Unity 2022.3.20f1+ executable
+   - **Unity Path**: Path to the Unity 6000.0.40f1 executable (matches the pinned template)
    - **Target Device**: XREAL One or Meta Quest
    - **Output Path**: Where to save the APK
    - **Development Build**: Enable for debugging
@@ -335,7 +340,7 @@ adb install YourApp.apk
 
 **Build Fails:**
 - Check Build Log in Build Dialog
-- Verify Unity version (2022.3.20f1 LTS+)
+- Verify Unity version (6000.0.40f1, matching `ProjectVersion.txt`)
 - Ensure Android SDK/NDK configured in Unity
 
 ## Device Adapters

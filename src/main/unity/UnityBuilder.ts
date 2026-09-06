@@ -10,6 +10,13 @@ import { app } from 'electron';
 import * as os from 'os';
 import * as https from 'https';
 import * as http from 'http';
+import * as crypto from 'crypto';
+import { liveContext, getUnityLicenseCandidates } from '../platform/paths';
+import { isUnityTextureExtension, UNITY_TEXTURE_EXTENSIONS } from '../../shared/assets';
+import type { BackgroundMode } from '../../shared/types';
+
+/** arSettings.backgroundMode に許される値（IR の BackgroundMode と対応）。 */
+const BACKGROUND_MODES: BackgroundMode[] = ['passthrough', 'skybox', 'solidColor'];
 
 export interface UnityBuildConfig {
   projectPath: string;
@@ -33,6 +40,37 @@ export interface UnityBuildConfig {
 
   /** スクリプトデータ (scripts.json 相当の内容) */
   scriptsData?: object;
+
+  /**
+   * true の場合、作業用Unityプロジェクト（Library/を含む）を捨ててゼロから作り直す。
+   * 通常は false（差分ビルド）でよい。キャッシュ由来の不整合を疑うときの逃げ道。
+   */
+  cleanBuild?: boolean;
+}
+
+/** 差分同期時に「不要になったファイル」をどこまで消すか。 */
+type PruneMode =
+  /** 消さない */
+  | 'none'
+  /** src に無いものは全部消す（srcが唯一の正） */
+  | 'mirror'
+  /** 前回同期したファイルのうち src から消えたものだけ消す（生成物は残す） */
+  | 'tracked';
+
+/** relPath -> "size:mtimeMs" の対応表。差分判定に使う。 */
+type FileStampMap = Record<string, string>;
+
+/** 作業ディレクトリのキャッシュ状態を記録するスタンプ。 */
+interface WorkspaceStamp {
+  version: number;
+  unityPath: string;
+  /**
+   * このワークスペースを組んだときの対象デバイス。
+   * デバイスが変わると Packages/ に別デバイスのSDKが残ったままになるため、作り直す。
+   */
+  targetDevice: string;
+  /** ProjectSettings/ と Packages/manifest.json のフィンガープリント。変わったら作り直す。 */
+  settingsFingerprint: string;
 }
 
 export interface BuildProgress {
@@ -49,6 +87,12 @@ export class UnityBuilder extends EventEmitter {
   private buildInProgress = false;
   private lastLogFile: string | null = null;
   private preparedAndroidSdkPath: string | null = null;
+  /** validate() が取得した Unity バージョン文字列（例 "6000.0.40f1"）。パッケージ版数の分岐に使う。 */
+  private detectedUnityVersion: string | null = null;
+
+  /** 作業ディレクトリ再利用の互換バージョン。準備処理を変えたら上げる（＝全ユーザーが1回だけ作り直す）。 */
+  private static readonly WORKSPACE_CACHE_VERSION = 1;
+  private static readonly WORKSPACE_STAMP_FILE = '.arsist-workspace.json';
 
   private isLicensingNoise(text?: string): boolean {
     const s = text || '';
@@ -187,7 +231,8 @@ export class UnityBuilder extends EventEmitter {
 
       // バージョン取得
       const version = await this.getUnityVersion();
-      
+      this.detectedUnityVersion = this.normalizeUnityVersion(version) || version;
+
       // UnityBackendプロジェクトの存在確認
       const resolved = this.resolveUnityTemplatePath();
       if (!resolved.path) {
@@ -381,9 +426,24 @@ export class UnityBuilder extends EventEmitter {
         return { success: false, error: 'Invalid build configuration: targetDevice/buildTarget is required' };
       }
 
+      // IR の整合性チェック。Unity を起動する前に落とすことで、
+      // 「ビルドは通ったが実機でプレースホルダが出るだけ」を防ぐ。
+      const irProblems = this.findIrProblems(config);
+      if (irProblems.length > 0) {
+        return { success: false, error: this.formatIrProblems(irProblems) };
+      }
+
       await fs.ensureDir(config.outputPath);
       if (config.cleanOutput) {
-        await fs.emptyDir(config.outputPath);
+        // 作業用Unityプロジェクトは outputPath の下にあるため、巻き添えで消さない。
+        // （消すと Library/ が飛んで毎回フルビルドになる。クリーンにしたい場合は cleanBuild を使う）
+        const workspaceName = path.resolve(config.projectPath).startsWith(path.resolve(config.outputPath))
+          ? path.basename(path.resolve(config.projectPath))
+          : null;
+        for (const entry of await fs.readdir(config.outputPath)) {
+          if (workspaceName && entry === workspaceName) continue;
+          await fs.remove(path.join(config.outputPath, entry));
+        }
       }
 
       // ULF(.ulf)が指定されている場合、Unityは「ライセンス取り込みだけして終了」することがあるため
@@ -404,7 +464,10 @@ export class UnityBuilder extends EventEmitter {
 
       // Phase 1: Unityワークディレクトリ準備
       this.emitProgress('prepare-unity', 5, 'Unityプロジェクトを準備中...');
-      const unityProjectPath = await this.prepareUnityProject(config.projectPath);
+      const unityProjectPath = await this.prepareUnityProject(config.projectPath, {
+        cleanBuild: config.cleanBuild,
+        targetDevice: config.targetDevice,
+      });
 
       // Phase 1.5: Jint/Esprima DLL を確認/ダウンロード
       this.emitProgress('prepare-jint', 8, 'Jintスクリプトエンジンを準備中...');
@@ -442,10 +505,15 @@ export class UnityBuilder extends EventEmitter {
 
         this.emit('log', `[Arsist] Found UniVRM package: ${univrmPackage}`);
         
-        // UniVRMパッケージをインポート
+        // UniVRMパッケージをインポート（同じパッケージなら2回目以降はスキップされる）
         const importLog = path.join(config.outputPath, 'unity_univrm_import.log');
-        const importResult = await this.importUnityPackage(unityProjectPath, univrmPackage, importLog);
-        
+        const importResult = await this.ensureUnityPackageImported(
+          unityProjectPath,
+          univrmPackage,
+          '.arsist-univrm.json',
+          importLog,
+        );
+
         if (!importResult.success) {
           this.emit('log', `[Arsist] UniVRM package import FAILED: ${importResult.error}`);
           this.emit('log', `[Arsist] Check log file: ${importLog}`);
@@ -502,20 +570,17 @@ export class UnityBuilder extends EventEmitter {
       const findManualLicenseFile = async (): Promise<string | null> => {
         // Unity Hubでログイン済みでも、ヘッドレス環境ではtoken更新に失敗することがある。
         // その場合に備えて、ローカルの .ulf を指定して起動できるようにする。
-        // (Linuxの一般的な配置先)
+        // 配置先は OS ごとに異なるため platform ヘルパで全 OS 分を列挙する
+        // (以前は Linux パスのみで、Windows/macOS では自動発見できなかった)。
         const home = (() => {
           try {
             return app.getPath('home');
           } catch {
-            return process.env.HOME || '';
+            return process.env.HOME || process.env.USERPROFILE || os.homedir();
           }
         })();
 
-        const candidates = [
-          path.join(home, '.local', 'share', 'unity3d', 'Unity', 'Unity_lic.ulf'),
-          path.join(home, '.config', 'unity3d', 'Unity', 'Unity_lic.ulf'),
-          path.join(home, '.local', 'share', 'unity3d', 'Unity', 'Unity_lic.ulf.bak'),
-        ].filter(Boolean);
+        const candidates = getUnityLicenseCandidates(liveContext(home));
 
         for (const p of candidates) {
           try {
@@ -665,6 +730,109 @@ export class UnityBuilder extends EventEmitter {
   }
 
   /**
+   * ビルド前に IR の「実機で無言に壊れる」組み合わせを検出する。
+   *
+   * 特に Canvas は、参照先の UILayout が未割り当て/削除済みでもビルド自体は成功し、
+   * 実機ではプレースホルダだけが表示される。原因が分かりにくいので、
+   * 黙って直したり素通りさせたりせず、ここでビルドを失敗させる。
+   */
+  private findIrProblems(config: UnityBuildConfig): string[] {
+    const problems: string[] = [];
+
+    const layouts = Array.isArray(config.uiData) ? (config.uiData as any[]) : [];
+    const layoutIds = new Set(
+      layouts.map((l) => (l && typeof l.id === 'string' ? l.id : null)).filter((id): id is string => !!id),
+    );
+    const canvasLayoutNames = layouts
+      .filter((l) => l?.scope === 'canvas' && typeof l?.name === 'string')
+      .map((l) => l.name as string);
+
+    // UI 要素側: Unity が取り込めない画像を使っていないか
+    for (const layout of layouts) {
+      const layoutName = typeof layout?.name === 'string' ? layout.name : 'UI Layout';
+      this.walkUiElements(layout?.root, (el) => {
+        if (el?.type !== 'Image') return;
+        const assetPath = typeof el?.assetPath === 'string' ? el.assetPath : '';
+        if (!assetPath) return;
+        if (isUnityTextureExtension(assetPath)) return;
+        problems.push(
+          `${layoutName} / Image: Unity が読めない画像形式です / unsupported image format: ${assetPath}` +
+          ` (対応 / supported: ${UNITY_TEXTURE_EXTENSIONS.join(', ')})`,
+        );
+      });
+    }
+
+    const scenes = Array.isArray(config.scenesData) ? (config.scenesData as any[]) : [];
+    for (const scene of scenes) {
+      const sceneName = typeof scene?.name === 'string' ? scene.name : 'Scene';
+      const objects = Array.isArray(scene?.objects) ? scene.objects : [];
+      for (const obj of objects) {
+        if (obj?.type !== 'canvas') continue;
+
+        const objName = typeof obj?.name === 'string' ? obj.name : 'Canvas';
+        const label = `${sceneName} / ${objName}`;
+        const layoutId = obj?.canvasSettings?.layoutId;
+
+        // 「どれを選べばいいか」まで書く。原因行と対処が離れていると読み飛ばされる。
+        const pick = canvasLayoutNames.length > 0
+          ? ` 選択肢 / available: ${canvasLayoutNames.join(', ')}`
+          : ' 先にUIエディタでcanvasスコープのレイアウトを作成してください / create a canvas-scope UI layout first';
+        const howToFix = `インスペクタの「キャンバス設定 > UIレイアウト」で設定してください / set it under Canvas Settings > UI Layout in the inspector.${pick}`;
+
+        if (!layoutId) {
+          problems.push(`${label}: UIレイアウトが未割り当てです / no UI layout assigned. ${howToFix}`);
+        } else if (!layoutIds.has(layoutId)) {
+          problems.push(`${label}: 参照先のUIレイアウトが存在しません / unknown UI layout id "${layoutId}". ${howToFix}`);
+        }
+      }
+    }
+
+    // 背景モード（Quest のパススルー/VR切り替え）
+    const arSettings = (config.manifestData as any)?.arSettings;
+    const backgroundMode = arSettings?.backgroundMode;
+    if (backgroundMode !== undefined && !BACKGROUND_MODES.includes(backgroundMode)) {
+      problems.push(
+        `arSettings.backgroundMode: 不明な背景モードです / unknown background mode "${backgroundMode}"` +
+        ` (対応 / supported: ${BACKGROUND_MODES.join(', ')})`,
+      );
+    }
+    if (backgroundMode === 'solidColor') {
+      const backgroundColor = arSettings?.backgroundColor;
+      if (backgroundColor !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(backgroundColor))) {
+        problems.push(
+          `arSettings.backgroundColor: 背景色は #RRGGBB 形式で指定してください / background color must be #RRGGBB` +
+          ` (actual: "${backgroundColor}")`,
+        );
+      }
+    }
+
+    // 操作方法（コントローラーレイ / ハンドトラッキング）。両方 false は「見るだけのアプリ」として
+    // 正当な選択肢なので、ここではブロックしない（以前はエラーにしていたが、閲覧専用アプリは
+    // 普通に成立するユースケースなので誤りだった）。
+
+    return problems;
+  }
+
+  /** UI 要素ツリーを深さ優先で走査する。 */
+  private walkUiElements(element: any, visit: (el: any) => void): void {
+    if (!element || typeof element !== 'object') return;
+    visit(element);
+    const children = Array.isArray(element.children) ? element.children : [];
+    for (const child of children) {
+      this.walkUiElements(child, visit);
+    }
+  }
+
+  private formatIrProblems(problems: string[]): string {
+    return [
+      'プロジェクトの設定に問題があるためビルドを中止しました。',
+      'Build aborted: the project has problems that would silently break the app on device.',
+      '',
+      ...problems.map((p) => `  - ${p}`),
+    ].join('\n');
+  }
+
+  /**
    * ビルドキャンセル
    */
   cancel(): void {
@@ -729,25 +897,314 @@ export class UnityBuilder extends EventEmitter {
     return 0;
   }
 
-  private async prepareUnityProject(workingDir: string): Promise<string> {
-    await fs.ensureDir(workingDir);
-    await fs.emptyDir(workingDir);
-    await fs.copy(this.unityTemplatePath, workingDir);
-    
-    // Ensure TextMeshPro package is in manifest
-    const manifestPath = path.join(workingDir, 'Packages', 'manifest.json');
-    if (await fs.pathExists(manifestPath)) {
-      const manifest = await fs.readJSON(manifestPath);
-      const dependencies = (manifest.dependencies ?? {}) as Record<string, string>;
-      if (!dependencies['com.unity.textmeshpro']) {
-        dependencies['com.unity.textmeshpro'] = '3.0.9';
-        manifest.dependencies = dependencies;
-        await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
-        this.emit('log', '[Arsist] Added TextMeshPro package to Unity manifest');
+  // ----------------------------------------------------------------
+  // 差分同期ユーティリティ
+  //
+  // 以前は毎ビルドで作業ディレクトリを emptyDir + フルコピーしていたため、
+  // Unity から見ると常に「新規プロジェクト」= 全アセット再インポート＋全C#再コンパイル＋
+  // IL2CPPフルビルド＋Gradleフルビルドになっていた。ここでは mtime/size 比較で
+  // 変わったファイルだけを touch し、Library/ を温存することでインクリメンタルにする。
+  // ----------------------------------------------------------------
+
+  /** Unity が読み飛ばすディレクトリ（末尾 `~`）と VCS メタデータはコピーしない。 */
+  private isSyncExcludedDirName(name: string): boolean {
+    return name.endsWith('~') || name === '.git' || name === '.svn' || name === 'node_modules';
+  }
+
+  private stampOf(stat: fs.Stats): string {
+    // mtimeMs はファイルシステムによって小数以下の精度が違うため ms 単位に丸める
+    return `${stat.size}:${Math.floor(stat.mtimeMs)}`;
+  }
+
+  /** root 以下のファイルを再帰列挙し、相対パス -> スタンプ の対応表を返す。 */
+  private async collectFileStamps(root: string, relBase = ''): Promise<FileStampMap> {
+    const result: FileStampMap = {};
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.readdir(path.join(root, relBase), { withFileTypes: true });
+    } catch {
+      return result;
+    }
+
+    for (const entry of entries) {
+      const rel = relBase ? path.join(relBase, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        if (this.isSyncExcludedDirName(entry.name)) continue;
+        Object.assign(result, await this.collectFileStamps(root, rel));
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        result[rel] = this.stampOf(await fs.stat(path.join(root, rel)));
+      } catch {
+        // 読めないファイルは無視（同期対象外）
       }
     }
-    
+
+    return result;
+  }
+
+  /**
+   * 同期先に置く「前回コピーしたソース側のスタンプ」記録。
+   * `.` 始まりのファイルは Unity のアセットパイプラインが無視するので、
+   * Assets/ や Packages/ の直下に置いても取り込まれない。
+   */
+  private static readonly SYNC_MANIFEST_FILE = '.arsist-sync.json';
+
+  private async readSyncManifest(dest: string): Promise<FileStampMap> {
+    try {
+      const data = await fs.readJSON(path.join(dest, UnityBuilder.SYNC_MANIFEST_FILE));
+      return (data && typeof data === 'object' ? data : {}) as FileStampMap;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * src -> dest を差分同期する。
+   *
+   * 変更判定は「ソース側スタンプ」と「前回同期時に記録したソース側スタンプ」の比較で行う。
+   * コピー先の mtime を見ないのは、`preserveTimestamps` がサブミリ秒を丸めてしまい
+   * 毎回わずかにズレて“変更あり”と誤判定されるため。
+   *
+   * Unity が生成した `.meta` は、対応するアセットが残っている限り prune しない
+   * （消すと GUID が振り直され、結局フルインポートになる）。
+   */
+  private async syncDirectory(
+    src: string,
+    dest: string,
+    options?: { prune?: PruneMode },
+  ): Promise<{ stamps: FileStampMap; copied: number; removed: number }> {
+    const prune: PruneMode = options?.prune ?? 'none';
+    const stamps = await this.collectFileStamps(src);
+    await fs.ensureDir(dest);
+    const recorded = await this.readSyncManifest(dest);
+
+    let copied = 0;
+    for (const [rel, stamp] of Object.entries(stamps)) {
+      const destPath = path.join(dest, rel);
+      if (recorded[rel] === stamp && await fs.pathExists(destPath)) continue;
+
+      await fs.ensureDir(path.dirname(destPath));
+      await fs.copy(path.join(src, rel), destPath, { overwrite: true, preserveTimestamps: true });
+      copied++;
+    }
+
+    let removed = 0;
+    if (prune !== 'none') {
+      const candidates = prune === 'tracked'
+        ? Object.keys(recorded)
+        : Object.keys(await this.collectFileStamps(dest));
+
+      for (const rel of candidates) {
+        if (stamps[rel] !== undefined) continue;
+        if (rel === UnityBuilder.SYNC_MANIFEST_FILE) continue;
+        // 対応するアセット（ファイル or フォルダ）が残っている .meta は Unity の資産なので残す
+        if (rel.endsWith('.meta')) {
+          const owner = rel.slice(0, -'.meta'.length);
+          if (stamps[owner] !== undefined) continue;
+          if (await fs.pathExists(path.join(src, owner))) continue;
+        }
+        const destPath = path.join(dest, rel);
+        if (!await fs.pathExists(destPath)) continue;
+        await fs.remove(destPath);
+        removed++;
+      }
+      await this.removeEmptyDirs(dest);
+    }
+
+    await fs.writeJSON(path.join(dest, UnityBuilder.SYNC_MANIFEST_FILE), stamps, { spaces: 0 });
+
+    return { stamps, copied, removed };
+  }
+
+  /**
+   * prune 後に残った空ディレクトリを掃除する。
+   * `isRoot` の呼び出し（同期先そのもの）は空でも削除しない。
+   */
+  private async removeEmptyDirs(root: string, isRoot = true): Promise<boolean> {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.readdir(root, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+
+    let remaining = 0;
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const emptied = await this.removeEmptyDirs(path.join(root, entry.name), false);
+        if (!emptied) remaining++;
+      } else {
+        remaining++;
+      }
+    }
+
+    if (remaining === 0 && !isRoot) {
+      try {
+        await fs.rmdir(root);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /** アセットフォルダと、それに対応する `.meta` をまとめて消す。 */
+  private async removeAssetFolder(assetsRoot: string, relative: string): Promise<void> {
+    const target = path.join(assetsRoot, relative);
+    await fs.remove(target).catch(() => {});
+    await fs.remove(`${target}.meta`).catch(() => {});
+  }
+
+  /** 作業ディレクトリを作り直すべきか判定するためのフィンガープリント。 */
+  private async computeSettingsFingerprint(templatePath: string): Promise<string> {
+    const parts: string[] = [];
+    const projectSettings = await this.collectFileStamps(path.join(templatePath, 'ProjectSettings'));
+    for (const rel of Object.keys(projectSettings).sort()) {
+      parts.push(`ProjectSettings/${rel}=${projectSettings[rel]}`);
+    }
+    try {
+      const manifestStat = await fs.stat(path.join(templatePath, 'Packages', 'manifest.json'));
+      parts.push(`Packages/manifest.json=${this.stampOf(manifestStat)}`);
+    } catch {
+      parts.push('Packages/manifest.json=missing');
+    }
+    return crypto.createHash('sha1').update(parts.join('\n')).digest('hex');
+  }
+
+  private async readWorkspaceStamp(workingDir: string): Promise<WorkspaceStamp | null> {
+    try {
+      const stamp = await fs.readJSON(path.join(workingDir, UnityBuilder.WORKSPACE_STAMP_FILE));
+      if (!stamp || typeof stamp !== 'object') return null;
+      return stamp as WorkspaceStamp;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 作業用Unityプロジェクトを用意する。
+   *
+   * 既存の作業ディレクトリが再利用可能なら Library/ を温存したまま差分更新する。
+   * 再利用できない（初回 / テンプレートの ProjectSettings が変わった / Unity を変えた /
+   * cleanBuild 指定）場合のみ、ゼロから作り直す。
+   */
+  private async prepareUnityProject(
+    workingDir: string,
+    options: { cleanBuild?: boolean; targetDevice: string },
+  ): Promise<string> {
+    await fs.ensureDir(workingDir);
+
+    const settingsFingerprint = await this.computeSettingsFingerprint(this.unityTemplatePath);
+    const previous = await this.readWorkspaceStamp(workingDir);
+    const hasLibrary = await fs.pathExists(path.join(workingDir, 'Library'));
+
+    const reuseBlocker = options.cleanBuild
+      ? 'clean build requested'
+      : !previous
+        ? 'no previous workspace stamp'
+        : previous.version !== UnityBuilder.WORKSPACE_CACHE_VERSION
+          ? 'workspace cache format changed'
+          : previous.unityPath !== this.unityPath
+            ? 'Unity editor changed'
+            : previous.targetDevice !== options.targetDevice
+              ? `target device changed (${previous.targetDevice} -> ${options.targetDevice})`
+              : previous.settingsFingerprint !== settingsFingerprint
+                ? 'template ProjectSettings/manifest changed'
+                : !hasLibrary
+                  ? 'Library/ missing'
+                  : null;
+
+    if (reuseBlocker) {
+      this.emit('log', `[Arsist] Preparing a fresh Unity workspace (${reuseBlocker})`);
+      await this.resetWorkspaceDir(workingDir);
+      await fs.copy(this.unityTemplatePath, workingDir, { preserveTimestamps: true });
+    }
+
+    // ProjectSettings / Packages はビルド中に書き換えられるため同期対象にしない。
+    // （テンプレートへ戻すと毎回 define などが変わって全C#再コンパイルになる）
+    // 新規作成直後でも呼ぶことで、同期記録（.arsist-sync.json）を残しておく。
+    const sync = await this.syncDirectory(
+      path.join(this.unityTemplatePath, 'Assets'),
+      path.join(workingDir, 'Assets'),
+      { prune: 'tracked' },
+    );
+
+    if (!reuseBlocker) {
+      this.emit(
+        'log',
+        `[Arsist] Reusing Unity workspace (Library kept): ${sync.copied} file(s) updated, ${sync.removed} removed`,
+      );
+    }
+
+    // 毎ビルド作り直す生成物。前回のプロジェクトの残骸が混ざるとビルド対象シーンや
+    // アダプターのEditorスクリプトが二重になるので、ここで必ず消す。
+    const assetsRoot = path.join(workingDir, 'Assets');
+    await this.removeAssetFolder(assetsRoot, 'Scenes');
+    await this.removeAssetFolder(assetsRoot, path.join('Arsist', 'Editor', 'Adapters'));
+
+    await this.ensureUnityUiPackages(workingDir);
+
+    await fs.writeJSON(
+      path.join(workingDir, UnityBuilder.WORKSPACE_STAMP_FILE),
+      {
+        version: UnityBuilder.WORKSPACE_CACHE_VERSION,
+        unityPath: this.unityPath,
+        targetDevice: options.targetDevice,
+        settingsFingerprint,
+      } satisfies WorkspaceStamp,
+      { spaces: 0 },
+    );
+
     return workingDir;
+  }
+
+  /** 作業ディレクトリの中身を消す（保持対象ディレクトリも含めて完全にクリーンにする）。 */
+  private async resetWorkspaceDir(workingDir: string): Promise<void> {
+    await fs.emptyDir(workingDir);
+  }
+
+  /**
+   * uGUI / TextMeshPro をUnityバージョンに合わせて manifest に足す。
+   * Unity 6 では TextMeshPro は com.unity.ugui 2.0.0 に統合済みで、
+   * 旧 com.unity.textmeshpro を要求すると解決に失敗する。
+   */
+  private async ensureUnityUiPackages(workingDir: string): Promise<void> {
+    const manifestPath = path.join(workingDir, 'Packages', 'manifest.json');
+    if (!await fs.pathExists(manifestPath)) return;
+
+    const manifest = await fs.readJSON(manifestPath);
+    const dependencies = (manifest.dependencies ?? {}) as Record<string, string>;
+    const before = JSON.stringify(dependencies);
+
+    this.applyUnityUiDependencies(dependencies);
+
+    if (JSON.stringify(dependencies) !== before) {
+      manifest.dependencies = dependencies;
+      await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
+      this.emit('log', `[Arsist] Unity UI packages ensured for ${this.getUnityMajorVersion() >= 6000 ? 'Unity 6+' : 'Unity 2022'}`);
+    }
+  }
+
+  /** 検出済み Unity バージョンのメジャー番号（例 6000 / 2022）。不明なら 0。 */
+  private getUnityMajorVersion(): number {
+    const match = (this.detectedUnityVersion || '').match(/(\d+)\.\d+\.\d+/);
+    return match ? parseInt(match[1], 10) : 0;
+  }
+
+  /** uGUI / TextMeshPro の依存をUnityバージョンに応じて設定する。 */
+  private applyUnityUiDependencies(deps: Record<string, string>): void {
+    if (this.getUnityMajorVersion() >= 6000) {
+      // Unity 6: TextMeshPro は com.unity.ugui 2.x に同梱。旧パッケージは入れてはいけない。
+      deps['com.unity.ugui'] = '2.0.0';
+      delete deps['com.unity.textmeshpro'];
+      return;
+    }
+
+    if (!deps['com.unity.ugui']) deps['com.unity.ugui'] = '1.0.0';
+    if (!deps['com.unity.textmeshpro']) deps['com.unity.textmeshpro'] = '3.0.6';
   }
 
   private projectUsesVRM(config: UnityBuildConfig): boolean {
@@ -784,12 +1241,47 @@ export class UnityBuilder extends EventEmitter {
     return null;
   }
 
+  /**
+   * .unitypackage を作業プロジェクトへ取り込む。既に同じパッケージを取り込み済みなら何もしない。
+   *
+   * インポートは Unity をもう1プロセス起動するため数分単位のコストがある。
+   * 作業ディレクトリを再利用するようになったので、毎ビルド走らせる必要はない。
+   */
+  private async ensureUnityPackageImported(
+    unityProjectPath: string,
+    packagePath: string,
+    markerName: string,
+    logFile: string,
+  ): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+    const markerPath = path.join(unityProjectPath, markerName);
+    const stamp = `${packagePath}:${this.stampOf(await fs.stat(packagePath))}`;
+
+    try {
+      const existing = await fs.readJSON(markerPath);
+      if (existing?.stamp === stamp) {
+        this.emit('log', `[Arsist] Package already imported, skipping: ${path.basename(packagePath)}`);
+        return { success: true, skipped: true };
+      }
+    } catch {
+      // マーカーが無い/壊れている場合は普通にインポートする
+    }
+
+    const result = await this.importUnityPackage(unityProjectPath, packagePath, logFile);
+    if (result.success) {
+      await fs.writeJSON(markerPath, { stamp }, { spaces: 0 });
+    }
+    return result;
+  }
+
   private async importUnityPackage(projectPath: string, packagePath: string, logFile: string): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       const args = [
         '-batchmode',
         '-nographics',
         '-quit',
+        // ターゲットを指定しないと Standalone 向けにインポートされ、
+        // 本ビルドで Android 用に丸ごと再インポートされてしまう
+        '-buildTarget', 'Android',
         '-projectPath', this.normalizeOsPath(projectPath),
         '-importPackage', this.normalizeOsPath(packagePath),
         '-logFile', this.normalizeOsPath(logFile),
@@ -817,13 +1309,18 @@ export class UnityBuilder extends EventEmitter {
         if (code === 0) {
           resolve({ success: true });
         } else {
-          // エラーメッセージをログから取得
-          let errorMsg = stderr.trim() || stdout.trim() || `Unity package import failed with exit code ${code}`;
-          // 最初の100文字のみを返す（冗長なログを避けるため）
-          if (errorMsg.length > 200) {
-            errorMsg = errorMsg.substring(0, 200) + '...';
-          }
-          resolve({ success: false, error: errorMsg });
+          // Unity の stdout/stderr は起動時の設定ダンプで埋まっていて、失敗理由はまず入っていない。
+          // 実際の原因（コンパイルエラー等）は -logFile の中にあるので、そちらを優先して抜き出す。
+          void this.extractUnityFailureReason(logFile).then((fromLog) => {
+            let errorMsg = fromLog
+              || stderr.trim()
+              || stdout.trim()
+              || `Unity package import failed with exit code ${code}`;
+            if (errorMsg.length > 600) {
+              errorMsg = errorMsg.substring(0, 600) + '...';
+            }
+            resolve({ success: false, error: errorMsg });
+          });
         }
       });
 
@@ -832,6 +1329,40 @@ export class UnityBuilder extends EventEmitter {
         resolve({ success: false, error: err.message });
       });
     });
+  }
+
+  /**
+   * Unity のログファイルから「本当の失敗理由」を拾う。
+   *
+   * batchmode の Unity は、スクリプトのコンパイルが1件でも通らないと、
+   * 何をしようとしていたか（パッケージのインポートでもビルドでも）に関係なく落ちる。
+   * その理由は stdout ではなくログファイルにしか出ないため、ここで探して呼び出し側に返す。
+   */
+  private async extractUnityFailureReason(logFile: string): Promise<string | null> {
+    let content: string;
+    try {
+      content = await fs.readFile(logFile, 'utf-8');
+    } catch {
+      return null;
+    }
+
+    // C# のコンパイルエラー（同じ行が何度も出るので重複を潰す）
+    const compileErrors = Array.from(
+      new Set((content.match(/^.*?\(\d+,\d+\): error [A-Z]+\d+: .*$/gm) ?? []).map((l) => l.trim())),
+    );
+    if (compileErrors.length > 0) {
+      const head = compileErrors.slice(0, 5).join('\n');
+      const rest = compileErrors.length > 5 ? `\n(他 ${compileErrors.length - 5} 件)` : '';
+      return `Unity script compilation failed:\n${head}${rest}\nFull log: ${logFile}`;
+    }
+
+    // それ以外の代表的な失敗（ライセンス等）
+    const known = content.match(/^.*(No valid Unity Editor license found|Failed to activate|Aborting batchmode due to failure).*$/m);
+    if (known) {
+      return `${known[0].trim()}\nFull log: ${logFile}`;
+    }
+
+    return null;
   }
 
   /**
@@ -1064,14 +1595,35 @@ export class UnityBuilder extends EventEmitter {
       this.emit('log', '[Arsist] scripts.json exported');
     }
 
+    // 前回ビルドで出力した json のうち、今回出力しなかったものを消す
+    // （dataflow/scripts を削除したのに Unity 側に残り続けるのを防ぐ）
+    const expectedGeneratedFiles = new Set([
+      'manifest.json',
+      'scenes.json',
+      'ui_layouts.json',
+      ...(dataFlowData ? ['dataflow.json'] : []),
+      ...(config.scriptsData ? ['scripts.json'] : []),
+    ]);
+    for (const entry of await fs.readdir(dataDir)) {
+      if (entry.endsWith('.meta')) continue;
+      if (expectedGeneratedFiles.has(entry)) continue;
+      if (!entry.endsWith('.json')) continue;
+      await fs.remove(path.join(dataDir, entry)).catch(() => {});
+      await fs.remove(path.join(dataDir, `${entry}.meta`)).catch(() => {});
+    }
+
     // Arsistプロジェクト内AssetsをUnityプロジェクトにコピー（実アセットとしてUnityに取り込ませる）
     if (config.sourceProjectPath) {
       const sourceAssets = path.join(config.sourceProjectPath, 'Assets');
       if (await fs.pathExists(sourceAssets)) {
         const destAssets = path.join(unityProjectPath, 'Assets', 'ArsistProjectAssets');
-        await fs.ensureDir(destAssets);
-        await fs.copy(sourceAssets, destAssets, { overwrite: true });
-        this.emit('log', '[Arsist] Project Assets copied into Unity (Assets/ArsistProjectAssets)');
+        // mirror: エディタ側で削除したアセットが Unity 側に残り続けないようにする。
+        // Unity が生成した .meta は syncDirectory 側で保護されるので GUID は維持される。
+        const sync = await this.syncDirectory(sourceAssets, destAssets, { prune: 'mirror' });
+        this.emit(
+          'log',
+          `[Arsist] Project Assets synced into Unity (Assets/ArsistProjectAssets): ${sync.copied} updated, ${sync.removed} removed`,
+        );
       } else {
         this.emit('log', `[Arsist] Project Assets folder not found: ${sourceAssets}`);
       }
@@ -1098,7 +1650,7 @@ export class UnityBuilder extends EventEmitter {
       if (await fs.pathExists(manifestPatch)) {
         const destManifest = path.join(unityProjectPath, 'Assets', 'Plugins', 'Android', 'AndroidManifest.xml');
         await fs.ensureDir(path.dirname(destManifest));
-        await fs.copy(manifestPatch, destManifest, { overwrite: true });
+        await fs.copy(manifestPatch, destManifest, { overwrite: true, preserveTimestamps: true });
         this.emit('log', '[Arsist] Applied AndroidManifest patch');
         break;
       }
@@ -1117,7 +1669,10 @@ export class UnityBuilder extends EventEmitter {
         const entries = await fs.readdir(scriptsPatch);
         const csFiles = entries.filter((f) => f.endsWith('.cs'));
         for (const file of csFiles) {
-          await fs.copy(path.join(scriptsPatch, file), path.join(destScripts, file), { overwrite: true });
+          await fs.copy(path.join(scriptsPatch, file), path.join(destScripts, file), {
+            overwrite: true,
+            preserveTimestamps: true,
+          });
         }
         if (csFiles.length > 0) {
           this.emit('log', '[Arsist] Applied editor scripts patch');
@@ -1130,7 +1685,7 @@ export class UnityBuilder extends EventEmitter {
     const packagesPatch = path.join(adapterDir, 'Packages');
     if (await fs.pathExists(packagesPatch)) {
       const destPackages = path.join(unityProjectPath, 'Packages');
-      await fs.copy(packagesPatch, destPackages, { overwrite: true });
+      await fs.copy(packagesPatch, destPackages, { overwrite: true, preserveTimestamps: true });
       this.emit('log', '[Arsist] Applied packages patch');
     }
 
@@ -1193,7 +1748,11 @@ export class UnityBuilder extends EventEmitter {
 
     const destDir = path.join(unityProjectPath, 'Packages', 'com.xreal.xr');
     await fs.ensureDir(path.dirname(destDir));
-    await fs.copy(sdkSourceDir, destDir, { overwrite: true });
+    // 差分同期。以前は毎回 overwrite フルコピーしていたため、SDK 835ファイル分の
+    // mtime が更新され Unity が全部再インポートしていた。
+    // Unity が読まない `Samples~` / `Tools~` / `Marker~` は syncDirectory 側で除外される。
+    const sync = await this.syncDirectory(sdkSourceDir, destDir, { prune: 'mirror' });
+    this.emit('log', `[Arsist] XREAL SDK synced: ${sync.copied} file(s) updated, ${sync.removed} removed`);
 
     const manifestPath = path.join(unityProjectPath, 'Packages', 'manifest.json');
     if (!await fs.pathExists(manifestPath)) {
@@ -1226,10 +1785,136 @@ export class UnityBuilder extends EventEmitter {
     setIfMissing('com.unity.modules.uielements', '1.0.0');
     setIfMissing('com.unity.modules.xr', '1.0.0');
     setIfMissing('com.unity.modules.audio', '1.0.0');
-    // Legacy UI: Unity 2022 では 1.0.0（2.0.0 は Unity 6 以降）
-    setIfMissing('com.unity.ugui', '1.0.0');
-    // TextMeshPro
-    setIfMissing('com.unity.textmeshpro', '3.0.6');
+    // uGUI / TextMeshPro は Unity バージョンで構成が違うため専用ヘルパで解決する
+    // （Unity 6 では TextMeshPro が com.unity.ugui 2.0.0 に統合されている）
+    this.applyUnityUiDependencies(deps);
+  }
+
+  /**
+   * Linux エディタでコンパイルが通らない Meta XR SDK の箇所に当てるパッチ。
+   *
+   * Meta XR SDK Core 85.0.0 の `Editor/MetaXRSimulator/Installer.cs` は
+   * `#if UNITY_EDITOR_WIN / #elif UNITY_EDITOR_OSX` しか持たず、Linux では
+   * `downloadedInstallerPath` がどの分岐でも宣言されないため CS0103 になる。
+   * これは MetaXRSimulatorCore.Editor アセンブリ全体のコンパイルを失敗させ、
+   * その時点で Unity のバッチ処理（UniVRM インポートやビルド）ごと止まる。
+   *
+   * Meta XR Simulator 自体が Linux 非対応なので、変数は使われない。
+   * 「宣言だけ足してコンパイルを通す」のが最小の修正になる。
+   *
+   * 将来 Meta 側が修正したら正規表現がマッチしなくなり、自動的に何もしなくなる。
+   */
+  private static readonly QUEST_CORE_LINUX_PATCHES: Array<{
+    file: string;
+    find: RegExp;
+    replace: string;
+    reason: string;
+  }> = [
+    {
+      file: 'package/Editor/MetaXRSimulator/Installer.cs',
+      // #elif UNITY_EDITOR_OSX ... .dmg"); の直後の #endif の前に #else を差し込む
+      find: /(#elif UNITY_EDITOR_OSX[\s\S]*?meta_xr_simulator\.dmg"\);[ \t]*\r?\n)(#endif)/,
+      replace:
+        '$1#else\n' +
+        '            // [Arsist patch] Linux 用の分岐が無く downloadedInstallerPath が未定義になる (CS0103)。\n' +
+        '            // Meta XR Simulator は Linux 非対応で値は使われないが、コンパイルを通すため宣言する。\n' +
+        '            var downloadedInstallerPath =\n' +
+        '                            Path.Combine(XRSimConstants.DownloadFolderPath, "meta_xr_simulator.bin");\n' +
+        '$2',
+      reason: 'CS0103: downloadedInstallerPath is not defined on Linux editors',
+    },
+  ];
+
+  /** パッチ内容を変えたらこの版数を上げる（キャッシュを作り直させるため）。 */
+  private static readonly QUEST_CORE_PATCH_VERSION = 1;
+
+  /**
+   * Packages/ に置くべき Meta XR SDK Core の tgz を返す。
+   * Linux 以外、またはパッチ不要なら元の tgz をそのまま返す。
+   */
+  private async resolveQuestCoreTgz(sourceTgz: string, unityProjectPath: string): Promise<string> {
+    if (process.platform !== 'linux') return sourceTgz;
+    if (UnityBuilder.QUEST_CORE_LINUX_PATCHES.length === 0) return sourceTgz;
+
+    const cacheDir = path.join(unityProjectPath, '.arsist-quest-sdk-patch');
+    const patchedTgz = path.join(cacheDir, path.basename(sourceTgz));
+    const stampFile = path.join(cacheDir, 'stamp.json');
+    const stamp = `${this.stampOf(await fs.stat(sourceTgz))}:v${UnityBuilder.QUEST_CORE_PATCH_VERSION}`;
+
+    // 同じ入力から作ったものが残っていれば使い回す（展開+再圧縮は数秒かかる）
+    try {
+      const existing = await fs.readJSON(stampFile);
+      if (existing?.stamp === stamp && await fs.pathExists(patchedTgz)) {
+        this.emit('log', '[Arsist] Using cached Linux-patched Quest SDK core package');
+        return patchedTgz;
+      }
+    } catch {
+      // キャッシュ無し／壊れている場合は作り直す
+    }
+
+    const workDir = path.join(cacheDir, 'work');
+    await fs.remove(workDir);
+    await fs.ensureDir(workDir);
+
+    try {
+      this.emit('log', '[Arsist] Patching Quest SDK core package for Linux editor...');
+      await this.runTar(['-xzf', sourceTgz, '-C', workDir]);
+
+      const applied: string[] = [];
+      for (const patch of UnityBuilder.QUEST_CORE_LINUX_PATCHES) {
+        const target = path.join(workDir, patch.file);
+        if (!await fs.pathExists(target)) {
+          this.emit('log', `[Arsist] Quest SDK patch skipped (file not in package): ${patch.file}`);
+          continue;
+        }
+        const before = await fs.readFile(target, 'utf-8');
+        if (before.includes('[Arsist patch]')) {
+          applied.push(`${patch.file} (already patched)`);
+          continue;
+        }
+        const after = before.replace(patch.find, patch.replace);
+        if (after === before) {
+          // Meta 側が直したか、構造が変わった。黙って通すと原因不明のビルド失敗になるので必ず出す。
+          this.emit('log',
+            `[Arsist] Quest SDK patch did not match (${patch.file}). ` +
+            `If the build fails with "${patch.reason}", this patch needs updating.`);
+          continue;
+        }
+        await fs.writeFile(target, after, 'utf-8');
+        applied.push(patch.file);
+      }
+
+      if (applied.length === 0) {
+        this.emit('log', '[Arsist] No Quest SDK patches applied; using the original package');
+        await fs.remove(workDir);
+        return sourceTgz;
+      }
+
+      await this.runTar(['-czf', patchedTgz, '-C', workDir, 'package']);
+      await fs.writeJSON(stampFile, { stamp, applied }, { spaces: 0 });
+      this.emit('log', `[Arsist] Quest SDK core patched for Linux: ${applied.join(', ')}`);
+      return patchedTgz;
+    } catch (e) {
+      // パッチに失敗しても元の tgz でビルドを続ける（そこで落ちれば元の症状に戻るだけ）
+      this.emit('log', `[Arsist] Quest SDK patch failed, falling back to the original package: ${e instanceof Error ? e.message : String(e)}`);
+      return sourceTgz;
+    } finally {
+      await fs.remove(workDir).catch(() => { /* ignore */ });
+    }
+  }
+
+  /** tar をサブプロセスで実行する（Linux 限定の処理なので tar の存在を前提にしてよい）。 */
+  private runTar(args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn('tar', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      proc.stderr?.on('data', (d) => { stderr += d.toString(); });
+      proc.on('error', (err) => reject(err));
+      proc.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`tar ${args[0]} failed (exit ${code}): ${stderr.trim().slice(0, 300)}`));
+      });
+    });
   }
 
   private async integrateQuestSdk(unityProjectPath: string): Promise<void> {
@@ -1254,9 +1939,23 @@ export class UnityBuilder extends EventEmitter {
     const copiedPackages: Array<{ id: string; fileName: string }> = [];
 
     const copyTgzToPackages = async (packageId: string, fileName: string) => {
-      const source = path.join(questSdkDir, fileName);
+      // Linux では Meta XR SDK Core にコンパイルが通らない箇所があるため、
+      // パッチ済みの派生 tgz に差し替える（sdk/ 側は書き換えない）
+      const source = packageId === 'com.meta.xr.sdk.core'
+        ? await this.resolveQuestCoreTgz(path.join(questSdkDir, fileName), unityProjectPath)
+        : path.join(questSdkDir, fileName);
       const destination = path.join(packagesDir, fileName);
-      await fs.copy(source, destination, { overwrite: true });
+      // tgz の mtime が変わると Unity が tarball を展開し直すので、変化が無ければ触らない
+      const sourceStamp = this.stampOf(await fs.stat(source));
+      let destStamp: string | null = null;
+      try {
+        destStamp = this.stampOf(await fs.stat(destination));
+      } catch {
+        destStamp = null;
+      }
+      if (destStamp !== sourceStamp) {
+        await fs.copy(source, destination, { overwrite: true, preserveTimestamps: true });
+      }
       copiedPackages.push({ id: packageId, fileName });
     };
 
@@ -1302,14 +2001,14 @@ export class UnityBuilder extends EventEmitter {
 
     if (await fs.pathExists(sampleAssetsXr)) {
       const destAssetsXr = path.join(unityProjectPath, 'Assets', 'XR');
-      await fs.copy(sampleAssetsXr, destAssetsXr, { overwrite: true });
+      await this.syncDirectory(sampleAssetsXr, destAssetsXr);
     }
 
     const copySettingIfExists = async (fileName: string) => {
       const src = path.join(sampleProjectSettings, fileName);
       const dst = path.join(unityProjectPath, 'ProjectSettings', fileName);
       if (await fs.pathExists(src)) {
-        await fs.copy(src, dst, { overwrite: true });
+        await fs.copy(src, dst, { overwrite: true, preserveTimestamps: true });
       }
     };
 
@@ -1862,6 +2561,10 @@ export class UnityBuilder extends EventEmitter {
         const isLicensingMessage = (text: string) => this.isLicensingNoise(text);
 
         const pickBestError = (errors: string[]) => {
+          // 0) Arsist 自身が出した失敗理由（最も具体的）
+          const arsistFailure = errors.find((e) => /^\[Arsist\]\s*Build failed:/i.test(e));
+          if (arsistFailure) return arsistFailure;
+
           // 1) コンパイルエラー
           const csError = errors.find((e) => /error\s+CS\d+/i.test(e));
           if (csError) return csError;
@@ -2030,6 +2733,32 @@ export class UnityBuilder extends EventEmitter {
     return null;
   }
 
+  /**
+   * エラー行と、それに続くインデントされた本文をまとめて1つのメッセージにする。
+   *
+   * Gradle/AGP は原因を次の行にインデントで書く:
+   *     [:nr_loader:] .../AndroidManifest.xml Error:
+   *         Namespace 'nrsdk.pack' is used in multiple modules and/or libraries: ...
+   * 行単位で拾うと "... Error:" だけがUIに出て、肝心の原因が消えてしまう。
+   */
+  private collectErrorMessage(lines: string[], startIndex: number): { message: string; nextIndex: number } {
+    const MAX_CONTINUATION_LINES = 3;
+    const parts = [lines[startIndex].trim()];
+    let index = startIndex;
+
+    for (let j = startIndex + 1; j < lines.length && parts.length <= MAX_CONTINUATION_LINES; j++) {
+      const raw = lines[j];
+      // インデントされた非空行だけを継続行とみなす
+      if (!raw || !/^[ \t]/.test(raw) || !raw.trim()) break;
+      // スタックトレースは原因説明ではないので取り込まない
+      if (/^\s*at\s/.test(raw)) break;
+      parts.push(raw.trim());
+      index = j;
+    }
+
+    return { message: parts.join(' '), nextIndex: index };
+  }
+
   private async readUnityLogIssues(logFile: string): Promise<{ errors: string[]; warnings: string[] }> {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -2041,12 +2770,21 @@ export class UnityBuilder extends EventEmitter {
     try {
       const content = await fs.readFile(logFile, 'utf-8');
       const lines = content.split(/\r?\n/);
-      for (const line of lines) {
-        const t = line.trim();
+      for (let i = 0; i < lines.length; i++) {
+        const t = lines[i].trim();
         if (!t) continue;
 
         if (/Scripts have compiler errors\./i.test(t)) {
           errors.push(t);
+          continue;
+        }
+
+        // ArsistBuildPipeline が自分で catch して出す失敗。「何が起きたか」が
+        // 一番具体的に書かれているので、error という語が無くても必ず拾う。
+        if (/^\[Arsist\]\s*Build failed:/i.test(t)) {
+          const { message, nextIndex } = this.collectErrorMessage(lines, i);
+          errors.push(message);
+          i = nextIndex;
           continue;
         }
 
@@ -2057,7 +2795,9 @@ export class UnityBuilder extends EventEmitter {
         // Unity/CSC は "error CSxxxx" のように小文字になることがある
         // ただし "ValidationExceptions.json" のようなファイル名もあるため、Exception 判定はコロン付きに限定する
         if (/(^|\s)error(\s|:)/i.test(t) || (/Exception\s*:/i.test(t) && !this.isLicensingNoise(t)) || /BuildFailedException\s*:/i.test(t)) {
-          errors.push(t);
+          const { message, nextIndex } = this.collectErrorMessage(lines, i);
+          errors.push(message);
+          i = nextIndex;
           continue;
         }
 

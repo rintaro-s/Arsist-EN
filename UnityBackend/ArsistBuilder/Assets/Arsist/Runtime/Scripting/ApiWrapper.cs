@@ -5,6 +5,7 @@
 using System.Collections;
 using Jint;
 using Jint.Native;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -16,6 +17,9 @@ namespace Arsist.Runtime.Scripting
     [UnityEngine.Scripting.Preserve]
     public class ApiWrapper
     {
+        // LLM 呼び出し等、単純な取得より遅くなりがちなリクエストも通るように少し余裕を持たせる。
+        private const int TimeoutSeconds = 30;
+
         private readonly Engine _engine;
 
         public ApiWrapper(Engine engine)
@@ -30,12 +34,22 @@ namespace Arsist.Runtime.Scripting
         [UnityEngine.Scripting.Preserve]
         public void get(string url, JsValue callback)
         {
+            get(url, null, callback);
+        }
+
+        /// <summary>
+        /// api.get(url, headersJson, callback) — ヘッダー付き版。
+        /// headersJson は {"Authorization": "Bearer xxx"} のようなフラットなJSONオブジェクト。null/空文字なら省略可。
+        /// </summary>
+        [UnityEngine.Scripting.Preserve]
+        public void get(string url, string headersJson, JsValue callback)
+        {
             if (CoroutineRunner.Instance == null)
             {
                 Debug.LogError("[Arsist] CoroutineRunner not found. Cannot execute api.get.");
                 return;
             }
-            CoroutineRunner.Instance.StartCoroutine(GetCoroutine(url, callback));
+            CoroutineRunner.Instance.StartCoroutine(GetCoroutine(url, headersJson, callback));
         }
 
         /// <summary>
@@ -44,19 +58,49 @@ namespace Arsist.Runtime.Scripting
         [UnityEngine.Scripting.Preserve]
         public void post(string url, string bodyJson, JsValue callback)
         {
+            post(url, bodyJson, null, callback);
+        }
+
+        /// <summary>
+        /// api.post(url, bodyJson, headersJson, callback) — ヘッダー付き版。
+        /// Kimi/OpenAI互換APIの Authorization: Bearer ヘッダーなどはこちらを使う:
+        ///   api.post(url, JSON.stringify(body), JSON.stringify({Authorization: "Bearer " + key}), cb)
+        /// </summary>
+        [UnityEngine.Scripting.Preserve]
+        public void post(string url, string bodyJson, string headersJson, JsValue callback)
+        {
             if (CoroutineRunner.Instance == null)
             {
                 Debug.LogError("[Arsist] CoroutineRunner not found. Cannot execute api.post.");
                 return;
             }
-            CoroutineRunner.Instance.StartCoroutine(PostCoroutine(url, bodyJson, callback));
+            CoroutineRunner.Instance.StartCoroutine(PostCoroutine(url, bodyJson, headersJson, callback));
         }
 
-        private IEnumerator GetCoroutine(string url, JsValue callback)
+        /// <summary>{"Key":"Value",...} 形式の JSON をヘッダーとして適用する。壊れたJSONは無視して続行する。</summary>
+        private static void ApplyHeaders(UnityWebRequest req, string headersJson)
+        {
+            if (string.IsNullOrWhiteSpace(headersJson)) return;
+            try
+            {
+                var obj = JObject.Parse(headersJson);
+                foreach (var prop in obj.Properties())
+                {
+                    req.SetRequestHeader(prop.Name, prop.Value?.ToString() ?? "");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[Arsist] api: invalid headersJson, ignoring headers: {ex.Message}");
+            }
+        }
+
+        private IEnumerator GetCoroutine(string url, string headersJson, JsValue callback)
         {
             Debug.Log($"[Arsist] api.get request: {url}");
             using var req = UnityWebRequest.Get(url);
-            req.timeout = 10;
+            ApplyHeaders(req, headersJson);
+            req.timeout = TimeoutSeconds;
             yield return req.SendWebRequest();
 
             if (req.result == UnityWebRequest.Result.Success)
@@ -71,7 +115,7 @@ namespace Arsist.Runtime.Scripting
             }
         }
 
-        private IEnumerator PostCoroutine(string url, string bodyJson, JsValue callback)
+        private IEnumerator PostCoroutine(string url, string bodyJson, string headersJson, JsValue callback)
         {
             Debug.Log($"[Arsist] api.post request: {url}");
             var data = System.Text.Encoding.UTF8.GetBytes(bodyJson);
@@ -79,7 +123,8 @@ namespace Arsist.Runtime.Scripting
             req.uploadHandler = new UploadHandlerRaw(data);
             req.downloadHandler = new DownloadHandlerBuffer();
             req.SetRequestHeader("Content-Type", "application/json");
-            req.timeout = 10;
+            ApplyHeaders(req, headersJson);
+            req.timeout = TimeoutSeconds;
             yield return req.SendWebRequest();
 
             if (req.result == UnityWebRequest.Result.Success)

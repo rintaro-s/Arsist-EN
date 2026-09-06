@@ -26,6 +26,7 @@ import json
 import time
 import threading
 import uuid
+import os
 from typing import Optional, Any, Dict, List
 import argparse
 
@@ -369,18 +370,32 @@ if __name__ == "__main__":
 
 
 def main():
+    # 既定値は環境変数から解決し、ハードコードした IP/ポート/パスワードに依存しない。
+    #   ARSIST_DEVICE_IP / ARSIST_DEVICE_PORT / ARSIST_DEVICE_PASSWORD
+    default_ip = os.environ.get("ARSIST_DEVICE_IP", "localhost")
+    default_port = int(os.environ.get("ARSIST_DEVICE_PORT", "8765"))
+    default_password = os.environ.get("ARSIST_DEVICE_PASSWORD", "")
+
     parser = argparse.ArgumentParser(description="Arsist Remote Control")
-    parser.add_argument("--device", default="192.168.0.24", help="Device IP address")
+    parser.add_argument("--device", default=default_ip,
+                        help="Device IP address (env: ARSIST_DEVICE_IP, default: localhost)")
+    parser.add_argument("--port", type=int, default=default_port,
+                        help="WebSocket port (env: ARSIST_DEVICE_PORT, default: 8765)")
     parser.add_argument("--demo", action="store_true", help="Run adaptive demo")
     parser.add_argument("--list-ids", action="store_true", help="List VRM IDs")
     parser.add_argument("--avatar-id", default="avatar", help="Target avatar ID")
     parser.add_argument("--generate-sample", action="store_true", help="Generate sample script")
-    parser.add_argument("--password", default="0000", help="Authentication password (default: 0000)")
+    parser.add_argument("--password", default=default_password,
+                        help="Authentication password (env: ARSIST_DEVICE_PASSWORD; empty = no auth)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    
+
     args = parser.parse_args()
-    
-    ctrl = ArsistControl(args.device, password=args.password, verbose=args.verbose)
+
+    if not args.password:
+        print("[warn] No authentication password set (--password / ARSIST_DEVICE_PASSWORD). "
+              "Connecting without auth.")
+
+    ctrl = ArsistControl(args.device, port=args.port, password=args.password, verbose=args.verbose)
     if not ctrl.connect():
         print("Failed to connect to device")
         return

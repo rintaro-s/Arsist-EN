@@ -2,8 +2,9 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import type { UIElement } from '../../../shared/types';
 import { useDataValue } from '../../stores/dataStoreContext';
-import { 
-  Type, 
+import { useT } from '../../i18n';
+import {
+  Type,
   Square, 
   Image, 
   ToggleLeft, 
@@ -12,7 +13,8 @@ import {
 } from 'lucide-react';
 
 export function UICanvas() {
-  const { 
+  const t = useT();
+  const {
     project, 
     projectPath,
     currentUILayoutId, 
@@ -27,10 +29,10 @@ export function UICanvas() {
   const floating = project?.arSettings?.floatingScreen;
   const layoutScope = currentLayout?.scope || 'uhd';
   const modeLabel = presentationMode === 'head_locked_hud'
-    ? 'Head-Locked HUD'
+    ? t('uiCanvas.modeHeadLocked')
     : presentationMode === 'floating_screen'
-      ? 'Floating Screen'
-      : 'World Anchored UI';
+      ? t('uiCanvas.modeFloating')
+      : t('uiCanvas.modeWorldAnchored');
   const canvasSize = layoutScope === 'surface'
     ? { width: 1024, height: 1024 }
     : { width: 1920, height: 1080 };
@@ -81,16 +83,16 @@ export function UICanvas() {
     <div className="w-full h-full flex flex-col overflow-hidden">
       {/* UI Toolbar */}
       <div className="h-10 bg-arsist-surface border-b border-arsist-border flex items-center px-4 gap-2">
-        <span className="text-xs text-arsist-muted mr-2">Add element:</span>
-        <ToolButton icon={<Square size={16} />} label="Panel" onClick={() => handleAddElement('Panel')} />
-        <ToolButton icon={<Type size={16} />} label="Text" onClick={() => handleAddElement('Text')} />
-        <ToolButton icon={<MousePointer size={16} />} label="Button" onClick={() => handleAddElement('Button')} />
-        <ToolButton icon={<Image size={16} />} label="Image" onClick={() => handleAddElement('Image')} />
-        <ToolButton icon={<TextCursor size={16} />} label="Input" onClick={() => handleAddElement('Input')} />
-        <ToolButton icon={<ToggleLeft size={16} />} label="Slider" onClick={() => handleAddElement('Slider')} />
-        
+        <span className="text-xs text-arsist-muted mr-2">{t('uiCanvas.addElement')}</span>
+        <ToolButton icon={<Square size={16} />} label={t('uiCanvas.panel')} onClick={() => handleAddElement('Panel')} />
+        <ToolButton icon={<Type size={16} />} label={t('uiCanvas.text')} onClick={() => handleAddElement('Text')} />
+        <ToolButton icon={<MousePointer size={16} />} label={t('uiCanvas.button')} onClick={() => handleAddElement('Button')} />
+        <ToolButton icon={<Image size={16} />} label={t('uiCanvas.image')} onClick={() => handleAddElement('Image')} />
+        <ToolButton icon={<TextCursor size={16} />} label={t('uiCanvas.input')} onClick={() => handleAddElement('Input')} />
+        <ToolButton icon={<ToggleLeft size={16} />} label={t('uiCanvas.slider')} onClick={() => handleAddElement('Slider')} />
+
         <div className="ml-auto flex items-center gap-2 text-xs text-arsist-muted">
-          <span>Zoom: {Math.round(zoom * 100)}%</span>
+          <span>{t('uiCanvas.zoom')}: {Math.round(zoom * 100)}%</span>
         </div>
       </div>
 
@@ -122,7 +124,7 @@ export function UICanvas() {
             
             {/* Resolution label */}
             <div className="absolute top-2 left-2 text-xs text-arsist-muted bg-arsist-bg/80 px-2 py-1 rounded z-10">
-              {canvasSize.width} × {canvasSize.height} ({layoutScope === 'surface' ? 'Dynamic Surface' : 'UHD'}) · {modeLabel}
+              {canvasSize.width} × {canvasSize.height} ({layoutScope === 'surface' ? t('uiCanvas.dynamicSurface') : 'UHD'}) · {modeLabel}
               {presentationMode === 'floating_screen' && floating && (
                 <span> · {floating.width}m × {floating.height}m / {floating.distance}m</span>
               )}
@@ -179,8 +181,9 @@ export function UIElementRenderer({
   onSelect, 
   onUpdate,
   projectPath,
-  depth = 0 
+  depth = 0
 }: UIElementRendererProps) {
+  const t = useT();
   const isSelected = element.id === selectedId;
   const boundValue = useDataValue(element.bind?.key || '');
   
@@ -299,7 +302,7 @@ export function UIElementRenderer({
         return (
           <input
             type="text"
-            placeholder="Input field"
+            placeholder={t('uiCanvas.inputField')}
             className="w-full px-3 py-2 bg-arsist-bg/50 border border-arsist-primary/50 rounded text-white"
             style={{ fontSize: element.style.fontSize || 14 }}
             readOnly

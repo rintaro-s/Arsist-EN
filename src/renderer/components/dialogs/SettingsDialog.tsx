@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
-import { X, FolderOpen } from 'lucide-react';
+import { X, FolderOpen, Sun, Moon } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
+import { useI18n } from '../../i18n';
+import { useTheme } from '../../theme';
+import type { Lang } from '../../i18n';
 
 interface SettingsDialogProps {
   onClose: () => void;
 }
 
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
+  const { t, lang, setLang } = useI18n();
+  const { theme, setTheme } = useTheme();
   const {
     leftPanelWidth,
     rightPanelWidth,
@@ -276,18 +281,62 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal max-w-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header flex items-center justify-between">
-          <span>Settings</span>
+          <span>{t('common.settings')}</span>
           <button onClick={onClose} className="btn-icon">
             <X size={18} />
           </button>
         </div>
 
         <div className="modal-body overflow-y-auto max-h-[70vh] space-y-6">
+          {/* Appearance: language + theme */}
           <section>
-            <h3 className="text-xs font-medium text-arsist-accent mb-3">Unity Settings</h3>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">{t('settings.appearance')}</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="input-label">{t('common.language')}</label>
+                <div className="flex gap-1 bg-arsist-hover rounded-md p-0.5">
+                  {(['ja', 'en'] as Lang[]).map((l) => (
+                    <button
+                      key={l}
+                      onClick={() => setLang(l)}
+                      className={`flex-1 px-3 py-1.5 rounded text-sm transition-colors ${
+                        lang === l ? 'bg-arsist-active text-arsist-accent' : 'text-arsist-muted hover:text-arsist-text'
+                      }`}
+                    >
+                      {l === 'ja' ? '日本語' : 'English'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="input-label">{t('common.theme')}</label>
+                <div className="flex gap-1 bg-arsist-hover rounded-md p-0.5">
+                  <button
+                    onClick={() => setTheme('dark')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors ${
+                      theme === 'dark' ? 'bg-arsist-active text-arsist-accent' : 'text-arsist-muted hover:text-arsist-text'
+                    }`}
+                  >
+                    <Moon size={14} /> {t('common.themeDark')}
+                  </button>
+                  <button
+                    onClick={() => setTheme('light')}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors ${
+                      theme === 'light' ? 'bg-arsist-active text-arsist-accent' : 'text-arsist-muted hover:text-arsist-text'
+                    }`}
+                  >
+                    <Sun size={14} /> {t('common.themeLight')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">{t('settings.unitySettings')}</h3>
             <div className="space-y-3">
               <div>
-                <label className="input-label">Unity Path</label>
+                <label className="input-label">{t('settings.unityPath')}</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -300,19 +349,19 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     <FolderOpen size={16} />
                   </button>
                   <button onClick={handleDetectUnityPath} className="btn btn-secondary" disabled={detectingUnity}>
-                    Auto-Detect
+                    {t('settings.autoDetect')}
                   </button>
                 </div>
                 {versionDetected && (
-                  <p className="text-xs text-arsist-success mt-1">Detected: {versionDetected}</p>
+                  <p className="text-xs text-arsist-success mt-1">{t('settings.detected', { version: versionDetected })}</p>
                 )}
                 <p className="text-xs text-arsist-muted mt-1">
                   Linux: typically <span className="font-mono">.../Editor/Unity</span>, Windows: <span className="font-mono">.../Editor/Unity.exe</span>
                 </p>
 
                 {unityCandidates.length > 0 && (
-                  <div className="mt-2 p-2 bg-arsist-bg border border-arsist-border rounded">
-                    <div className="text-[10px] text-arsist-muted mb-1">Detected candidates (click to set)</div>
+                  <div className="mt-2 p-2 bg-arsist-hover rounded-md">
+                    <div className="text-[10px] text-arsist-muted mb-1">{t('settings.candidates')}</div>
                     <div className="space-y-1">
                       {unityCandidates.map((p) => (
                         <button
@@ -339,7 +388,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 )}
 
                 <div>
-                  <label className="input-label">Unity License File (.ulf)</label>
+                  <label className="input-label">{t('settings.licenseFile')}</label>
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -359,7 +408,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               </div>
 
               <div>
-                <label className="input-label">Required Unity Version</label>
+                <label className="input-label">{t('settings.requiredUnityVersion')}</label>
                 <input
                   type="text"
                   value={unityVersion}
@@ -368,14 +417,14 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   placeholder="2022.3.20f1"
                 />
                 <p className="text-xs text-arsist-muted mt-1">
-                  Builds will only run on this version or higher
+                  {t('settings.versionHint')}
                 </p>
               </div>
             </div>
           </section>
 
           <section>
-            <h3 className="text-xs font-medium text-arsist-accent mb-3">SDK Directory</h3>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">{t('settings.sdkDirectory')}</h3>
             <div className="space-y-2 text-xs">
               <div className="text-arsist-muted">
                 Root directory containing SDK files (<span className="font-mono">com.xreal.xr/</span>, <span className="font-mono">quest/</span>, <span className="font-mono">nupkg/</span>, etc.).
@@ -394,7 +443,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 </button>
                 {sdkDir && (
                   <button onClick={() => setSdkDir('')} className="btn btn-ghost text-xs">
-                    Clear
+                    {t('common.clear')}
                   </button>
                 )}
               </div>
@@ -402,18 +451,18 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           </section>
 
           <section>
-            <h3 className="text-xs font-medium text-arsist-accent mb-3">SDK（XREAL）</h3>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">{t('settings.sdkXreal')}</h3>
             <div className="space-y-2 text-xs">
               <div className="text-arsist-muted">
                 Place XREAL SDK (UPM package) at
                 <span className="font-mono"> sdk/com.xreal.xr/package </span>
                 in repository root.
               </div>
-              <div className="p-2 bg-arsist-bg border border-arsist-border rounded">
+              <div className="p-2 bg-arsist-hover rounded-md">
                 <div className="flex items-center justify-between">
-                  <div className="text-[10px] text-arsist-muted">Detection Status</div>
+                  <div className="text-[10px] text-arsist-muted">{t('settings.detectionStatus')}</div>
                   <div className={xrealSdkStatus?.exists ? 'text-arsist-success' : 'text-arsist-error'}>
-                    {xrealSdkStatus?.exists ? 'OK' : 'Not Found'}
+                    {xrealSdkStatus?.exists ? t('settings.ok') : t('settings.notFound')}
                   </div>
                 </div>
                 <div className="mt-1 text-[10px] text-arsist-muted">package.json</div>
@@ -437,18 +486,18 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           </section>
 
           <section>
-            <h3 className="text-xs font-medium text-arsist-accent mb-3">SDK（Quest）</h3>
+            <h3 className="text-xs font-medium text-arsist-accent mb-3">{t('settings.sdkQuest')}</h3>
             <div className="space-y-2 text-xs">
               <div className="text-arsist-muted">
                 Place Quest SDK at
                 <span className="font-mono"> sdk/quest </span>
                 directory.
               </div>
-              <div className="p-2 bg-arsist-bg border border-arsist-border rounded">
+              <div className="p-2 bg-arsist-hover rounded-md">
                 <div className="flex items-center justify-between">
-                  <div className="text-[10px] text-arsist-muted">Detection Status (Core)</div>
+                  <div className="text-[10px] text-arsist-muted">{t('settings.detectionStatusCore')}</div>
                   <div className={questSdkStatus?.exists ? 'text-arsist-success' : 'text-arsist-error'}>
-                    {questSdkStatus?.exists ? 'OK' : 'Not Found'}
+                    {questSdkStatus?.exists ? t('settings.ok') : t('settings.notFound')}
                   </div>
                 </div>
                 <div className="mt-1 text-[10px] text-arsist-muted">SDK Location</div>
@@ -477,17 +526,17 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
           {bundledDeps.length > 0 && (
             <section>
-              <h3 className="text-xs font-medium text-arsist-accent mb-3">Bundled Dependencies (sdk/)</h3>
+              <h3 className="text-xs font-medium text-arsist-accent mb-3">{t('settings.bundledDeps')}</h3>
               <div className="space-y-1">
                 {bundledDeps.map((dep) => (
-                  <div key={dep.name} className="p-2 bg-arsist-bg border border-arsist-border rounded flex items-center justify-between">
+                  <div key={dep.name} className="p-2 bg-arsist-hover rounded-md flex items-center justify-between">
                     <div className="min-w-0">
                       <div className="text-[11px] text-arsist-text font-medium">{dep.name}</div>
                       <div className="text-[10px] text-arsist-muted">{dep.description}</div>
                       <div className="font-mono text-[10px] text-arsist-muted truncate">{dep.path}</div>
                     </div>
                     <div className={`text-[10px] shrink-0 ml-2 ${dep.exists ? 'text-arsist-success' : 'text-arsist-error'}`}>
-                      {dep.exists ? 'OK' : 'Not Found'}
+                      {dep.exists ? t('settings.ok') : t('settings.notFound')}
                     </div>
                   </div>
                 ))}
@@ -496,9 +545,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           )}
 
           <section>
-            <h3 className="text-xs font-medium text-arsist-primary mb-3">Build Settings</h3>
+            <h3 className="text-xs font-medium text-arsist-primary mb-3">{t('settings.buildSettings')}</h3>
             <div>
-              <label className="input-label">Default Output Directory</label>
+              <label className="input-label">{t('settings.defaultOutputDir')}</label>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -515,10 +564,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           </section>
 
           <section>
-            <h3 className="text-xs font-medium text-arsist-warning mb-3">Layout Settings</h3>
+            <h3 className="text-xs font-medium text-arsist-warning mb-3">{t('settings.layoutSettings')}</h3>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="input-label">Left Panel Width</label>
+                <label className="input-label">{t('settings.leftPanelWidth')}</label>
                 <input
                   type="number"
                   value={leftPanelWidth}
@@ -529,7 +578,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 />
               </div>
               <div>
-                <label className="input-label">Right Panel Width</label>
+                <label className="input-label">{t('settings.rightPanelWidth')}</label>
                 <input
                   type="number"
                   value={rightPanelWidth}
@@ -540,7 +589,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 />
               </div>
               <div>
-                <label className="input-label">Bottom Panel Height</label>
+                <label className="input-label">{t('settings.bottomPanelHeight')}</label>
                 <input
                   type="number"
                   value={bottomPanelHeight}
@@ -553,15 +602,15 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             </div>
             <div className="mt-3">
               <button onClick={handleResetLayout} className="btn btn-ghost text-xs">
-                Reset Layout
+                {t('settings.resetLayout')}
               </button>
             </div>
           </section>
         </div>
 
         <div className="modal-footer flex justify-end gap-2">
-          <button onClick={onClose} className="btn btn-ghost">Cancel</button>
-          <button onClick={handleSave} className="btn btn-success">Save</button>
+          <button onClick={onClose} className="btn btn-ghost">{t('common.cancel')}</button>
+          <button onClick={handleSave} className="btn btn-success">{t('common.save')}</button>
         </div>
       </div>
     </div>

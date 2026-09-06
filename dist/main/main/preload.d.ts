@@ -59,6 +59,9 @@ declare const electronAPI: {
         maximize: () => Promise<any>;
         close: () => Promise<any>;
     };
+    app: {
+        setLanguage: (lang: "en" | "ja") => Promise<any>;
+    };
     menu: {
         onNewProject: (callback: () => void) => void;
         onSave: (callback: () => void) => void;

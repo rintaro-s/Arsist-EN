@@ -65,6 +65,7 @@ namespace Arsist.Builder
                 // Phase 1: シーン生成
                 Debug.Log("[Arsist] Phase 1: Generating scenes...");
                 EnsureUILayerExists();
+                EnsureHudLayerExists();
                 GenerateScenes();
 
                 // Phase 2: UI生成（StreamingAssetsへのコピーのみ。Canvas生成はPhase 1で完了）
@@ -124,11 +125,35 @@ namespace Arsist.Builder
             }
         }
 
+        /// <summary>
+        /// 常時表示HUD専用のレイヤー名。
+        ///
+        /// HUD は専用カメラ（clearFlags=Depth / depth=100）で最前面に描くため、
+        /// メインカメラの cullingMask から外す必要がある。ここで "UI" をそのまま
+        /// 使ってしまうと、ワールド配置の UI Surface（3D空間に置いた Canvas）まで
+        /// メインカメラから消えて「常に手前に浮く」壊れ方をするので、HUD だけを
+        /// 別レイヤーに隔離する。
+        /// </summary>
+        private const string HUD_LAYER_NAME = "ArsistHUD";
+
         private static void EnsureUILayerExists()
+        {
+            EnsureLayerExists("UI", preferredIndex: 5);
+        }
+
+        private static void EnsureHudLayerExists()
+        {
+            EnsureLayerExists(HUD_LAYER_NAME, preferredIndex: -1);
+        }
+
+        /// <summary>
+        /// 指定名のレイヤーを TagManager に確保する。既にあれば何もしない。
+        /// </summary>
+        private static void EnsureLayerExists(string layerName, int preferredIndex)
         {
             try
             {
-                if (LayerMask.NameToLayer("UI") != -1)
+                if (LayerMask.NameToLayer(layerName) != -1)
                 {
                     return;
                 }
@@ -138,13 +163,15 @@ namespace Arsist.Builder
                 var layersProp = tagManager.FindProperty("layers");
 
                 int targetIndex = -1;
-                // Prefer slot 5 if empty, otherwise first empty user layer
-                if (layersProp.GetArrayElementAtIndex(5).stringValue == string.Empty)
+                if (preferredIndex >= 0
+                    && preferredIndex < layersProp.arraySize
+                    && layersProp.GetArrayElementAtIndex(preferredIndex).stringValue == string.Empty)
                 {
-                    targetIndex = 5;
+                    targetIndex = preferredIndex;
                 }
                 else
                 {
+                    // ユーザーレイヤーは 8 番以降
                     for (int i = 8; i < layersProp.arraySize; i++)
                     {
                         if (layersProp.GetArrayElementAtIndex(i).stringValue == string.Empty)
@@ -157,18 +184,18 @@ namespace Arsist.Builder
 
                 if (targetIndex >= 0)
                 {
-                    layersProp.GetArrayElementAtIndex(targetIndex).stringValue = "UI";
+                    layersProp.GetArrayElementAtIndex(targetIndex).stringValue = layerName;
                     tagManager.ApplyModifiedPropertiesWithoutUndo();
-                    Debug.Log($"[Arsist] Added UI layer at index {targetIndex}");
+                    Debug.Log($"[Arsist] Added '{layerName}' layer at index {targetIndex}");
                 }
                 else
                 {
-                    Debug.LogWarning("[Arsist] No available layer slot for UI. UI camera will fallback to render all layers.");
+                    Debug.LogWarning($"[Arsist] No available layer slot for '{layerName}'. Falling back to the UI layer.");
                 }
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[Arsist] Failed to ensure UI layer exists: {e.Message}");
+                Debug.LogWarning($"[Arsist] Failed to ensure '{layerName}' layer exists: {e.Message}");
             }
         }
 
@@ -1009,11 +1036,21 @@ namespace Arsist.Builder
                     }
                 }
                 
-                if (File.Exists(packagePath))
+                // 作業プロジェクトを再利用するようになったため、既にフォントが入っていれば
+                // .unitypackage の再インポート（数十秒〜のコスト）はスキップする。
+                var alreadyImported =
+                    AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>("Assets/Resources/LiberationSans SDF.asset") != null
+                    || AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>("Assets/JKG-M_3 SDF.asset") != null;
+
+                if (alreadyImported)
+                {
+                    Debug.Log("[Arsist] TMP font asset already present, skipping package import");
+                }
+                else if (File.Exists(packagePath))
                 {
                     Debug.Log($"[Arsist] Found TMP font package at: {packagePath}");
                     Debug.Log("[Arsist] Importing JKG-M3.unitypackage...");
-                    
+
                     try
                     {
                         AssetDatabase.ImportPackage(packagePath, false);
@@ -1766,7 +1803,8 @@ namespace Arsist.Builder
             //  ├── AR Session
             //  └── XREAL Session Config
 
-            bool isXreal = !string.IsNullOrEmpty(_targetDevice) && _targetDevice.ToLower().Contains("xreal");
+            bool isXreal = IsXrealTargetDevice();
+            var backgroundMode = GetBackgroundMode();
 
             GameObject rigRoot = null;
             if (isXreal)
@@ -1776,6 +1814,9 @@ namespace Arsist.Builder
 
             // XR Origin プレハブを探してインスタンス化（将来: アダプター側prefabに差し替え）
             GameObject xrOrigin = null;
+            GameObject cameraOffsetGO = null;
+            Camera originCamera = null;
+
             var xrOriginPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Arsist/Prefabs/XROrigin.prefab");
             if (xrOriginPrefab != null)
             {
@@ -1788,26 +1829,26 @@ namespace Arsist.Builder
                 xrOrigin = new GameObject("XR Origin");
                 xrOrigin.transform.position = Vector3.zero;
 
-                var cameraOffset = new GameObject("Camera Offset");
-                cameraOffset.transform.SetParent(xrOrigin.transform);
-                cameraOffset.transform.localPosition = Vector3.zero;
+                cameraOffsetGO = new GameObject("Camera Offset");
+                cameraOffsetGO.transform.SetParent(xrOrigin.transform);
+                cameraOffsetGO.transform.localPosition = Vector3.zero;
 
                 var mainCamera = new GameObject("Main Camera");
                 mainCamera.tag = "MainCamera";
-                mainCamera.transform.SetParent(cameraOffset.transform);
+                mainCamera.transform.SetParent(cameraOffsetGO.transform);
                 mainCamera.transform.localPosition = Vector3.zero;
                 mainCamera.transform.localRotation = Quaternion.identity;
-                
+
                 var cam = mainCamera.AddComponent<Camera>();
                 // Critical: Configure camera for proper WorldSpace Canvas rendering
-                cam.clearFlags = CameraClearFlags.SolidColor;
-                cam.backgroundColor = new Color(0f, 0f, 0f, 0f); // Transparent for AR
-                cam.cullingMask = -1; // Everything
+                // clearFlags / backgroundColor は背景モードに応じて後段で設定する
+                cam.cullingMask = -1; // Everything（HUDレイヤーだけ後で除外する）
                 cam.depth = 0; // Main camera renders first
                 cam.nearClipPlane = 0.1f;
                 cam.farClipPlane = 1000f;
-                
+
                 mainCamera.AddComponent<AudioListener>();
+                originCamera = cam;
 
                 // Best-effort: TrackedPoseDriver (Input System or Legacy)
                 TryAddComponentByTypeName(mainCamera, "UnityEngine.InputSystem.XR.TrackedPoseDriver");
@@ -1820,8 +1861,13 @@ namespace Arsist.Builder
             }
 
             // Best-effort: XR Origin component (Core Utils)
-            TryAddComponentByTypeName(xrOrigin, "Unity.XR.CoreUtils.XROrigin");
-            TryAddComponentByTypeName(xrOrigin, "UnityEngine.XR.Interaction.Toolkit.XROrigin");
+            var xrOriginComponent = TryAddComponentByTypeName(xrOrigin, "Unity.XR.CoreUtils.XROrigin");
+
+            // XROrigin の Camera / CameraFloorOffsetObject を必ず結線する。
+            // XREAL SDK は XREALUtility.MainCamera => FindAnyObjectByType<XROrigin>().Camera
+            // 経由でしかカメラを取得しないため、ここが null だと XREALSessionManager などの
+            // 安定化ロジックが無言で動かなくなる。
+            ConfigureXROriginComponent(xrOriginComponent, xrOrigin, originCamera, cameraOffsetGO);
 
             // Add Arsist runtime setup (exists in this project)
             var setupType = Type.GetType("Arsist.Runtime.XROriginSetup, Assembly-CSharp");
@@ -1830,23 +1876,51 @@ namespace Arsist.Builder
                 xrOrigin.AddComponent(setupType);
             }
 
+            // XROrigin.prefab 経由の場合 originCamera が未取得なので、ここで拾い直す。
+            if (originCamera == null)
+            {
+                originCamera = xrOrigin.GetComponentInChildren<Camera>(true);
+            }
+
+            // 背景（カメラの clear）は「ビルド時のカメラ設定」と「ランタイムの XROriginSetup」の
+            // 両方で決まる。片方だけ直すともう片方に上書きされるため、必ず両方に流す。
+            ApplyBackgroundToCamera(originCamera, backgroundMode);
+            ApplyBackgroundToXROriginSetup(xrOrigin, setupType, backgroundMode);
+
+            var (interactionControllerRay, interactionHandTracking) = GetInteractionSettings();
+            ApplyInteractionSettings(xrOrigin, setupType, interactionControllerRay, interactionHandTracking);
+
             if (IsQuestTargetDevice())
             {
                 EnsureQuestOvrManager(xrOrigin);
+                ConfigureQuestPassthrough(xrOrigin, originCamera, backgroundMode);
+                if (ProjectHasInputElement())
+                {
+                    ConfigureQuestSystemKeyboard(xrOrigin);
+                }
             }
 
-            // AR Session (AR Foundation) - XREAL のみ必要
+            // XREAL: AR Session + SDK の安定化コンポーネントをリグに付与
             if (rigRoot != null)
             {
+                // AR Session (AR Foundation) — XREAL の AR 機能に必要。
+                // SDK のサンプルAR シーンは ARSession に加えて ARInputManager を持つ。
                 var arSessionGO = new GameObject("AR Session");
                 arSessionGO.transform.SetParent(rigRoot.transform);
                 TryAddComponentByTypeName(arSessionGO, "UnityEngine.XR.ARFoundation.ARSession");
+                TryAddComponentByTypeName(arSessionGO, "UnityEngine.XR.ARFoundation.ARInputManager");
 
-                var xrealConfigGO = new GameObject("XREAL Session Config");
-                xrealConfigGO.transform.SetParent(rigRoot.transform);
-                // SDK固有型は不明なため、名前候補でbest-effort追加
-                TryAddComponentByTypeName(xrealConfigGO, "XREALSessionConfig");
-                TryAddComponentByTypeName(xrealConfigGO, "XrealSessionConfig");
+                // 実 XREAL SDK(Unity.XR.XREAL) の安定化コンポーネントをリグルートへ付与する。
+                // 以前は存在しない架空型 "XREALSessionConfig"/"XrealSessionConfig" を best-effort
+                // 追加していたが、SDK にそのような型は無く、何の効果も無かった。
+                //   XREALSessionManager           : pause/resume・DoF切替を跨いだカメラポーズの
+                //                                    キャッシュ、Recenter、Menu 処理（手組みリグに
+                //                                    欠けていた「安定化ロジック」の本体）。
+                //   XREALTrackingModeChangeListener: DoF切替中に暗転マスクを出して「飛び」を隠す。
+                // これらは SingletonMonoBehaviour 等で自己初期化するため、bare 追加でも中核機能は働く。
+                // SDK 未導入環境では TryAddComponentByTypeName が best-effort でスキップする。
+                TryAddComponentByTypeName(rigRoot, "Unity.XR.XREAL.XREALSessionManager");
+                TryAddComponentByTypeName(rigRoot, "Unity.XR.XREAL.XREALTrackingModeChangeListener");
             }
 
             Debug.Log(isXreal ? "[Arsist] XREAL_Rig created" : "[Arsist] XR Origin created");
@@ -2006,55 +2080,34 @@ namespace Arsist.Builder
                 }
                 else
                 {
-                    Debug.LogError($"[Arsist] ❌ UI layout root is NULL for layoutId: {layoutId}");
-                    Debug.LogError($"[Arsist] Layout JSON: {layout.ToString()}");
-                    // Create fallback UI
-                    CreateFallbackUI(canvasGO.transform, layoutId);
+                    // 黙ってプレースホルダを出すと「ビルドは成功したのに実機で何も出ない」に
+                    // なって原因が追えないため、ビルドごと失敗させる。
+                    throw new Exception(
+                        $"Canvas '{name}': UI layout '{layoutId}' has no root element. " +
+                        "Re-create the layout in the UI editor.");
                 }
             }
             else
             {
-                Debug.LogError($"[Arsist] ❌ UI layout NOT FOUND in cache for layoutId: '{layoutId}'");
-                Debug.LogError($"[Arsist] Cache has {_uiLayoutCache?.Count ?? 0} layouts");
-                if (_uiLayoutCache != null)
-                {
-                    foreach (var key in _uiLayoutCache.Keys)
-                    {
-                        Debug.LogError($"[Arsist]   - Cache key: '{key}'");
-                    }
-                }
-                // Create fallback UI
-                CreateFallbackUI(canvasGO.transform, layoutId ?? "missing");
+                var known = _uiLayoutCache != null && _uiLayoutCache.Count > 0
+                    ? string.Join(", ", _uiLayoutCache.Keys)
+                    : "(none)";
+                var detail = string.IsNullOrEmpty(layoutId)
+                    ? "no UI layout is assigned (canvasSettings.layoutId is empty)"
+                    : $"UI layout '{layoutId}' does not exist";
+
+                // 以前はここでプレースホルダ（Fallback UI）を作ってビルドを続行していたが、
+                // 「ビルド成功 → 実機でプレースホルダだけ表示」となり原因が分からなかった。
+                // Electron 側でも同じ検証をしているので、ここに来るのは MCP 等で
+                // 直接 IR を書いた場合の保険。
+                throw new Exception(
+                    $"Canvas '{name}': {detail}. " +
+                    "Select the Canvas in the scene and pick a UI Layout under Canvas Settings. " +
+                    $"Known layout ids: {known}");
             }
             Debug.Log($"[Arsist] ========== CANVAS TEXT DEBUG END ==========");
             
             return root;
-        }
-
-        private static void CreateFallbackUI(Transform parent, string reason)
-        {
-            Debug.Log($"[Arsist] Creating fallback UI for reason: {reason}");
-            
-            var fallbackRoot = new JObject
-            {
-                ["id"] = Guid.NewGuid().ToString(),
-                ["type"] = "Text",
-                ["content"] = $"Fallback UI ({reason})",
-                ["layout"] = "Absolute",
-                ["style"] = new JObject
-                {
-                    ["width"] = 800,
-                    ["height"] = 200,
-                    ["top"] = 100,
-                    ["left"] = 100,
-                    ["fontSize"] = 96,
-                    ["color"] = "#FFFF00",
-                    ["textAlign"] = "center",
-                },
-                ["children"] = new JArray()
-            };
-            
-            CreateUIElement(fallbackRoot, parent);
         }
 
         private static string ImportModelAsAsset(string sourceAssetPath, string modelName)
@@ -2144,6 +2197,184 @@ ScriptedImporter:
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 指定レイヤーをカメラの cullingMask から外す。
+        /// HUD 専用カメラを併用する構成で、メインカメラが同じ HUD を二重に描くのを防ぐ。
+        /// (加算合成の透過ディスプレイでは二重描画が「UIだけ白く浮く」形で出る)
+        /// </summary>
+        private static void ExcludeLayerFromCamera(Camera camera, int layer)
+        {
+            if (camera == null || layer < 0) return;
+            var mask = 1 << layer;
+            if ((camera.cullingMask & mask) == 0) return;
+            camera.cullingMask &= ~mask;
+            Debug.Log($"[Arsist] Excluded layer {layer} from camera '{camera.name}' culling mask (HUD is drawn by the dedicated HUD camera)");
+        }
+
+        /// <summary>
+        /// UI レイヤーのインデックス。Unity 標準では 5 番が "UI"。
+        /// NameToLayer が -1 を返した場合に `1 &lt;&lt; -1` を作ってしまわないようにするためのガード。
+        /// </summary>
+        private static int GetUILayer()
+        {
+            var layer = LayerMask.NameToLayer("UI");
+            return layer >= 0 ? layer : 5;
+        }
+
+        /// <summary>
+        /// 常時表示HUDを描くレイヤー。専用レイヤーが確保できていればそれを、
+        /// 空きが無ければ UI レイヤーにフォールバックする。
+        /// </summary>
+        private static int GetHudLayer()
+        {
+            var layer = LayerMask.NameToLayer(HUD_LAYER_NAME);
+            return layer >= 0 ? layer : GetUILayer();
+        }
+
+        /// <summary>
+        /// HUD 専用レイヤーが確保できているか。
+        /// 確保できていない（=UI レイヤーと共用）ときにメインカメラから除外すると、
+        /// ワールド配置の UI まで見えなくなるため、除外してよいかの判定に使う。
+        /// </summary>
+        private static bool HasDedicatedHudLayer()
+        {
+            return LayerMask.NameToLayer(HUD_LAYER_NAME) >= 0;
+        }
+
+        /// <summary>
+        /// メインカメラから HUD レイヤーを外す。専用レイヤーが無い場合は何もしない
+        /// （外すとワールド配置の UI Surface まで消えてしまうため）。
+        /// </summary>
+        private static void ExcludeHudLayerFromMainCamera(Camera camera)
+        {
+            if (camera == null) return;
+            if (!HasDedicatedHudLayer())
+            {
+                Debug.LogWarning($"[Arsist] '{HUD_LAYER_NAME}' layer is unavailable; the main camera will also draw the HUD (it may look brighter on additive AR displays).");
+                return;
+            }
+            ExcludeLayerFromCamera(camera, GetHudLayer());
+        }
+
+        /// <summary>
+        /// XROrigin コンポーネント（Unity.XR.CoreUtils）に、カメラとカメラオフセットを結線する。
+        /// SDK のバージョン差に強いよう reflection で best-effort に設定する。
+        /// </summary>
+        private static void ConfigureXROriginComponent(
+            Component xrOriginComponent,
+            GameObject xrOriginGO,
+            Camera camera,
+            GameObject cameraOffset)
+        {
+            if (xrOriginComponent == null)
+            {
+                Debug.LogWarning("[Arsist] Unity.XR.CoreUtils.XROrigin not found. XREAL SDK will not be able to resolve the main camera.");
+                return;
+            }
+
+            // プレハブ経由で組んだ場合は引数が null なので、階層から解決する
+            if (camera == null)
+            {
+                camera = xrOriginGO.GetComponentInChildren<Camera>(true);
+            }
+            if (cameraOffset == null && camera != null)
+            {
+                var parent = camera.transform.parent;
+                cameraOffset = parent != null ? parent.gameObject : xrOriginGO;
+            }
+
+            if (camera == null)
+            {
+                Debug.LogWarning("[Arsist] No camera under XR Origin; cannot wire XROrigin.Camera.");
+                return;
+            }
+
+            var wiredCamera = TrySetMemberValue(xrOriginComponent, "Camera", camera);
+            var wiredOffset = TrySetMemberValue(xrOriginComponent, "CameraFloorOffsetObject", cameraOffset);
+
+            Debug.Log($"[Arsist] XROrigin wired (camera={wiredCamera}, floorOffset={wiredOffset}) -> {camera.name}");
+
+            PinSpawnViewpointToOrigin(xrOriginComponent);
+        }
+
+        /// <summary>
+        /// 「原点 = ユーザーの初期視点（スポーン時の視点）」という Arsist の座標系契約を、
+        /// 実機でも成立させる。
+        ///
+        /// XROrigin の既定は RequestedTrackingOriginMode = NotSpecified で、実際のモードは
+        /// デバイス任せになる。その結果:
+        ///   - Device モード（XREAL 等）: XROrigin が CameraYOffset(既定 1.1176m) を
+        ///     CameraFloorOffsetObject に適用するので、原点に置いたものが目線より約1.1m下に出る。
+        ///   - Floor モード（Quest 等）: オフセット0 + ポーズに実身長が乗るので、
+        ///     原点に置いたものが足元に出る。
+        /// どちらもエディタのビューポート（原点＝視点）と食い違い、しかもデバイスごとに違う。
+        ///
+        /// Device + CameraYOffset=0 に固定すると、セッション開始時のヘッド位置が
+        /// そのまま (0,0,0) になり、エディタの初期視点マーカーと一致する。
+        /// </summary>
+        private static void PinSpawnViewpointToOrigin(Component xrOriginComponent)
+        {
+            if (xrOriginComponent == null) return;
+
+            var modeType = xrOriginComponent.GetType().GetNestedType("TrackingOriginMode");
+            if (modeType == null || !modeType.IsEnum)
+            {
+                Debug.LogWarning("[Arsist] XROrigin.TrackingOriginMode not found; spawn viewpoint height is left to the device default.");
+                return;
+            }
+
+            var wiredMode = TrySetMemberValue(xrOriginComponent, "RequestedTrackingOriginMode", Enum.Parse(modeType, "Device"));
+            var wiredOffset = TrySetMemberValue(xrOriginComponent, "CameraYOffset", 0f);
+
+            Debug.Log($"[Arsist] Spawn viewpoint pinned to the origin (trackingOriginMode=Device:{wiredMode}, cameraYOffset=0:{wiredOffset})");
+        }
+
+        /// <summary>
+        /// プロパティ優先、無ければ同名/バッキングフィールドに値を設定する best-effort ヘルパー。
+        /// </summary>
+        private static bool TrySetMemberValue(object target, string memberName, object value)
+        {
+            if (target == null) return false;
+
+            try
+            {
+                var type = target.GetType();
+
+                var property = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (property != null && property.CanWrite && property.PropertyType.IsInstanceOfType(value))
+                {
+                    property.SetValue(target, value);
+                    if (target is UnityEngine.Object propertyOwner)
+                    {
+                        EditorUtility.SetDirty(propertyOwner);
+                    }
+                    return true;
+                }
+
+                // XROrigin は m_Camera / m_CameraFloorOffsetObject という SerializeField を持つ
+                var fieldNames = new[] { memberName, $"m_{memberName}", $"_{memberName}" };
+                foreach (var fieldName in fieldNames)
+                {
+                    var field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (field != null && field.FieldType.IsInstanceOfType(value))
+                    {
+                        field.SetValue(target, value);
+                        if (target is UnityEngine.Object unityObject)
+                        {
+                            EditorUtility.SetDirty(unityObject);
+                        }
+                        return true;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Failed to set {memberName}: {e.Message}");
+            }
+
+            return false;
         }
 
         private static Component TryAddComponentByTypeName(GameObject go, string fullTypeName)
@@ -2574,22 +2805,29 @@ ScriptedImporter:
                     uiCameraGO.transform.localPosition = Vector3.zero;
                     uiCameraGO.transform.localRotation = Quaternion.identity;
                     
+                    var hudLayer = GetHudLayer();
                     var uiCam = uiCameraGO.AddComponent<Camera>();
                     uiCam.clearFlags = CameraClearFlags.Depth; // Only clear depth, preserve color from main camera
-                    uiCam.cullingMask = 1 << LayerMask.NameToLayer("UI"); // Only render UI layer
+                    uiCam.cullingMask = 1 << hudLayer; // Only render the HUD layer
                     uiCam.depth = 100; // Render after main camera (depth 0)
                     uiCam.nearClipPlane = 0.01f;
                     uiCam.farClipPlane = 10f;
-                    
+                    // XR ではメインカメラと同じく両眼へ描画させる（未指定だと片眼/モノラルになりうる）
+                    uiCam.stereoTargetEye = StereoTargetEyeMask.Both;
+                    // AudioListener はシーンに1つだけ。メインカメラ側に付いているのでここでは追加しない。
+
+                    // メインカメラが HUD を描かないようにする（二重描画＝白浮きの防止）
+                    ExcludeHudLayerFromMainCamera(mainCam);
+
                     // Position Canvas as child of UI camera
                     canvasGO.transform.SetParent(uiCameraGO.transform, false);
                     rectTransform.localPosition = new Vector3(0f, 0f, Mathf.Max(0.3f, distance * 0.5f));
                     rectTransform.localRotation = Quaternion.identity;
-                    
-                    // Set Canvas and all children to UI layer
-                    canvasGO.layer = LayerMask.NameToLayer("UI");
-                    SetLayerRecursively(canvasGO, LayerMask.NameToLayer("UI"));
-                    
+
+                    // Set Canvas and all children to the HUD layer
+                    canvasGO.layer = hudLayer;
+                    SetLayerRecursively(canvasGO, hudLayer);
+
                     // Canvas uses the dedicated UI camera
                     canvas.worldCamera = uiCam;
                     canvas.planeDistance = rectTransform.localPosition.z;
@@ -2629,6 +2867,9 @@ ScriptedImporter:
                 {
                     CreateUIElement(root, canvasGO.transform);
                 }
+
+                // 生成後にもう一度そろえる（要素側の実装差でレイヤーがずれても Canvas と一致させる）
+                SetLayerRecursively(canvasGO, canvasGO.layer);
             }
 
             if (createdHudCount == 0)
@@ -2652,18 +2893,23 @@ ScriptedImporter:
             uiCameraGO.transform.localPosition = Vector3.zero;
             uiCameraGO.transform.localRotation = Quaternion.identity;
             
+            var hudLayer = GetHudLayer();
             var uiCam = uiCameraGO.AddComponent<Camera>();
             uiCam.clearFlags = CameraClearFlags.Depth;
-            uiCam.cullingMask = 1 << LayerMask.NameToLayer("UI");
+            uiCam.cullingMask = 1 << hudLayer;
             uiCam.depth = 100;
             uiCam.nearClipPlane = 0.01f;
             uiCam.farClipPlane = 10f;
+            uiCam.stereoTargetEye = StereoTargetEyeMask.Both;
+
+            // メインカメラが HUD を描かないようにする（二重描画＝白浮きの防止）
+            ExcludeHudLayerFromMainCamera(mainCam);
 
             var canvasGO = new GameObject("Canvas_FallbackHUD");
             canvasGO.transform.SetParent(uiCameraGO.transform, false);
             canvasGO.transform.localPosition = new Vector3(0f, 0f, 0.7f);
             canvasGO.transform.localRotation = Quaternion.identity;
-            canvasGO.layer = LayerMask.NameToLayer("UI");
+            canvasGO.layer = hudLayer;
 
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
@@ -2791,11 +3037,11 @@ ScriptedImporter:
             Debug.Log($"[Arsist] >> CreateUIElement: type={type}, id={elementId}");
             var go = new GameObject(type);
             go.transform.SetParent(parent, false);
-            
-            // FIX 13: Set UI layer on all elements
-            int uiLayer = LayerMask.NameToLayer("UI");
-            if (uiLayer < 0) uiLayer = 5;
-            go.layer = uiLayer;
+
+            // 親（Canvas または親要素）のレイヤーを継承する。
+            // ここで "UI" を決め打ちすると、HUD専用レイヤーに置いた Canvas の子だけが
+            // UI レイヤーに残り、Canvas と子が別々のカメラで描かれて崩れる。
+            go.layer = parent != null ? parent.gameObject.layer : GetUILayer();
 
             TryAttachUiBindingRegistry(go, elementData);
 
@@ -2925,8 +3171,8 @@ ScriptedImporter:
                         buttonImage.color = new Color(0.91f, 0.27f, 0.38f, 1f);
                     }
                     var button = go.AddComponent<UnityEngine.UI.Button>();
-                    
-                    go.AddComponent<BoxCollider>();
+
+                    SizeBoxColliderToRect(go, rectTransform);
                     TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistGazeTarget");
                     
                     var buttonTextGO = new GameObject("Text");
@@ -2994,6 +3240,90 @@ ScriptedImporter:
                         }
                     }
                     break;
+
+                case "Gauge":
+                    // 読み取り専用のバー表示。値は bind.key 経由で ArsistUIBinding が
+                    // フィルの fillAmount に反映する（下の bind ワイヤリングで自動的に付与される）。
+                    CreateFillBar(go, style, out _, interactive: false);
+                    break;
+
+                case "Slider":
+                    // 操作可能なバー。コントローラーレイ/ハンドトラッキングで掴んでいる間、
+                    // ArsistSliderTarget が指し先の位置からフィル量を更新する。
+                    var sliderFillImage = CreateFillBar(go, style, out _, interactive: true);
+                    SizeBoxColliderToRect(go, rectTransform);
+                    var sliderTarget = TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistSliderTarget");
+                    if (sliderTarget != null)
+                    {
+                        TrySetMemberValue(sliderTarget, "trackRect", rectTransform);
+                        TrySetMemberValue(sliderTarget, "fillImage", sliderFillImage);
+                    }
+                    break;
+
+                case "Input":
+                    // 文字入力。自前の仮想キーボードは作らず、選択時に Quest の
+                    // システムキーボード オーバーレイ (TouchScreenKeyboard) を呼ぶ
+                    // (ArsistSystemKeyboardTarget)。OS標準の入力方式（音声入力・予測変換・
+                    // 他言語含む）がそのまま使える。
+                    var inputBg = go.AddComponent<UnityEngine.UI.Image>();
+                    inputBg.color = TryParseColor(style?["backgroundColor"], out var inputBgColor)
+                        ? inputBgColor
+                        : new Color(1f, 1f, 1f, 0.08f);
+
+                    var inputField = go.AddComponent<TMP_InputField>();
+
+                    var textAreaGO = new GameObject("Text Area");
+                    textAreaGO.transform.SetParent(go.transform, false);
+                    var textAreaRect = textAreaGO.AddComponent<RectTransform>();
+                    textAreaRect.anchorMin = Vector2.zero;
+                    textAreaRect.anchorMax = Vector2.one;
+                    textAreaRect.offsetMin = new Vector2(10, 6);
+                    textAreaRect.offsetMax = new Vector2(-10, -6);
+                    textAreaGO.AddComponent<UnityEngine.UI.RectMask2D>();
+
+                    var placeholderGO = new GameObject("Placeholder");
+                    placeholderGO.transform.SetParent(textAreaGO.transform, false);
+                    var placeholderRect = placeholderGO.AddComponent<RectTransform>();
+                    placeholderRect.anchorMin = Vector2.zero;
+                    placeholderRect.anchorMax = Vector2.one;
+                    placeholderRect.offsetMin = Vector2.zero;
+                    placeholderRect.offsetMax = Vector2.zero;
+                    var placeholderText = placeholderGO.AddComponent<TextMeshProUGUI>();
+                    placeholderText.text = elementData["content"]?.ToString() ?? "Input";
+                    placeholderText.fontStyle = FontStyles.Italic;
+                    placeholderText.color = new Color(1f, 1f, 1f, 0.4f);
+                    placeholderText.fontSize = style?["fontSize"]?.Value<int>() ?? 60;
+                    placeholderText.raycastTarget = false;
+                    if (_defaultTmpFont != null) placeholderText.font = _defaultTmpFont;
+                    if (_defaultTmpMaterial != null) placeholderText.fontSharedMaterial = _defaultTmpMaterial;
+
+                    var inputContentGO = new GameObject("Text");
+                    inputContentGO.transform.SetParent(textAreaGO.transform, false);
+                    var inputContentRect = inputContentGO.AddComponent<RectTransform>();
+                    inputContentRect.anchorMin = Vector2.zero;
+                    inputContentRect.anchorMax = Vector2.one;
+                    inputContentRect.offsetMin = Vector2.zero;
+                    inputContentRect.offsetMax = Vector2.zero;
+                    var inputContentText = inputContentGO.AddComponent<TextMeshProUGUI>();
+                    inputContentText.color = TryParseColor(style?["color"], out var inputTextColor) ? inputTextColor : Color.white;
+                    inputContentText.fontSize = style?["fontSize"]?.Value<int>() ?? 60;
+                    inputContentText.raycastTarget = false;
+                    if (_defaultTmpFont != null) inputContentText.font = _defaultTmpFont;
+                    if (_defaultTmpMaterial != null) inputContentText.fontSharedMaterial = _defaultTmpMaterial;
+
+                    inputField.textViewport = textAreaRect;
+                    inputField.textComponent = inputContentText;
+                    inputField.placeholder = placeholderText;
+                    inputField.text = "";
+
+                    SizeBoxColliderToRect(go, rectTransform);
+                    TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistGazeTarget");
+                    var keyboardTarget = TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistSystemKeyboardTarget");
+                    if (keyboardTarget != null)
+                    {
+                        TrySetMemberValue(keyboardTarget, "textComponent", inputContentText);
+                    }
+                    break;
             }
 
             var bind = elementData["bind"] as JObject;
@@ -3001,14 +3331,36 @@ ScriptedImporter:
             var bindFormat = bind?["format"]?.ToString();
             if (!string.IsNullOrEmpty(bindKey))
             {
-                var bindingComp = TryAddComponentByTypeName(go, "Arsist.Runtime.UI.ArsistUIBinding");
-                if (bindingComp != null)
+                // Input は ArsistSystemKeyboardTarget 自身が表示更新 + store 書き戻しの両方を
+                // 担うので、読み取り専用の ArsistUIBinding は付けない（同じ子TMP_Textを取り合って
+                // 無駄な二重書きになるため）。
+                if (type != "Input")
                 {
-                    var t = bindingComp.GetType();
-                    var keyField = t.GetField("key");
-                    if (keyField != null) keyField.SetValue(bindingComp, bindKey);
-                    var formatField = t.GetField("format");
-                    if (formatField != null) formatField.SetValue(bindingComp, bindFormat);
+                    var bindingComp = TryAddComponentByTypeName(go, "Arsist.Runtime.UI.ArsistUIBinding");
+                    if (bindingComp != null)
+                    {
+                        var t = bindingComp.GetType();
+                        var keyField = t.GetField("key");
+                        if (keyField != null) keyField.SetValue(bindingComp, bindKey);
+                        var formatField = t.GetField("format");
+                        if (formatField != null) formatField.SetValue(bindingComp, bindFormat);
+                    }
+                }
+
+                // Slider はドラッグした値を bind.key に書き戻す（ArsistUIBinding は読み取り専用）
+                var sliderTargetType = FindType("Arsist.Runtime.Input.ArsistSliderTarget");
+                var sliderTargetComp = sliderTargetType != null ? go.GetComponent(sliderTargetType) : null;
+                if (sliderTargetComp != null)
+                {
+                    TrySetMemberValue(sliderTargetComp, "bindKey", bindKey);
+                }
+
+                // Input はキーボードで打った内容を bind.key に書き戻す
+                var keyboardTargetType = FindType("Arsist.Runtime.Input.ArsistSystemKeyboardTarget");
+                var keyboardTargetComp = keyboardTargetType != null ? go.GetComponent(keyboardTargetType) : null;
+                if (keyboardTargetComp != null)
+                {
+                    TrySetMemberValue(keyboardTargetComp, "bindKey", bindKey);
                 }
             }
 
@@ -3255,6 +3607,57 @@ ScriptedImporter:
             );
         }
 
+        /// <summary>
+        /// Button/Slider の当たり判定用 BoxCollider を、実際の RectTransform の矩形に合わせて張る。
+        /// 既定サイズ (1,1,1) のまま付けると、World Space Canvas のスケール（ピクセル→メートル）で
+        /// 矩形とサイズが合わず、指し先が正しく当たらない。
+        /// </summary>
+        private static void SizeBoxColliderToRect(GameObject go, RectTransform rectTransform)
+        {
+            // NOTE: UnityEngine.Object は「破棄済み/未取得」を偽装 null で表すため、
+            // C# の ?? / ?. は効かない（偽装 null が非 null と判定され、AddComponent が走らない）。
+            // Unity がオーバーロードした == を通す必要があるので、素直に if で書く。
+            var collider = go.GetComponent<BoxCollider>();
+            if (collider == null) collider = go.AddComponent<BoxCollider>();
+            var rect = rectTransform.rect;
+            collider.center = new Vector3(rect.center.x, rect.center.y, 0f);
+            collider.size = new Vector3(Mathf.Max(rect.width, 1f), Mathf.Max(rect.height, 1f), 2f);
+        }
+
+        /// <summary>
+        /// Slider / Gauge 共通の「トラック＋フィル」バー表示を作る。
+        /// Slider は ArsistSliderTarget が、Gauge は ArsistUIBinding（bind 経由）が
+        /// 返した fillImage.fillAmount を書き換える。
+        /// </summary>
+        private static UnityEngine.UI.Image CreateFillBar(GameObject go, JObject style, out RectTransform fillRect, bool interactive)
+        {
+            var track = go.AddComponent<UnityEngine.UI.Image>();
+            track.color = TryParseColor(style?["backgroundColor"], out var trackColor)
+                ? trackColor
+                : new Color(1f, 1f, 1f, 0.12f);
+
+            var fillGO = new GameObject("Fill");
+            fillGO.transform.SetParent(go.transform, false);
+            fillRect = fillGO.AddComponent<RectTransform>();
+            fillRect.anchorMin = Vector2.zero;
+            fillRect.anchorMax = Vector2.one;
+            fillRect.offsetMin = Vector2.zero;
+            fillRect.offsetMax = Vector2.zero;
+
+            var fillImage = fillGO.AddComponent<UnityEngine.UI.Image>();
+            fillImage.color = TryParseColor(style?["color"], out var fillColor)
+                ? fillColor
+                : (interactive ? new Color(0.35f, 0.75f, 1f, 1f) : new Color(0.30f, 0.75f, 0.35f, 1f));
+            fillImage.type = UnityEngine.UI.Image.Type.Filled;
+            fillImage.fillMethod = UnityEngine.UI.Image.FillMethod.Horizontal;
+            fillImage.fillOrigin = (int)UnityEngine.UI.Image.OriginHorizontal.Left;
+            fillImage.fillAmount = style?["initialValue"]?.Value<float?>() ?? 0.5f;
+            // フィル画像自体はレイキャストに反応させない（当たり判定は親の BoxCollider が持つ）
+            fillImage.raycastTarget = false;
+
+            return fillImage;
+        }
+
         private static bool TryParseColor(JToken token, out Color color)
         {
             color = Color.white;
@@ -3424,6 +3827,31 @@ ScriptedImporter:
                         "PatchAndroidManifest",
                         manifestPath
                     );
+                    // 背景モードに合わせてパススルー関連のマニフェスト宣言を出し入れする。
+                    // （Quest のマニフェストは基本 Meta SDK の OVRManifestPreprocessor が
+                    //   OVRProjectConfig から生成するため、テンプレートが無い場合は no-op）
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "ConfigurePassthrough",
+                        manifestPath,
+                        GetBackgroundMode() == BACKGROUND_PASSTHROUGH
+                    );
+                    // 操作方法にハンドトラッキングを選んだときだけパーミッション/メタデータを足す。
+                    var (_, handTrackingForManifest) = GetInteractionSettings();
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "ConfigureHandTracking",
+                        manifestPath,
+                        handTrackingForManifest
+                    );
+                    // Input要素（文字入力）を使っているプロジェクトだけ、
+                    // システムキーボード オーバーレイの機能宣言を足す。
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "ConfigureSystemKeyboard",
+                        manifestPath,
+                        ProjectHasInputElement()
+                    );
                 }
             }
             catch (Exception e)
@@ -3562,10 +3990,42 @@ ScriptedImporter:
                     {
                         problems.Add($"Failed to validate Graphics APIs: {e.Message}");
                     }
+
+                    // XREAL Loader が実際に有効化されているか（fail-loud）。
+                    // XREAL ビルドなのに XREAL Loader が Active Loaders に無いと、
+                    // 実行時にトラッキング/描画が起動せず「動くけど挙動がびみょい」原因になる。
+                    // SDK が導入済み（xrealSdkExists）なのに割当が失敗しているなら明示エラーにする。
+                    try
+                    {
+                        const string xrealLoaderTypeName = "Unity.XR.XREAL.XREALXRLoader";
+                        var generalSettings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+                        var manager = generalSettings != null ? generalSettings.Manager : null;
+                        if (generalSettings == null || manager == null)
+                        {
+                            problems.Add("XREAL build: XR General/Manager Settings (Android) are missing. XREAL Loader could not be configured.");
+                        }
+                        else
+                        {
+                            var hasXrealLoader = manager.activeLoaders != null && manager.activeLoaders.Any(l =>
+                                l != null && string.Equals(l.GetType().FullName, xrealLoaderTypeName, StringComparison.Ordinal));
+                            if (!hasXrealLoader)
+                            {
+                                problems.Add("XREAL build: XREAL Loader (Unity.XR.XREAL.XREALXRLoader) is not active in XR Plug-in Management (Android).");
+                            }
+                            if (!generalSettings.InitManagerOnStart)
+                            {
+                                problems.Add("XREAL build: 'Initialize XR on Startup' is disabled (Android). XR will not start automatically.");
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        problems.Add($"XREAL build: failed to validate XR loader configuration: {e.Message}");
+                    }
                 }
                 else
                 {
-                    Debug.LogWarning("[Arsist] XREAL SDK not installed. Skipping Graphics API validation.");
+                    Debug.LogWarning("[Arsist] XREAL SDK not installed. Skipping XREAL Graphics API / Loader validation (build will use generic XR).");
                 }
             }
 
@@ -4172,12 +4632,385 @@ ScriptedImporter:
             return normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
         }
 
+        /// <summary>ターゲットデバイスが XREAL 系かどうか（散在していた判定の共通化）。</summary>
+        private static bool IsXrealTargetDevice()
+        {
+            var normalizedTarget = (_targetDevice ?? string.Empty).Trim().ToLowerInvariant();
+            return normalizedTarget.Contains("xreal");
+        }
+
+        // ─────────────────────────────────────────
+        // 背景（カメラの clear）モード
+        // ─────────────────────────────────────────
+
+        private const string BACKGROUND_PASSTHROUGH = "passthrough";
+        private const string BACKGROUND_SKYBOX = "skybox";
+        private const string BACKGROUND_SOLID_COLOR = "solidcolor";
+
+        /// <summary>
+        /// arSettings.backgroundMode を正規化して返す。
+        ///
+        /// 背景を選べるのはビデオシースルー機（Quest）だけ。XREAL のような光学シースルー機は
+        /// 黒(RGB0)がハードウェア的にそのまま素通しになるため、Skybox や単色を選んでも
+        /// 「現実が隠れる」わけではなく、視界に色ムラが乗るだけの壊れ方をする。
+        /// よって XREAL では常に passthrough に固定する。
+        /// </summary>
+        private static string GetBackgroundMode()
+        {
+            var raw = _manifest?["arSettings"]?["backgroundMode"]?.ToString();
+
+            if (IsXrealTargetDevice())
+            {
+                if (!string.IsNullOrWhiteSpace(raw)
+                    && !string.Equals(raw.Trim(), BACKGROUND_PASSTHROUGH, StringComparison.OrdinalIgnoreCase))
+                {
+                    Debug.LogWarning(
+                        $"[Arsist] arSettings.backgroundMode='{raw}' is ignored on optical see-through glasses " +
+                        "(black is transparent in hardware); using passthrough.");
+                }
+                return BACKGROUND_PASSTHROUGH;
+            }
+
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return BACKGROUND_PASSTHROUGH;
+            }
+
+            var normalized = raw.Trim().ToLowerInvariant().Replace("_", "").Replace("-", "");
+            switch (normalized)
+            {
+                case BACKGROUND_SKYBOX:
+                    return BACKGROUND_SKYBOX;
+                case BACKGROUND_SOLID_COLOR:
+                case "solid":
+                case "color":
+                    return BACKGROUND_SOLID_COLOR;
+                case BACKGROUND_PASSTHROUGH:
+                case "mr":
+                    return BACKGROUND_PASSTHROUGH;
+                default:
+                    Debug.LogWarning($"[Arsist] Unknown arSettings.backgroundMode '{raw}'. Falling back to passthrough.");
+                    return BACKGROUND_PASSTHROUGH;
+            }
+        }
+
+        /// <summary>arSettings.backgroundColor (#RRGGBB) を読む。不正・未指定なら黒。</summary>
+        private static Color GetBackgroundColor()
+        {
+            var raw = _manifest?["arSettings"]?["backgroundColor"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(raw) && ColorUtility.TryParseHtmlString(raw.Trim(), out var parsed))
+            {
+                // VR 背景は不透過。alpha を落とすと Quest 側でパススルーが透けてしまう。
+                return new Color(parsed.r, parsed.g, parsed.b, 1f);
+            }
+            return Color.black;
+        }
+
+        /// <summary>メインカメラの clearFlags / backgroundColor を背景モードに合わせる。</summary>
+        private static void ApplyBackgroundToCamera(Camera cam, string backgroundMode)
+        {
+            if (cam == null)
+            {
+                Debug.LogWarning("[Arsist] Main camera not found; background mode not applied.");
+                return;
+            }
+
+            switch (backgroundMode)
+            {
+                case BACKGROUND_SKYBOX:
+                    EnsureSceneSkybox();
+                    cam.clearFlags = CameraClearFlags.Skybox;
+                    break;
+
+                case BACKGROUND_SOLID_COLOR:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    cam.backgroundColor = GetBackgroundColor();
+                    break;
+
+                default:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    // 光学シースルー(XREAL)は黒がそのまま透過。
+                    // Quest のパススルーも、アンダーレイ合成のために alpha=0 の黒でクリアする必要がある。
+                    cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                    break;
+            }
+
+            Debug.Log($"[Arsist] Background mode: {backgroundMode} (clearFlags={cam.clearFlags}, color={cam.backgroundColor})");
+        }
+
+        /// <summary>
+        /// 空シーン（NewSceneSetup.EmptyScene）には Skybox マテリアルが無いため、
+        /// Skybox 背景を選んだときだけ Unity 組み込みのデフォルト Skybox を割り当てる。
+        /// </summary>
+        private static void EnsureSceneSkybox()
+        {
+            if (RenderSettings.skybox != null) return;
+
+            var defaultSkybox = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Skybox.mat");
+            if (defaultSkybox == null)
+            {
+                Debug.LogWarning("[Arsist] Default-Skybox.mat not found; the skybox background will render black.");
+                return;
+            }
+
+            RenderSettings.skybox = defaultSkybox;
+            Debug.Log("[Arsist] Assigned Default-Skybox.mat to the scene (empty scenes have no skybox).");
+        }
+
+        /// <summary>
+        /// ランタイム側 (Arsist.Runtime.XROriginSetup) にも背景モードを流す。
+        ///
+        /// XROriginSetup.Awake() はカメラ設定を上書きするので、ここを合わせないと
+        /// ビルド時にどれを選んでも実機では必ず透過になる。
+        /// </summary>
+        private static void ApplyBackgroundToXROriginSetup(GameObject xrOrigin, Type setupType, string backgroundMode)
+        {
+            if (xrOrigin == null || setupType == null) return;
+
+            var setup = xrOrigin.GetComponent(setupType);
+            if (setup == null) return;
+
+            var modeType = setupType.GetNestedType("BackgroundMode");
+            if (modeType == null || !modeType.IsEnum)
+            {
+                Debug.LogWarning("[Arsist] XROriginSetup.BackgroundMode enum not found; runtime background may override the build-time setting.");
+                return;
+            }
+
+            string enumName;
+            switch (backgroundMode)
+            {
+                case BACKGROUND_SKYBOX: enumName = "Skybox"; break;
+                case BACKGROUND_SOLID_COLOR: enumName = "SolidColor"; break;
+                default: enumName = "Passthrough"; break;
+            }
+
+            var wiredMode = TrySetMemberValue(setup, "backgroundMode", Enum.Parse(modeType, enumName));
+            var wiredColor = TrySetMemberValue(setup, "backgroundColor", GetBackgroundColor());
+            Debug.Log($"[Arsist] XROriginSetup background wired (mode={wiredMode}, color={wiredColor})");
+        }
+
+        // ─────────────────────────────────────────
+        // 操作方法（コントローラーレイ / ハンドトラッキング）
+        // ─────────────────────────────────────────
+
+        /// <summary>
+        /// arSettings.interaction を読む。両方 false は「見るだけのアプリ」として正当な選択肢なので
+        /// ここではブロックしない（以前はビルドごと失敗させていたが、閲覧専用アプリは普通に成立する
+        /// ユースケースなので誤りだった）。
+        /// </summary>
+        private static (bool controllerRay, bool handTracking) GetInteractionSettings()
+        {
+            var node = _manifest?["arSettings"]?["interaction"];
+            var controllerRay = node?["controllerRay"]?.Value<bool?>() ?? true;
+            var handTracking = node?["handTracking"]?.Value<bool?>() ?? false;
+
+            if (!controllerRay && !handTracking)
+            {
+                Debug.Log("[Arsist] No interaction method enabled (controllerRay=false, handTracking=false). " +
+                           "Building a view-only app.");
+            }
+
+            if (handTracking && !IsQuestTargetDevice())
+            {
+                Debug.LogWarning(
+                    "[Arsist] arSettings.interaction.handTracking=true is ignored on this device " +
+                    "(hand tracking cameras only exist on Quest); controllerRay will still work.");
+                handTracking = false;
+            }
+
+            return (controllerRay, handTracking);
+        }
+
+        /// <summary>
+        /// UIレイアウトのどこかに Input 要素があるかを調べる。
+        /// システムキーボードの uses-feature 宣言を、使わないプロジェクトにまで足さないため
+        /// （使わない機能で対応端末を絞らない、という他の Configure* 系と同じ方針）。
+        /// </summary>
+        private static bool ProjectHasInputElement()
+        {
+            if (_uiLayoutCache == null) return false;
+            foreach (var layout in _uiLayoutCache.Values)
+            {
+                var root = layout?["root"] as JObject;
+                if (root != null && ContainsInputElement(root)) return true;
+            }
+            return false;
+        }
+
+        private static bool ContainsInputElement(JObject element)
+        {
+            if (element["type"]?.ToString() == "Input") return true;
+            if (element["children"] is JArray children)
+            {
+                foreach (var child in children)
+                {
+                    if (child is JObject childObj && ContainsInputElement(childObj)) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// XROriginSetup にコントローラーレイの有効/無効を流し、Quest なら
+        /// ハンドトラッキング操作コンポーネント (Arsist.Runtime.Input.ArsistHandInteraction) を付与する。
+        /// </summary>
+        private static void ApplyInteractionSettings(GameObject xrOrigin, Type setupType, bool controllerRay, bool handTracking)
+        {
+            if (xrOrigin == null) return;
+
+            if (setupType != null)
+            {
+                var setup = xrOrigin.GetComponent(setupType);
+                var wired = TrySetMemberValue(setup, "enableRayInteraction", controllerRay);
+                Debug.Log($"[Arsist] XROriginSetup controller-ray interaction: {controllerRay} (wired={wired})");
+            }
+
+            if (handTracking)
+            {
+                var handType = FindType("Arsist.Runtime.Input.ArsistHandInteraction, Assembly-CSharp")
+                    ?? FindTypeInLoadedAssemblies("Arsist.Runtime.Input.ArsistHandInteraction");
+                if (handType == null)
+                {
+                    Debug.LogWarning("[Arsist] ArsistHandInteraction script not found; hand tracking will not be added.");
+                    return;
+                }
+
+                if (xrOrigin.GetComponent(handType) == null)
+                {
+                    xrOrigin.AddComponent(handType);
+                }
+                Debug.Log("[Arsist] ArsistHandInteraction added (Quest hand-tracking pinch interaction).");
+
+                if (FindType("Unity.XR.Hands.XRHandSubsystem") == null
+                    && FindTypeInLoadedAssemblies("Unity.XR.Hands.XRHandSubsystem") == null)
+                {
+                    Debug.LogWarning(
+                        "[Arsist] com.unity.xr.hands package (Unity.XR.Hands.XRHandSubsystem) not found. " +
+                        "ArsistHandInteraction will compile to a no-op at runtime; install com.unity.xr.hands " +
+                        "and enable the OpenXR 'Hand Tracking Subsystem' feature for hand tracking to actually work.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Quest のパススルー合成 (OVRPassthroughLayer) をシーンに用意する。
+        ///
+        /// Quest はビデオシースルーなので、カメラを透明にしただけでは黒画面になる。
+        /// アンダーレイとして OVRPassthroughLayer を置いて初めて外カメラ映像が背景に出る。
+        /// VR 背景（Skybox / 単色）を選んだ場合は、逆にレイヤーが残っていると
+        /// 背景が現実で塗り潰されてしまうので無効化する。
+        /// </summary>
+        private static void ConfigureQuestPassthrough(GameObject xrOrigin, Camera cam, string backgroundMode)
+        {
+            var wantPassthrough = backgroundMode == BACKGROUND_PASSTHROUGH;
+
+            var layerType = FindType("OVRPassthroughLayer") ?? FindTypeInLoadedAssemblies("OVRPassthroughLayer");
+            if (layerType == null)
+            {
+                if (wantPassthrough)
+                {
+                    Debug.LogWarning("[Arsist] OVRPassthroughLayer type not found. Passthrough background will not work (is com.meta.xr.sdk.core installed?).");
+                }
+                return;
+            }
+
+            var host = cam != null ? cam.gameObject : xrOrigin;
+            if (host == null) return;
+
+            var existing = host.GetComponent(layerType);
+
+            if (!wantPassthrough)
+            {
+                if (existing != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(existing);
+                    Debug.Log($"[Arsist] Removed OVRPassthroughLayer (background mode = {backgroundMode}).");
+                }
+                return;
+            }
+
+            var layer = existing != null ? existing : host.AddComponent(layerType);
+
+            // Underlay = シーンの描画より奥にパススルー映像を合成する（＝背景になる）。
+            var overlayTypeField = layerType.GetField("overlayType", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (overlayTypeField != null && overlayTypeField.FieldType.IsEnum)
+            {
+                try
+                {
+                    overlayTypeField.SetValue(layer, Enum.Parse(overlayTypeField.FieldType, "Underlay"));
+                    EditorUtility.SetDirty(layer);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[Arsist] Failed to set OVRPassthroughLayer.overlayType to Underlay: {e.Message}");
+                }
+            }
+
+            TrySetMemberValue(layer, "textureOpacity", 1f);
+            TrySetMemberValue(layer, "hidden", false);
+
+            // OVRManager 側でも Insight Passthrough を有効にしておく（未設定だと実機で真っ黒になる）。
+            EnableInsightPassthroughOnOvrManager(xrOrigin);
+
+            Debug.Log($"[Arsist] OVRPassthroughLayer configured as Underlay on '{host.name}'.");
+        }
+
+        /// <summary>シーン内の OVRManager に isInsightPassthroughEnabled を立てる。</summary>
+        private static void EnableInsightPassthroughOnOvrManager(GameObject xrOrigin)
+        {
+            var ovrManagerType = FindType("OVRManager") ?? FindTypeInLoadedAssemblies("OVRManager");
+            if (ovrManagerType == null) return;
+
+            // EnsureQuestOvrManager が付けた直後のものを最優先で拾う（非アクティブでも取れる）。
+            var manager = xrOrigin != null ? xrOrigin.GetComponentInChildren(ovrManagerType, true) : null;
+            if (manager == null) manager = FindComponentInLoadedScenes(ovrManagerType);
+
+            if (manager == null)
+            {
+                // ここに来たらパススルーは実機で出ない。黙って進むと原因が追えないので必ず出す。
+                Debug.LogWarning(
+                    "[Arsist] No OVRManager found in the scene; insight passthrough cannot be enabled " +
+                    "(the app will show a black background instead of passthrough).");
+                return;
+            }
+
+            var wired = TrySetMemberValue(manager, "isInsightPassthroughEnabled", true);
+            Debug.Log($"[Arsist] OVRManager.isInsightPassthroughEnabled = true on '{manager.gameObject.name}' (wired={wired})");
+        }
+
         private static void ApplyQuestBuildBootstrap()
         {
             if (!IsQuestTargetDevice()) return;
 
             Debug.Log("[Arsist] Phase 3.15: Applying Quest build bootstrap...");
             ConfigureOculusProjectConfigForQuest();
+        }
+
+        /// <summary>
+        /// 「今開いているシーンに実在するコンポーネント」だけを探す。
+        ///
+        /// Resources.FindObjectsOfTypeAll はプレハブアセット側のコンポーネントも返してしまうため、
+        /// シーンへの追加要否の判定には使えない。非アクティブなオブジェクトも対象にしたいので
+        /// FindObjectsByType(..., FindObjectsInactive.Include, ...) を使う。
+        /// </summary>
+        private static Component FindComponentInLoadedScenes(Type componentType)
+        {
+            if (componentType == null) return null;
+
+            var found = UnityEngine.Object.FindObjectsByType(
+                componentType, FindObjectsInactive.Include, FindObjectsSortMode.None);
+            if (found == null) return null;
+
+            foreach (var obj in found)
+            {
+                var component = obj as Component;
+                if (component == null) continue;
+                if (EditorUtility.IsPersistent(component)) continue;      // プレハブ等のアセット
+                if (!component.gameObject.scene.IsValid()) continue;      // シーンに属さない一時オブジェクト
+                return component;
+            }
+            return null;
         }
 
         private static void EnsureQuestOvrManager(GameObject xrOrigin)
@@ -4189,10 +5022,15 @@ ScriptedImporter:
                 return;
             }
 
-            var existingManagers = Resources.FindObjectsOfTypeAll(ovrManagerType);
-            if (existingManagers != null && existingManagers.Length > 0)
+            // NOTE: Resources.FindObjectsOfTypeAll は「読み込み済みの全オブジェクト」を返すので、
+            // Meta XR SDK のプレハブ (OVRCameraRig 等) に付いている OVRManager までヒットする。
+            // それを「シーンにある」と誤判定すると OVRManager がシーンに入らず、
+            // 実機で OVRPlugin が初期化されない＝パススルーが出ない（背景が黒のまま）。
+            // 判定は必ず「シーンに実在するインスタンスか」で行う。
+            var existing = FindComponentInLoadedScenes(ovrManagerType);
+            if (existing != null)
             {
-                Debug.Log("[Arsist] OVRManager already exists in scene.");
+                Debug.Log($"[Arsist] OVRManager already in scene on '{existing.gameObject.name}'.");
                 return;
             }
 
@@ -4208,20 +5046,74 @@ ScriptedImporter:
             Debug.Log("[Arsist] OVRManager added on fallback root for Quest.");
         }
 
+        /// <summary>
+        /// OVRManager の「Require System Keyboard」(Quest Features 内のチェックボックス) を有効化する。
+        ///
+        /// これが無いと、Input要素があっても TouchScreenKeyboard.Open() が実機で機能しない
+        /// （Meta公式ドキュメント "Enable Keyboard Overlay" 参照）。フィールド名 "requireSystemKeyboard"
+        /// は、Unity Inspector が camelCase フィールド名をそのまま整形して表示する規則
+        /// （このファイル内の isInsightPassthroughEnabled と同じ規則）からの推測であり、
+        /// SDKソースで直接確認できていない best-effort 設定。TrySetMemberValue は対象フィールドが
+        /// 無ければ何もせず警告を出すだけなので、外れていてもビルド自体は壊れない。
+        /// 外れていた場合は、生成された Unity プロジェクトを開いて OVRCameraRig の OVRManager から
+        /// 手動で有効化すること。
+        /// </summary>
+        private static void ConfigureQuestSystemKeyboard(GameObject xrOrigin)
+        {
+            var ovrManagerType = FindType("OVRManager") ?? FindTypeInLoadedAssemblies("OVRManager");
+            var manager = xrOrigin != null ? xrOrigin.GetComponentInChildren(ovrManagerType, true) : null;
+            if (manager == null)
+            {
+                Debug.LogWarning("[Arsist] OVRManager not found; cannot enable system keyboard requirement.");
+                return;
+            }
+
+            var wired = TrySetMemberValue(manager, "requireSystemKeyboard", true);
+            if (wired)
+            {
+                Debug.Log("[Arsist] OVRManager.requireSystemKeyboard = true (Input要素があるため有効化)");
+            }
+            else
+            {
+                Debug.LogWarning(
+                    "[Arsist] Could not set OVRManager's system-keyboard field by reflection " +
+                    "(field name guess 'requireSystemKeyboard' didn't match). " +
+                    "Enable 'Require System Keyboard' manually under OVRManager > Quest Features " +
+                    "in the generated Unity project if on-device text input doesn't open the keyboard.");
+            }
+        }
+
         private static void ExecuteBuild(JObject manifest)
         {
-            var scenes = new List<string>();
-            
-            // ビルド対象シーンを収集
-            foreach (var guid in AssetDatabase.FindAssets("t:Scene", new[] { "Assets/Scenes" }))
+            // ビルド対象シーンは GenerateScenes が scenes.json の順で EditorBuildSettings に
+            // 登録済み。scenes[0] が起動シーンになるため、ここで順序を保つことが重要。
+            // (以前は AssetDatabase.FindAssets の戻り順＝未定義順を使っており、
+            //  シーンが複数あると毎回違うシーンで起動する可能性があった)
+            // 存在確認は AssetDatabase 経由で行う（File.Exists はカレントディレクトリ依存のため）
+            var scenes = EditorBuildSettings.scenes
+                .Where(s => s != null && s.enabled && !string.IsNullOrWhiteSpace(s.path))
+                .Where(s => AssetDatabase.LoadAssetAtPath<SceneAsset>(s.path) != null)
+                .Select(s => s.path)
+                .Distinct()
+                .ToList();
+
+            if (scenes.Count == 0)
             {
-                scenes.Add(AssetDatabase.GUIDToAssetPath(guid));
+                // フォールバック: Build Settings が空なら Assets/Scenes をパス順で拾う（順序を決定的にする）
+                scenes = AssetDatabase.FindAssets("t:Scene", new[] { "Assets/Scenes" })
+                    .Select(AssetDatabase.GUIDToAssetPath)
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .OrderBy(p => p, StringComparer.Ordinal)
+                    .ToList();
+                Debug.LogWarning($"[Arsist] EditorBuildSettings.scenes was empty; falling back to {scenes.Count} scene(s) from Assets/Scenes");
             }
 
             if (scenes.Count == 0)
             {
                 throw new Exception("No scenes found to build");
             }
+
+            Debug.Log($"[Arsist] Build scenes ({scenes.Count}), startup = {scenes[0]}");
 
             var buildOptions = BuildOptions.None;
             var normalizedTarget = (_targetDevice ?? "").ToLowerInvariant();
@@ -4339,6 +5231,13 @@ ScriptedImporter:
                 var assetPath = "Assets/Oculus/OculusProjectConfig.asset";
                 var configAsset = AssetDatabase.LoadMainAssetAtPath(assetPath);
 
+                // 背景モードに応じて Passthrough の要求レベルを変える。
+                // VR 背景なのに Required にしてしまうと、パススルー非対応機で
+                // ストア/インストール時に弾かれる（かつ機能自体使わない）ので落とす。
+                var passthrough = GetBackgroundMode() == BACKGROUND_PASSTHROUGH;
+                // _insightPassthroughSupport: 0 = None, 1 = Supported, 2 = Required
+                var passthroughSupport = passthrough ? 2 : 0;
+
                 if (configAsset != null)
                 {
                     var serialized = new SerializedObject(configAsset);
@@ -4346,8 +5245,8 @@ ScriptedImporter:
 
                     changed |= SetSerializedIntOrBool(serialized, "handTrackingSupport", 1, true);
                     changed |= SetSerializedIntOrBool(serialized, "handTrackingFrequency", 1, true);
-                    changed |= SetSerializedIntOrBool(serialized, "insightPassthroughEnabled", 1, true);
-                    changed |= SetSerializedIntOrBool(serialized, "_insightPassthroughSupport", 2, true);
+                    changed |= SetSerializedIntOrBool(serialized, "insightPassthroughEnabled", passthrough ? 1 : 0, passthrough);
+                    changed |= SetSerializedIntOrBool(serialized, "_insightPassthroughSupport", passthroughSupport, passthrough);
                     changed |= SetSerializedIntOrBool(serialized, "focusAware", 1, true);
                     changed |= SetSerializedIntOrBool(serialized, "sceneSupport", 1, true);
 
@@ -4359,7 +5258,7 @@ ScriptedImporter:
                         AssetDatabase.Refresh();
                     }
 
-                    Debug.Log("[Arsist] OculusProjectConfig applied for Quest: HandTracking=1, Passthrough=1, FocusAware=1, SceneSupport=1");
+                    Debug.Log($"[Arsist] OculusProjectConfig applied for Quest: HandTracking=1, Passthrough={(passthrough ? 1 : 0)}, FocusAware=1, SceneSupport=1");
                     return;
                 }
 
@@ -4410,11 +5309,13 @@ ScriptedImporter:
                 return;
             }
 
+            var passthrough = GetBackgroundMode() == BACKGROUND_PASSTHROUGH;
+
             var yaml = File.ReadAllText(path);
             yaml = ReplaceYamlNumericValue(yaml, "handTrackingSupport", 1);
             yaml = ReplaceYamlNumericValue(yaml, "handTrackingFrequency", 1);
-            yaml = ReplaceYamlNumericValue(yaml, "insightPassthroughEnabled", 1);
-            yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", 2);
+            yaml = ReplaceYamlNumericValue(yaml, "insightPassthroughEnabled", passthrough ? 1 : 0);
+            yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", passthrough ? 2 : 0);
             yaml = ReplaceYamlNumericValue(yaml, "focusAware", 1);
             yaml = ReplaceYamlNumericValue(yaml, "sceneSupport", 1);
 

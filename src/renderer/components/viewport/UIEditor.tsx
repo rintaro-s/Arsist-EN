@@ -9,7 +9,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useDataValue } from '../../stores/dataStoreContext';
+import { useT } from '../../i18n';
 import type { UIElement, UIElementType } from '../../../shared/types';
+import { UNITY_TEXTURE_FILTER_EXTENSIONS } from '../../../shared/assets';
 import {
   MousePointer2,
   Hand,
@@ -21,21 +23,32 @@ import {
   ZoomIn,
   ZoomOut,
   Upload,
+  MousePointerClick,
+  SlidersHorizontal,
+  Keyboard,
 } from 'lucide-react';
 
 type Tool = 'select' | 'pan' | UIElementType;
 
 const GRID_SIZE = 16;
 
+// Button / Slider / Input は IR (UIElementType) にも Unity 側の生成
+// (ArsistBuildPipeline.CreateUIElement) にも前から対応していたが、ここのツールバーに項目が無く
+// 配置する手段が無かった。レイキャスト式の当たり判定（コントローラーレイ/ハンドトラッキング）で
+// 実際に押せる/掴める/文字入力できる要素なので、Panel等と同列に並べる。
 const TOOLBAR_ELEMENTS: Array<{ type: UIElementType; label: string; icon: React.ReactNode }> = [
   { type: 'Panel', label: 'Panel', icon: <Square size={18} /> },
   { type: 'Text', label: 'Text', icon: <Type size={18} /> },
+  { type: 'Button', label: 'Button', icon: <MousePointerClick size={18} /> },
+  { type: 'Input', label: 'Input', icon: <Keyboard size={18} /> },
   { type: 'Image', label: 'Image', icon: <ImageIcon size={18} /> },
+  { type: 'Slider', label: 'Slider', icon: <SlidersHorizontal size={18} /> },
   { type: 'Gauge', label: 'Gauge', icon: <GaugeIcon size={18} /> },
   { type: 'Graph', label: 'Graph', icon: <TrendingUp size={18} /> },
 ];
 
 export function UIEditor() {
+  const t = useT();
   const {
     project,
     projectPath,
@@ -48,7 +61,7 @@ export function UIEditor() {
 
   const layout = project?.uiLayouts.find((l) => l.id === currentUILayoutId);
   const resolution = layout?.resolution || { width: 1920, height: 1080 };
-  const scopeLabel = layout?.scope === 'canvas' ? 'Canvas Surface' : 'UHD Overlay';
+  const scopeLabel = layout?.scope === 'canvas' ? t('uiEditor.canvasSurface') : t('uiEditor.uhdOverlay');
 
   const [tool, setTool] = useState<Tool>('select');
   const [zoom, setZoom] = useState(0.5);
@@ -258,7 +271,7 @@ export function UIEditor() {
   if (!layout) {
     return (
       <div className="w-full h-full flex items-center justify-center text-arsist-muted text-sm bg-[#121212]">
-        Select a UI layout from the left panel
+        {t('uiEditor.selectLayout')}
       </div>
     );
   }
@@ -269,15 +282,15 @@ export function UIEditor() {
     <div className="w-full h-full flex flex-col overflow-hidden bg-[#121212]">
       <div className="h-14 bg-[#1e1e1e] border-b border-[#2d2d2d] flex items-center px-4 gap-3 shrink-0">
         <div className="flex items-center gap-1 bg-[#2d2d2d] rounded-lg p-1">
-          <ToolButton icon={<MousePointer2 size={18} />} label="Select" active={tool === 'select'} onClick={() => setTool('select')} />
-          <ToolButton icon={<Hand size={18} />} label="Pan" active={tool === 'pan'} onClick={() => setTool('pan')} />
+          <ToolButton icon={<MousePointer2 size={18} />} label={t('uiEditor.select')} active={tool === 'select'} onClick={() => setTool('select')} />
+          <ToolButton icon={<Hand size={18} />} label={t('uiEditor.pan')} active={tool === 'pan'} onClick={() => setTool('pan')} />
         </div>
 
         <div className="w-px h-8 bg-[#2d2d2d]" />
 
         <div className="flex items-center gap-1">
           {TOOLBAR_ELEMENTS.map((item) => (
-            <AddButton key={item.type} icon={item.icon} label={item.label} onClick={() => handleAddElement(item.type)} />
+            <AddButton key={item.type} icon={item.icon} label={t(`uiEditor.elem${item.type}`)} onClick={() => handleAddElement(item.type)} />
           ))}
         </div>
 
@@ -285,7 +298,7 @@ export function UIEditor() {
           <button
             onClick={() => setZoom((z) => Math.max(0.1, z - 0.1))}
             className="w-8 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] flex items-center justify-center text-[#e0e0e0] transition-colors"
-            title="Zoom out"
+            title={t('uiEditor.zoomOut')}
           >
             <ZoomOut size={16} />
           </button>
@@ -295,7 +308,7 @@ export function UIEditor() {
           <button
             onClick={() => setZoom((z) => Math.min(3, z + 0.1))}
             className="w-8 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] flex items-center justify-center text-[#e0e0e0] transition-colors"
-            title="Zoom in"
+            title={t('uiEditor.zoomIn')}
           >
             <ZoomIn size={16} />
           </button>
@@ -303,7 +316,7 @@ export function UIEditor() {
             onClick={resetView}
             className="ml-2 px-3 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] text-xs text-[#e0e0e0] transition-colors"
           >
-            Reset
+            {t('uiEditor.reset')}
           </button>
         </div>
       </div>
@@ -409,11 +422,12 @@ interface AddButtonProps {
 }
 
 function AddButton({ icon, label, onClick }: AddButtonProps) {
+  const t = useT();
   return (
     <button
       onClick={onClick}
       className="px-3 h-8 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] flex items-center gap-2 text-sm text-[#e0e0e0] transition-colors"
-      title={`Add ${label}`}
+      title={t('uiEditor.addTooltip', { label })}
     >
       {icon}
       <span className="text-xs">{label}</span>
@@ -470,6 +484,7 @@ function ElementRenderer({
   tool,
   zoom,
 }: ElementRendererProps) {
+  const t = useT();
   const isSelected = element.id === selectedId;
   const boundValue = useDataValue(element.bind?.key || '');
   const elementRef = useRef<HTMLDivElement>(null);
@@ -657,7 +672,7 @@ function ElementRenderer({
     if (!projectPath || !window.electronAPI) return;
 
     const selected = await window.electronAPI.fs.selectFile([
-      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
+      { name: 'Images', extensions: [...UNITY_TEXTURE_FILTER_EXTENSIONS] },
     ]);
     if (!selected) return;
 
@@ -706,7 +721,7 @@ function ElementRenderer({
               <div className="w-full h-full flex flex-col items-center justify-center gap-2" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
                 <ImageIcon size={32} style={{ color: '#616161' }} />
                 <span className="text-xs" style={{ color: '#9e9e9e' }}>
-                  {isSelected ? 'Click to import image' : 'No image'}
+                  {isSelected ? t('uiEditor.clickToImport') : t('uiEditor.noImage')}
                 </span>
               </div>
             )}
@@ -726,7 +741,7 @@ function ElementRenderer({
         return (
           <input
             type="text"
-            placeholder="Input field"
+            placeholder={t('uiEditor.inputField')}
             className="w-full px-3 py-2 rounded text-sm"
             style={{
               backgroundColor: 'rgba(255,255,255,0.08)',

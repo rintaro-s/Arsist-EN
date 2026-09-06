@@ -248,16 +248,98 @@ namespace Arsist.Runtime.Scripting
             var vrmObj = GetVRM(id);
             if (vrmObj == null) return;
 
-            var animator = vrmObj.GetComponent<Animator>();
-            if (animator == null || !animator.isHuman) return;
-
-            // 頭のボーンを取得
-            Transform head = animator.GetBoneTransform(HumanBodyBones.Head);
-            if (head != null)
+            // VRMLookAtController に委譲する。
+            // 直接 head.LookAt() を呼ぶと (a) 次フレームに Animator が上書きして1フレームで消え、
+            // (b) Transform.LookAt はボーンのローカル +Z を向けるため、頭ボーンの軸が
+            // 前方でないモデル（＝ほとんど）で首がねじれる。
+            var lookAtController = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMLookAtController>();
+            if (lookAtController == null)
             {
-                Vector3 targetPos = new Vector3(x, y, z);
-                head.LookAt(targetPos);
+                lookAtController = vrmObj.AddComponent<Arsist.Runtime.VRM.VRMLookAtController>();
             }
+
+            if (!lookAtController.SetTarget(new Vector3(x, y, z)))
+            {
+                Debug.LogWarning($"[VRMWrapper] lookAt('{id}') ignored: no VRMLookAtHead and no humanoid Head bone.");
+            }
+        }
+
+        /// <summary>
+        /// 目線が指定の高さ(m)に来るようにアバターを等倍スケールする。
+        /// 「VRChat 内の 1m を現実の 1m として出す」ために必要。
+        /// </summary>
+        public void setHeight(string id, float eyeHeightMeters)
+        {
+            var vrmObj = GetVRM(id);
+            if (vrmObj == null) return;
+
+            var scaler = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMBodyScaler>();
+            if (scaler == null) scaler = vrmObj.AddComponent<Arsist.Runtime.VRM.VRMBodyScaler>();
+
+            var applied = scaler.SetEyeHeight(eyeHeightMeters);
+            if (applied < 0f)
+            {
+                Debug.LogWarning($"[VRMWrapper] setHeight('{id}', {eyeHeightMeters}) failed: could not measure the model's eye height.");
+            }
+        }
+
+        /// <summary>手の目標位置（ワールド座標）を与えて腕を追従させる。</summary>
+        /// <param name="side">"left" / "right"（"l" / "r" も可）</param>
+        public void setHandTarget(string id, string side, float x, float y, float z)
+        {
+            var vrmObj = GetVRM(id);
+            if (vrmObj == null) return;
+
+            var ik = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMArmIK>();
+            if (ik == null) ik = vrmObj.AddComponent<Arsist.Runtime.VRM.VRMArmIK>();
+
+            if (!TryParseSide(side, out var left))
+            {
+                Debug.LogWarning($"[VRMWrapper] setHandTarget: unknown side '{side}' (expected left/right).");
+                return;
+            }
+
+            if (!ik.SetHandTarget(left, new Vector3(x, y, z)))
+            {
+                Debug.LogWarning($"[VRMWrapper] setHandTarget('{id}', {side}) ignored: the arm bone chain is incomplete.");
+            }
+        }
+
+        /// <summary>腕 IK を解除してアニメーションに戻す。</summary>
+        public void clearHandTarget(string id, string side)
+        {
+            var vrmObj = GetVRM(id);
+            if (vrmObj == null) return;
+
+            var ik = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMArmIK>();
+            if (ik == null) return;
+
+            if (string.IsNullOrEmpty(side))
+            {
+                ik.ClearHandTarget(true);
+                ik.ClearHandTarget(false);
+                return;
+            }
+            if (TryParseSide(side, out var left)) ik.ClearHandTarget(left);
+        }
+
+        private static bool TryParseSide(string side, out bool left)
+        {
+            var normalized = (side ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalized == "left" || normalized == "l") { left = true; return true; }
+            if (normalized == "right" || normalized == "r") { left = false; return true; }
+            left = false;
+            return false;
+        }
+
+        /// <summary>視線制御を解除する。</summary>
+        public void clearLookAt(string id)
+        {
+            var vrmObj = GetVRM(id);
+            if (vrmObj == null) return;
+
+            var lookAtController = vrmObj.GetComponent<Arsist.Runtime.VRM.VRMLookAtController>();
+            if (lookAtController != null) lookAtController.ClearTarget();
         }
 
         // ========================================

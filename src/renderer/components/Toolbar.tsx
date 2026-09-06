@@ -7,6 +7,7 @@ import {
   Grid3X3,
   Axis3D,
   Magnet,
+  PersonStanding,
   Settings,
   Download,
   Eye,
@@ -15,11 +16,14 @@ import {
   Plus,
   Server,
   Zap,
+  Radar,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
+import { useT } from '../i18n';
 
 export function Toolbar() {
+  const t = useT();
   const {
     currentView,
     setCurrentView,
@@ -29,10 +33,13 @@ export function Toolbar() {
     setShowGrid,
     showAxes,
     setShowAxes,
+    showSpawnView,
+    setShowSpawnView,
     snapToGrid,
     setSnapToGrid,
     setShowBuildDialog,
     setShowSettingsDialog,
+    setAppMode,
     setShowNewProjectDialog,
     setShowPreviewDialog,
     setShowMCPDialog,
@@ -48,14 +55,14 @@ export function Toolbar() {
   };
 
   return (
-    <div className="h-11 bg-arsist-surface border-b border-arsist-border flex items-center justify-between px-2 select-none">
+    <div className="h-11 bg-arsist-surface hairline-b flex items-center justify-between px-2 select-none">
       {/* Left: Project + View tabs */}
       <div className="flex items-center gap-1">
-        <div className="flex items-center gap-0.5 pr-2 border-r border-arsist-border">
-          <IconBtn icon={<Plus size={16} />} tip="New Project" onClick={() => setShowNewProjectDialog(true)} />
-          <IconBtn icon={<FolderOpen size={16} />} tip="Open Project" onClick={handleOpenProject} />
+        <div className="flex items-center gap-0.5 pr-2 hairline-r">
+          <IconBtn icon={<Plus size={16} />} tip={t('toolbar.newProject')} onClick={() => setShowNewProjectDialog(true)} />
+          <IconBtn icon={<FolderOpen size={16} />} tip={t('toolbar.openProject')} onClick={handleOpenProject} />
           {isDirty && (
-            <IconBtn icon={<Save size={16} />} tip="Save" className="text-arsist-warning" onClick={() => saveProject()} />
+            <IconBtn icon={<Save size={16} />} tip={t('toolbar.save')} className="text-arsist-warning" onClick={() => saveProject()} />
           )}
         </div>
 
@@ -63,20 +70,20 @@ export function Toolbar() {
           {showSceneTab && (
             <ViewTab
               icon={<Box size={15} />}
-              label="Scene"
+              label={t('toolbar.tabScene')}
               active={currentView === 'scene'}
               onClick={() => setCurrentView('scene')}
             />
           )}
           <ViewTab
             icon={<Layout size={15} />}
-            label="UI"
+            label={t('toolbar.tabUI')}
             active={currentView === 'ui'}
             onClick={() => setCurrentView('ui')}
           />
           <ViewTab
             icon={<Zap size={15} />}
-            label="Script"
+            label={t('toolbar.tabScript')}
             active={currentView === 'script'}
             onClick={() => setCurrentView('script')}
           />
@@ -87,41 +94,51 @@ export function Toolbar() {
       <div className="flex items-center gap-1">
         {currentView === 'scene' && (
           <>
-            <div className="flex items-center bg-arsist-bg rounded p-0.5 gap-0.5">
-              <ToolBtn icon={<Move size={15} />} active={transformMode === 'translate'} onClick={() => setTransformMode('translate')} tip="Translate" />
-              <ToolBtn icon={<RotateCw size={15} />} active={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')} tip="Rotate" />
-              <ToolBtn icon={<Maximize2 size={15} />} active={transformMode === 'scale'} onClick={() => setTransformMode('scale')} tip="Scale" />
+            <div className="flex items-center bg-arsist-hover rounded-md p-0.5 gap-0.5">
+              <ToolBtn icon={<Move size={15} />} active={transformMode === 'translate'} onClick={() => setTransformMode('translate')} tip={t('toolbar.translate')} />
+              <ToolBtn icon={<RotateCw size={15} />} active={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')} tip={t('toolbar.rotate')} />
+              <ToolBtn icon={<Maximize2 size={15} />} active={transformMode === 'scale'} onClick={() => setTransformMode('scale')} tip={t('toolbar.scale')} />
             </div>
-            <div className="w-px h-5 bg-arsist-border" />
-            <div className="flex items-center bg-arsist-bg rounded p-0.5 gap-0.5">
-              <ToolBtn icon={<Grid3X3 size={15} />} active={showGrid} onClick={() => setShowGrid(!showGrid)} tip="Grid" />
-              <ToolBtn icon={<Axis3D size={15} />} active={showAxes} onClick={() => setShowAxes(!showAxes)} tip="Axes" />
-              <ToolBtn icon={<Magnet size={15} />} active={snapToGrid} onClick={() => setSnapToGrid(!snapToGrid)} tip="Snap" />
+            <div className="flex items-center bg-arsist-hover rounded-md p-0.5 gap-0.5">
+              <ToolBtn icon={<Grid3X3 size={15} />} active={showGrid} onClick={() => setShowGrid(!showGrid)} tip={t('toolbar.grid')} />
+              <ToolBtn icon={<Axis3D size={15} />} active={showAxes} onClick={() => setShowAxes(!showAxes)} tip={t('toolbar.axes')} />
+              <ToolBtn icon={<PersonStanding size={15} />} active={showSpawnView} onClick={() => setShowSpawnView(!showSpawnView)} tip={t('toolbar.spawnView')} />
+              <ToolBtn icon={<Magnet size={15} />} active={snapToGrid} onClick={() => setSnapToGrid(!snapToGrid)} tip={t('toolbar.snap')} />
             </div>
           </>
         )}
 
         {currentView === 'ui' && (
-          <span className="text-[11px] text-arsist-muted">Add UI elements from the left panel / edit on the canvas</span>
+          <span className="text-[11px] text-arsist-muted">{t('toolbar.uiHint')}</span>
         )}
 
         {currentView === 'script' && (
-          <span className="text-[11px] text-arsist-muted">JavaScript (Jint) • Add scripts from the left panel / configure triggers on the right panel</span>
+          <span className="text-[11px] text-arsist-muted">{t('toolbar.scriptHint')}</span>
         )}
       </div>
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
-        <IconBtn icon={<Server size={16} />} tip="MCP Server" onClick={() => setShowMCPDialog(true)} />
-        <IconBtn icon={<Eye size={16} />} tip="Preview" onClick={() => setShowPreviewDialog(true)} />
-        <IconBtn icon={<Settings size={16} />} tip="Settings" onClick={() => setShowSettingsDialog(true)} />
+        {/* ライブ配置モードへ。通常の編集画面とは別UIに切り替わる */}
+        <button
+          onClick={() => setAppMode('live')}
+          className="btn btn-ghost text-xs h-7 px-2"
+          disabled={!project}
+          title={t('toolbar.liveLayoutHint')}
+        >
+          <Radar size={14} />
+          <span>{t('toolbar.liveLayout')}</span>
+        </button>
+        <IconBtn icon={<Server size={16} />} tip={t('toolbar.mcpServer')} onClick={() => setShowMCPDialog(true)} />
+        <IconBtn icon={<Eye size={16} />} tip={t('toolbar.preview')} onClick={() => setShowPreviewDialog(true)} />
+        <IconBtn icon={<Settings size={16} />} tip={t('toolbar.settings')} onClick={() => setShowSettingsDialog(true)} />
         <button
           onClick={() => setShowBuildDialog(true)}
           className="btn btn-success text-xs h-7 px-3"
           disabled={!project}
         >
           <Download size={14} />
-          <span>Build</span>
+          <span>{t('toolbar.build')}</span>
         </button>
       </div>
     </div>

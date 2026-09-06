@@ -16,6 +16,8 @@ import { useUIStore } from '../../stores/uiStore';
 import type { SceneObject } from '../../../shared/types';
 import { Eye, HelpCircle, Box, Circle, Square, Cylinder } from 'lucide-react';
 import { VRMViewer } from './VRMViewer';
+import { useT } from '../../i18n';
+import { useDeviceFov, type DeviceFov } from '../../utils/deviceFov';
 
 // Origin axis display
 function OriginAxes() {
@@ -34,40 +36,108 @@ function OriginAxes() {
   );
 }
 
-function StartPoseMarker() {
+/** アダプターの adapter.json から読んだ視野角 (度)。 */
+/**
+ * ユーザーの初期視点（スポーン時の視点）マーカー。
+ *
+ * Arsist の座標系では 原点 = ユーザーの初期視点、Z+ = 正面 と定義されている
+ * （ArsistBuildPipeline の座標系定義コメントを参照）。ビルド時に XROrigin の
+ * TrackingOriginMode を Device / CameraYOffset を 0 に固定しているので、実機でも
+ * セッション開始時のヘッド位置がここに来る。
+ */
+function SpawnViewMarker({ fov, distance }: { fov: DeviceFov | null; distance: number }) {
+  const t = useT();
+  const color = '#4ec9b0';
+
+  // 視錐台: 原点を頂点に、distance[m] 先の可視矩形まで
+  const frustum = useMemo(() => {
+    if (!fov) return null;
+    const halfW = distance * Math.tan((fov.horizontal / 2) * (Math.PI / 180));
+    const halfH = distance * Math.tan((fov.vertical / 2) * (Math.PI / 180));
+    const corners: [number, number, number][] = [
+      [-halfW, halfH, distance],
+      [halfW, halfH, distance],
+      [halfW, -halfH, distance],
+      [-halfW, -halfH, distance],
+    ];
+    return { halfW, halfH, corners };
+  }, [fov, distance]);
+
   return (
     <group>
-      {/* Origin */}
+      {/* 視点そのもの */}
       <mesh position={[0, 0, 0]}>
         <sphereGeometry args={[0.06, 16, 16]} />
-        <meshStandardMaterial color={'#ffffff'} emissive={'#ffffff'} emissiveIntensity={0.4} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
       </mesh>
 
-      {/* Forward (+Z) marker */}
-      <Line points={[[0, 0, 0], [0, 0, 1]]} color="#ffffff" lineWidth={2} />
-      <Line points={[[0, 0, 1], [0.08, 0, 0.9]]} color="#ffffff" lineWidth={2} />
-      <Line points={[[0, 0, 1], [-0.08, 0, 0.9]]} color="#ffffff" lineWidth={2} />
+      {/* 正面 (+Z) */}
+      <Line points={[[0, 0, 0], [0, 0, 0.6]]} color={color} lineWidth={2} />
+      <Line points={[[0, 0, 0.6], [0.06, 0, 0.5]]} color={color} lineWidth={2} />
+      <Line points={[[0, 0, 0.6], [-0.06, 0, 0.5]]} color={color} lineWidth={2} />
+      <Text position={[0, -0.12, 0.62]} fontSize={0.1} color={color} anchorX="center" anchorY="middle">
+        {t('scene.spawnViewForward')}
+      </Text>
 
-      {/* 1m scale */}
+      {/* 視錐台 */}
+      {frustum && (
+        <group>
+          {frustum.corners.map((corner, i) => (
+            <Line key={`edge-${i}`} points={[[0, 0, 0], corner]} color={color} lineWidth={1} transparent opacity={0.5} />
+          ))}
+          <Line
+            points={[...frustum.corners, frustum.corners[0]]}
+            color={color}
+            lineWidth={1.5}
+            transparent
+            opacity={0.8}
+          />
+          <Text
+            position={[0, frustum.halfH + 0.12, distance]}
+            fontSize={0.12}
+            color={color}
+            anchorX="center"
+            anchorY="middle"
+          >
+            {t('scene.spawnViewFov', {
+              h: String(fov!.horizontal),
+              v: String(fov!.vertical),
+              d: String(distance),
+            })}
+          </Text>
+        </group>
+      )}
+
+      {/* 1m スケール */}
       <Line points={[[0, 0, 0], [1, 0, 0]]} color="#f14c4c" lineWidth={2} />
       <Text position={[1.05, 0.02, 0]} fontSize={0.15} color="#f14c4c" anchorX="left" anchorY="middle">
         1m
       </Text>
 
-      <Text position={[0, 0.22, 0]} fontSize={0.16} color="#ffffff" anchorX="center" anchorY="middle">
-        Start (0,0,0) m
+      <Text position={[0, 0.3, 0]} fontSize={0.16} color={color} anchorX="center" anchorY="middle">
+        {t('scene.spawnView')}
+      </Text>
+      <Text position={[0, 0.16, 0]} fontSize={0.1} color="#9a9a9a" anchorX="center" anchorY="middle">
+        {fov ? t('scene.spawnViewOrigin') : t('scene.spawnViewFovUnknown')}
       </Text>
     </group>
   );
 }
 
 export function SceneViewport() {
-  const { showGrid, showAxes, transformMode, transformSpace, setTransformMode } = useUIStore();
+  const t = useT();
+  const { showGrid, showAxes, showSpawnView, transformMode, transformSpace, setTransformMode } = useUIStore();
   const { project, currentSceneId, selectedObjectIds, selectObjects, updateObject, addObject } = useProjectStore();
   const [cameraPos, setCameraPos] = useState({ x: 5, y: 5, z: 5 });
   const [showHelp, setShowHelp] = useState(false);
   const trackingMode = project?.arSettings?.trackingMode || '6dof';
   const presentationMode = project?.arSettings?.presentationMode || 'world_anchored';
+  // 視錐台は「デフォルトの奥行き」までを描く。そこがオブジェクトの既定の置き場所なので、
+  // 「その距離で視野に入るか」がそのまま知りたい情報になる。
+  const spawnViewDistance = project?.arSettings?.defaultDepth && project.arSettings.defaultDepth > 0
+    ? project.arSettings.defaultDepth
+    : 2;
+  const deviceFov = useDeviceFov(project?.targetDevice);
   
   const currentScene = project?.scenes.find(s => s.id === currentSceneId);
 
@@ -102,32 +172,32 @@ export function SceneViewport() {
     <div className="w-full h-full relative">
       {/* 3D Scene toolbar */}
       <div className="absolute top-2 left-2 z-10 flex items-center gap-1 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-1">
-        <span className="px-2 text-xs text-arsist-muted">Add:</span>
+        <span className="px-2 text-xs text-arsist-muted">{t('scene.addLabel')}</span>
         <button
           onClick={() => handleAddObject('primitive', 'cube')}
           className="btn-icon"
-          title="Add Cube"
+          title={t('scene.addCube')}
         >
           <Box size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'sphere')}
           className="btn-icon"
-          title="Add Sphere"
+          title={t('scene.addSphere')}
         >
           <Circle size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'plane')}
           className="btn-icon"
-          title="Add Plane"
+          title={t('scene.addPlane')}
         >
           <Square size={16} />
         </button>
         <button
           onClick={() => handleAddObject('primitive', 'cylinder')}
           className="btn-icon"
-          title="Add Cylinder"
+          title={t('scene.addCylinder')}
         >
           <Cylinder size={16} />
         </button>
@@ -137,7 +207,7 @@ export function SceneViewport() {
       <div className="absolute top-2 right-2 z-10 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-2 text-xs">
         <div className="flex items-center gap-2 text-arsist-muted mb-1">
           <Eye size={12} />
-          <span>Camera</span>
+          <span>{t('scene.camera')}</span>
         </div>
         <div className="font-mono text-arsist-text">
           <span className="text-red-400">X</span>: {cameraPos.x.toFixed(1)} 
@@ -147,9 +217,9 @@ export function SceneViewport() {
           <span className="text-blue-400">Z</span>: {cameraPos.z.toFixed(1)}
         </div>
         <div className="mt-2 text-[10px] text-arsist-muted">
-          <div>Tracking: <span className="text-arsist-text">{trackingMode.toUpperCase()}</span></div>
-          <div>Mode: <span className="text-arsist-text">{presentationMode.replace('_', ' ')}</span></div>
-          <div>Units: <span className="text-arsist-text">1 = 1m</span></div>
+          <div>{t('scene.trackingLabel')}: <span className="text-arsist-text">{trackingMode.toUpperCase()}</span></div>
+          <div>{t('scene.modeLabel')}: <span className="text-arsist-text">{presentationMode.replace('_', ' ')}</span></div>
+          <div>{t('scene.unitsLabel')}: <span className="text-arsist-text">1 = 1m</span></div>
         </div>
       </div>
 
@@ -157,7 +227,7 @@ export function SceneViewport() {
       <button
         onClick={() => setShowHelp(!showHelp)}
         className="absolute bottom-2 right-2 z-10 btn-icon bg-arsist-surface/90 backdrop-blur border border-arsist-border"
-        title="Operation help"
+        title={t('scene.operationHelp')}
       >
         <HelpCircle size={16} />
       </button>
@@ -165,30 +235,30 @@ export function SceneViewport() {
       {/* Operation help panel */}
       {showHelp && (
         <div className="absolute bottom-12 right-2 z-10 bg-arsist-surface/95 backdrop-blur border border-arsist-border rounded-lg p-3 text-xs w-64">
-          <h4 className="font-medium text-arsist-text mb-2">Operation guide</h4>
+          <h4 className="font-medium text-arsist-text mb-2">{t('scene.operationGuide')}</h4>
           <div className="space-y-1 text-arsist-muted">
             <div className="flex justify-between">
-              <span>Rotate</span>
-              <span className="kbd">Left drag</span>
+              <span>{t('scene.rotate')}</span>
+              <span className="kbd">{t('scene.leftDrag')}</span>
             </div>
             <div className="flex justify-between">
-              <span>Pan</span>
-              <span className="kbd">Right drag</span>
+              <span>{t('scene.pan')}</span>
+              <span className="kbd">{t('scene.rightDrag')}</span>
             </div>
             <div className="flex justify-between">
-              <span>Zoom</span>
-              <span className="kbd">Scroll</span>
+              <span>{t('scene.zoom')}</span>
+              <span className="kbd">{t('scene.scroll')}</span>
             </div>
             <div className="flex justify-between">
-              <span>Move mode</span>
+              <span>{t('scene.moveMode')}</span>
               <span className="kbd">W</span>
             </div>
             <div className="flex justify-between">
-              <span>Rotate mode</span>
+              <span>{t('scene.rotateMode')}</span>
               <span className="kbd">E</span>
             </div>
             <div className="flex justify-between">
-              <span>Scale mode</span>
+              <span>{t('scene.scaleMode')}</span>
               <span className="kbd">R</span>
             </div>
           </div>
@@ -199,9 +269,9 @@ export function SceneViewport() {
       {selectedObjectIds.length > 0 && currentScene && (
         <div className="absolute bottom-2 left-2 z-10 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-2 text-xs">
           <span className="text-arsist-accent">
-            {currentScene.objects.find(o => o.id === selectedObjectIds[0])?.name || 'Object'}
+            {currentScene.objects.find(o => o.id === selectedObjectIds[0])?.name || t('scene.object')}
           </span>
-          <span className="text-arsist-muted ml-2">Selected</span>
+          <span className="text-arsist-muted ml-2">{t('scene.selected')}</span>
         </div>
       )}
 
@@ -237,8 +307,8 @@ export function SceneViewport() {
         {/* Origin axis */}
         {showAxes && <OriginAxes />}
 
-        {/* For 6DoF, always visualize the start position (origin) */}
-        {trackingMode === '6dof' && <StartPoseMarker />}
+        {/* ユーザーの初期視点（原点）。トラッキングモードに関係なく「どこから見るか」は常に要る */}
+        {showSpawnView && <SpawnViewMarker fov={deviceFov} distance={spawnViewDistance} />}
 
         {/* Grid */}
         {showGrid && (

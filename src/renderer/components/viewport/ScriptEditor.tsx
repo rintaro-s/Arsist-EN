@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useT } from '../../i18n';
 import type { ScriptTriggerType, ScriptData } from '../../../shared/types';
 
 // ========================================
@@ -16,6 +17,7 @@ import type { ScriptTriggerType, ScriptData } from '../../../shared/types';
 // ========================================
 
 export function ScriptEditor() {
+  const t = useT();
   const { project, currentScriptId, updateScript, exportScriptBundle } = useProjectStore();
   const { addConsoleLog } = useUIStore();
   const scripts = project?.scripts ?? [];
@@ -79,8 +81,8 @@ export function ScriptEditor() {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center text-arsist-muted gap-3">
         <Zap size={40} className="opacity-20" />
-        <p className="text-sm">No scripts yet</p>
-        <p className="text-xs opacity-60">Use “+” in the left panel to create one</p>
+        <p className="text-sm">{t('script.noScripts')}</p>
+        <p className="text-xs opacity-60">{t('script.createHint')}</p>
       </div>
     );
   }
@@ -89,7 +91,7 @@ export function ScriptEditor() {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center text-arsist-muted gap-3">
         <Zap size={40} className="opacity-20" />
-        <p className="text-sm">Select a script</p>
+        <p className="text-sm">{t('script.selectScript')}</p>
       </div>
     );
   }
@@ -101,9 +103,9 @@ export function ScriptEditor() {
         <div className="flex items-center gap-2">
           <Zap size={14} className="text-arsist-accent" />
           <span className="text-sm font-medium truncate max-w-[240px]">{script.name}</span>
-          {dirty && <span className="text-[10px] text-arsist-warning bg-arsist-warning/10 px-1.5 py-0.5 rounded">Unsaved</span>}
+          {dirty && <span className="text-[10px] text-arsist-warning bg-arsist-warning/10 px-1.5 py-0.5 rounded">{t('script.unsaved')}</span>}
           {!script.enabled && (
-            <span className="text-[10px] text-arsist-muted bg-arsist-hover px-1.5 py-0.5 rounded">Disabled</span>
+            <span className="text-[10px] text-arsist-muted bg-arsist-hover px-1.5 py-0.5 rounded">{t('script.disabled')}</span>
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -117,14 +119,14 @@ export function ScriptEditor() {
             }`}
           >
             <Play size={12} />
-            <span>Save (Ctrl+S)</span>
+            <span>{t('script.save')}</span>
           </button>
           <button
             onClick={handleExportBundle}
             className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-arsist-hover hover:bg-arsist-active text-arsist-text transition-colors"
           >
             {exportCopied ? <CheckCircle size={12} className="text-green-400" /> : <Download size={12} />}
-            <span>{exportCopied ? 'Copied' : 'Export Bundle'}</span>
+            <span>{exportCopied ? t('script.copied') : t('script.exportBundle')}</span>
           </button>
         </div>
       </div>
@@ -155,8 +157,8 @@ export function ScriptEditor() {
 
       {/* Footer */}
       <div className="flex items-center justify-between px-3 py-1.5 border-t border-arsist-border bg-arsist-surface shrink-0 text-[10px] text-arsist-muted">
-        <span>JavaScript (Jint) • Works with IL2CPP / XREAL / Quest</span>
-        <span>{code.split('\n').length} lines / {code.length} chars</span>
+        <span>{t('script.footerCompat')}</span>
+        <span>{t('script.linesChars', { lines: code.split('\n').length, chars: code.length })}</span>
       </div>
     </div>
   );
@@ -182,6 +184,7 @@ function LineNumbers({ code }: { code: string }) {
 // ========================================
 
 function TriggerBadge({ trigger }: { trigger: ScriptData['trigger'] }) {
+  const t = useT();
   const icons: Record<ScriptTriggerType, React.ReactNode> = {
     onStart: <Play size={10} />,
     onUpdate: <RefreshCw size={10} />,
@@ -189,10 +192,10 @@ function TriggerBadge({ trigger }: { trigger: ScriptData['trigger'] }) {
     event: <MousePointer size={10} />,
   };
   const labels: Record<ScriptTriggerType, string> = {
-    onStart: 'On Start',
-    onUpdate: 'Every Frame',
-    interval: `${trigger.type === 'interval' ? (Number(trigger.value ?? 1000) / 1000).toFixed(1) : '?'}s interval`,
-    event: `Event: ${trigger.value ?? 'Unset'}`,
+    onStart: t('script.onStartLabel'),
+    onUpdate: t('script.everyFrame'),
+    interval: t('script.intervalLabel', { sec: trigger.type === 'interval' ? (Number(trigger.value ?? 1000) / 1000).toFixed(1) : '?' }),
+    event: t('script.eventLabel', { name: String(trigger.value ?? t('script.unset')) }),
   };
   return (
     <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-arsist-accent/10 text-arsist-accent border border-arsist-accent/20">
@@ -211,47 +214,48 @@ const API_SECTIONS = [
     label: 'api',
     color: '#4ec9b0',
     items: [
-      { sig: "api.get(url, callback)", desc: "HTTP GET request. callback receives responseText" },
-      { sig: "api.post(url, body, callback)", desc: "HTTP POST request. callback receives responseText" },
+      { sig: "api.get(url, callback)", desc: "script.apiGetDesc" },
+      { sig: "api.post(url, body, callback)", desc: "script.apiPostDesc" },
     ],
   },
   {
     label: 'ui',
     color: '#569cd6',
     items: [
-      { sig: "ui.setText(id, text)", desc: "Change UI element text" },
-      { sig: "ui.setVisibility(id, bool)", desc: "Toggle visibility" },
-      { sig: "ui.setColor(id, '#RRGGBB')", desc: "Change text color" },
-      { sig: "ui.setAlpha(id, 0.0~1.0)", desc: "Change opacity" },
+      { sig: "ui.setText(id, text)", desc: "script.uiSetTextDesc" },
+      { sig: "ui.setVisibility(id, bool)", desc: "script.uiSetVisibilityDesc" },
+      { sig: "ui.setColor(id, '#RRGGBB')", desc: "script.uiSetColorDesc" },
+      { sig: "ui.setAlpha(id, 0.0~1.0)", desc: "script.uiSetAlphaDesc" },
     ],
   },
   {
     label: 'event',
     color: '#e9c46a',
     items: [
-      { sig: "event.emit(name, payload)", desc: "Emit an event" },
-      { sig: "event.on(name, callback)", desc: "Subscribe to an event" },
+      { sig: "event.emit(name, payload)", desc: "script.eventEmitDesc" },
+      { sig: "event.on(name, callback)", desc: "script.eventOnDesc" },
     ],
   },
   {
     label: 'store',
     color: '#f4a261',
     items: [
-      { sig: "store.get(key)", desc: "Get persistent data" },
-      { sig: "store.set(key, value)", desc: "Save persistent data" },
+      { sig: "store.get(key)", desc: "script.storeGetDesc" },
+      { sig: "store.set(key, value)", desc: "script.storeSetDesc" },
     ],
   },
   {
     label: 'log / error',
     color: '#9e9e9e',
     items: [
-      { sig: "log(message)", desc: "Debug log output" },
-      { sig: "error(message)", desc: "Error log output" },
+      { sig: "log(message)", desc: "script.logDesc" },
+      { sig: "error(message)", desc: "script.errorDesc" },
     ],
   },
 ];
 
 function ApiQuickRef() {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -261,7 +265,7 @@ function ApiQuickRef() {
         className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-arsist-muted hover:text-arsist-text transition-colors"
       >
         <Info size={12} />
-        <span>API Reference</span>
+        <span>{t('script.apiReference')}</span>
         <span className="ml-auto text-[10px] opacity-50">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
@@ -273,7 +277,7 @@ function ApiQuickRef() {
                 {sec.items.map((item) => (
                   <div key={item.sig} className="flex items-start gap-2">
                     <code className="text-[10px] font-mono text-arsist-text/80 shrink-0">{item.sig}</code>
-                    <span className="text-[10px] text-arsist-muted">— {item.desc}</span>
+                    <span className="text-[10px] text-arsist-muted">— {t(item.desc)}</span>
                   </div>
                 ))}
               </div>
@@ -290,6 +294,7 @@ function ApiQuickRef() {
 // ========================================
 
 export function ScriptInspector() {
+  const t = useT();
   const { project, currentScriptId, updateScript, removeScript } = useProjectStore();
   const { addConsoleLog } = useUIStore();
   const scripts = project?.scripts ?? [];
@@ -298,11 +303,11 @@ export function ScriptInspector() {
   if (!script) {
     return (
       <div className="h-full flex flex-col">
-        <div className="panel-header"><span>Script Inspector</span></div>
+        <div className="panel-header"><span>{t('script.scriptInspector')}</span></div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center text-arsist-muted text-[11px]">
             <Zap size={24} className="mx-auto mb-2 opacity-20" />
-            <p>Select a script</p>
+            <p>{t('script.selectScript')}</p>
           </div>
         </div>
       </div>
@@ -310,7 +315,7 @@ export function ScriptInspector() {
   }
 
   const handleRemove = () => {
-    if (!window.confirm(`Delete "${script.name}"?`)) return;
+    if (!window.confirm(t('script.confirmDelete', { name: script.name }))) return;
     removeScript(script.id);
     addConsoleLog({ type: 'warning', message: `Deleted script "${script.name}"` });
   };
@@ -318,7 +323,7 @@ export function ScriptInspector() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="panel-header">
-        <span>Script Inspector</span>
+        <span>{t('script.scriptInspector')}</span>
         <button onClick={handleRemove} className="btn-icon text-arsist-error hover:text-arsist-error">
           <Trash2 size={13} />
         </button>
@@ -326,7 +331,7 @@ export function ScriptInspector() {
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
         {/* Name */}
-        <Field label="Script Name">
+        <Field label={t('script.scriptName')}>
           <input
             className="input text-sm"
             value={script.name}
@@ -335,7 +340,7 @@ export function ScriptInspector() {
         </Field>
 
         {/* Description */}
-        <Field label="Description (optional)">
+        <Field label={t('script.description')}>
           <textarea
             className="input text-xs resize-none"
             rows={2}
@@ -346,7 +351,7 @@ export function ScriptInspector() {
 
         {/* Enabled toggle */}
         <div className="flex items-center justify-between">
-          <span className="input-label mb-0">Enabled</span>
+          <span className="input-label mb-0">{t('script.enabled')}</span>
           <button
             onClick={() => updateScript(script.id, { enabled: !script.enabled })}
             className={`relative w-10 h-5 rounded-full transition-colors ${script.enabled ? 'bg-arsist-accent' : 'bg-arsist-border'}`}
@@ -359,7 +364,7 @@ export function ScriptInspector() {
 
         {/* Trigger settings */}
         <div>
-          <label className="input-label">Trigger</label>
+          <label className="input-label">{t('script.trigger')}</label>
           <div className="space-y-2">
             {(['onStart', 'onUpdate', 'interval', 'event'] as ScriptTriggerType[]).map((t) => (
               <label key={t} className="flex items-center gap-2 cursor-pointer">
@@ -383,7 +388,7 @@ export function ScriptInspector() {
           {/* interval value */}
           {script.trigger.type === 'interval' && (
             <div className="mt-2">
-              <label className="input-label">Interval (ms)</label>
+              <label className="input-label">{t('script.intervalMs')}</label>
               <input
                 type="number"
                 min={100}
@@ -400,11 +405,11 @@ export function ScriptInspector() {
           {/* event value */}
           {script.trigger.type === 'event' && (
             <div className="mt-2">
-              <label className="input-label">Event Name</label>
+              <label className="input-label">{t('script.eventName')}</label>
               <input
                 type="text"
                 className="input text-xs font-mono"
-                placeholder="e.g., btn_refresh"
+                placeholder={t('script.eventNamePlaceholder')}
                 value={String(script.trigger.value ?? '')}
                 onChange={(e) =>
                   updateScript(script.id, { trigger: { type: 'event', value: e.target.value } })
@@ -418,9 +423,9 @@ export function ScriptInspector() {
 
         {/* Meta info */}
         <div className="space-y-1 text-[10px] text-arsist-muted">
-          <p>ID: <span className="font-mono text-arsist-text/60 break-all">{script.id}</span></p>
-          <p>Created: {new Date(script.createdAt).toLocaleString()}</p>
-          <p>Updated: {new Date(script.updatedAt).toLocaleString()}</p>
+          <p>{t('script.idLabel')}: <span className="font-mono text-arsist-text/60 break-all">{script.id}</span></p>
+          <p>{t('script.createdLabel')}: {new Date(script.createdAt).toLocaleString()}</p>
+          <p>{t('script.updatedLabel')}: {new Date(script.updatedAt).toLocaleString()}</p>
         </div>
       </div>
     </div>
@@ -432,6 +437,7 @@ export function ScriptInspector() {
 // ========================================
 
 export function ScriptFileList() {
+  const t = useT();
   const { project, currentScriptId, setCurrentScript, addScript, removeScript } = useProjectStore();
   const { addConsoleLog } = useUIStore();
   const scripts = project?.scripts ?? [];
@@ -449,7 +455,7 @@ export function ScriptFileList() {
   return (
     <div className="flex flex-col h-full">
       <div className="panel-header">
-        <span>Scripts ({scripts.length})</span>
+        <span>{t('script.scriptsCount', { count: scripts.length })}</span>
         <button className="btn-icon" onClick={() => setAdding((v) => !v)}>
           <Plus size={15} />
         </button>
@@ -461,7 +467,7 @@ export function ScriptFileList() {
           <input
             autoFocus
             className="input text-xs flex-1"
-            placeholder="Script name"
+            placeholder={t('script.namePlaceholder')}
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
@@ -495,7 +501,7 @@ export function ScriptFileList() {
         {scripts.length === 0 && (
           <div className="text-center py-6 text-arsist-muted text-[11px]">
             <Zap size={20} className="mx-auto mb-1.5 opacity-30" />
-            <p>Use “+” to create a script</p>
+            <p>{t('script.createHintShort')}</p>
           </div>
         )}
       </div>
@@ -517,11 +523,12 @@ function TriggerIcon({ type }: { type: ScriptTriggerType }) {
 }
 
 function TriggerOption({ type }: { type: ScriptTriggerType }) {
+  const t = useT();
   const labels: Record<ScriptTriggerType, { name: string; desc: string }> = {
-    onStart: { name: 'onStart', desc: 'Runs once when the app starts' },
-    onUpdate: { name: 'onUpdate', desc: 'Runs every frame (high frequency)' },
-    interval: { name: 'interval', desc: 'Runs repeatedly at the specified interval' },
-    event: { name: 'event', desc: 'Runs when the event fires' },
+    onStart: { name: 'onStart', desc: t('script.triggerOnStartDesc') },
+    onUpdate: { name: 'onUpdate', desc: t('script.triggerOnUpdateDesc') },
+    interval: { name: 'interval', desc: t('script.triggerIntervalDesc') },
+    event: { name: 'event', desc: t('script.triggerEventDesc') },
   };
   const info = labels[type];
   return (

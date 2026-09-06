@@ -23,6 +23,11 @@ export interface UnityBuildConfig {
     manualLicenseFile?: string;
     /** スクリプトデータ (scripts.json 相当の内容) */
     scriptsData?: object;
+    /**
+     * true の場合、作業用Unityプロジェクト（Library/を含む）を捨ててゼロから作り直す。
+     * 通常は false（差分ビルド）でよい。キャッシュ由来の不整合を疑うときの逃げ道。
+     */
+    cleanBuild?: boolean;
 }
 export interface BuildProgress {
     phase: string;
@@ -37,6 +42,11 @@ export declare class UnityBuilder extends EventEmitter {
     private buildInProgress;
     private lastLogFile;
     private preparedAndroidSdkPath;
+    /** validate() が取得した Unity バージョン文字列（例 "6000.0.40f1"）。パッケージ版数の分岐に使う。 */
+    private detectedUnityVersion;
+    /** 作業ディレクトリ再利用の互換バージョン。準備処理を変えたら上げる（＝全ユーザーが1回だけ作り直す）。 */
+    private static readonly WORKSPACE_CACHE_VERSION;
+    private static readonly WORKSPACE_STAMP_FILE;
     private isLicensingNoise;
     constructor(unityPath: string);
     private resolveUnityTemplatePathSync;
@@ -70,6 +80,17 @@ export declare class UnityBuilder extends EventEmitter {
         error?: string;
     }>;
     /**
+     * ビルド前に IR の「実機で無言に壊れる」組み合わせを検出する。
+     *
+     * 特に Canvas は、参照先の UILayout が未割り当て/削除済みでもビルド自体は成功し、
+     * 実機ではプレースホルダだけが表示される。原因が分かりにくいので、
+     * 黙って直したり素通りさせたりせず、ここでビルドを失敗させる。
+     */
+    private findIrProblems;
+    /** UI 要素ツリーを深さ優先で走査する。 */
+    private walkUiElements;
+    private formatIrProblems;
+    /**
      * ビルドキャンセル
      */
     cancel(): void;
@@ -77,10 +98,77 @@ export declare class UnityBuilder extends EventEmitter {
     private isUnityVersionCompatible;
     private normalizeUnityVersion;
     private compareVersions;
+    /** Unity が読み飛ばすディレクトリ（末尾 `~`）と VCS メタデータはコピーしない。 */
+    private isSyncExcludedDirName;
+    private stampOf;
+    /** root 以下のファイルを再帰列挙し、相対パス -> スタンプ の対応表を返す。 */
+    private collectFileStamps;
+    /**
+     * 同期先に置く「前回コピーしたソース側のスタンプ」記録。
+     * `.` 始まりのファイルは Unity のアセットパイプラインが無視するので、
+     * Assets/ や Packages/ の直下に置いても取り込まれない。
+     */
+    private static readonly SYNC_MANIFEST_FILE;
+    private readSyncManifest;
+    /**
+     * src -> dest を差分同期する。
+     *
+     * 変更判定は「ソース側スタンプ」と「前回同期時に記録したソース側スタンプ」の比較で行う。
+     * コピー先の mtime を見ないのは、`preserveTimestamps` がサブミリ秒を丸めてしまい
+     * 毎回わずかにズレて“変更あり”と誤判定されるため。
+     *
+     * Unity が生成した `.meta` は、対応するアセットが残っている限り prune しない
+     * （消すと GUID が振り直され、結局フルインポートになる）。
+     */
+    private syncDirectory;
+    /**
+     * prune 後に残った空ディレクトリを掃除する。
+     * `isRoot` の呼び出し（同期先そのもの）は空でも削除しない。
+     */
+    private removeEmptyDirs;
+    /** アセットフォルダと、それに対応する `.meta` をまとめて消す。 */
+    private removeAssetFolder;
+    /** 作業ディレクトリを作り直すべきか判定するためのフィンガープリント。 */
+    private computeSettingsFingerprint;
+    private readWorkspaceStamp;
+    /**
+     * 作業用Unityプロジェクトを用意する。
+     *
+     * 既存の作業ディレクトリが再利用可能なら Library/ を温存したまま差分更新する。
+     * 再利用できない（初回 / テンプレートの ProjectSettings が変わった / Unity を変えた /
+     * cleanBuild 指定）場合のみ、ゼロから作り直す。
+     */
     private prepareUnityProject;
+    /** 作業ディレクトリの中身を消す（保持対象ディレクトリも含めて完全にクリーンにする）。 */
+    private resetWorkspaceDir;
+    /**
+     * uGUI / TextMeshPro をUnityバージョンに合わせて manifest に足す。
+     * Unity 6 では TextMeshPro は com.unity.ugui 2.0.0 に統合済みで、
+     * 旧 com.unity.textmeshpro を要求すると解決に失敗する。
+     */
+    private ensureUnityUiPackages;
+    /** 検出済み Unity バージョンのメジャー番号（例 6000 / 2022）。不明なら 0。 */
+    private getUnityMajorVersion;
+    /** uGUI / TextMeshPro の依存をUnityバージョンに応じて設定する。 */
+    private applyUnityUiDependencies;
     private projectUsesVRM;
     private resolveUniVRMUnityPackagePath;
+    /**
+     * .unitypackage を作業プロジェクトへ取り込む。既に同じパッケージを取り込み済みなら何もしない。
+     *
+     * インポートは Unity をもう1プロセス起動するため数分単位のコストがある。
+     * 作業ディレクトリを再利用するようになったので、毎ビルド走らせる必要はない。
+     */
+    private ensureUnityPackageImported;
     private importUnityPackage;
+    /**
+     * Unity のログファイルから「本当の失敗理由」を拾う。
+     *
+     * batchmode の Unity は、スクリプトのコンパイルが1件でも通らないと、
+     * 何をしようとしていたか（パッケージのインポートでもビルドでも）に関係なく落ちる。
+     * その理由は stdout ではなくログファイルにしか出ないため、ここで探して呼び出し側に返す。
+     */
+    private extractUnityFailureReason;
     /**
      * Jint 4.x と Acornima の DLL を Assets/Plugins/ へ配置する。
      * - ローカルの sdk/nupkg/ を優先（オフライン対応）。
@@ -102,6 +190,30 @@ export declare class UnityBuilder extends EventEmitter {
     private integrateRequiredSdks;
     private integrateXrealSdk;
     private applyXrealRequiredDependencies;
+    /**
+     * Linux エディタでコンパイルが通らない Meta XR SDK の箇所に当てるパッチ。
+     *
+     * Meta XR SDK Core 85.0.0 の `Editor/MetaXRSimulator/Installer.cs` は
+     * `#if UNITY_EDITOR_WIN / #elif UNITY_EDITOR_OSX` しか持たず、Linux では
+     * `downloadedInstallerPath` がどの分岐でも宣言されないため CS0103 になる。
+     * これは MetaXRSimulatorCore.Editor アセンブリ全体のコンパイルを失敗させ、
+     * その時点で Unity のバッチ処理（UniVRM インポートやビルド）ごと止まる。
+     *
+     * Meta XR Simulator 自体が Linux 非対応なので、変数は使われない。
+     * 「宣言だけ足してコンパイルを通す」のが最小の修正になる。
+     *
+     * 将来 Meta 側が修正したら正規表現がマッチしなくなり、自動的に何もしなくなる。
+     */
+    private static readonly QUEST_CORE_LINUX_PATCHES;
+    /** パッチ内容を変えたらこの版数を上げる（キャッシュを作り直させるため）。 */
+    private static readonly QUEST_CORE_PATCH_VERSION;
+    /**
+     * Packages/ に置くべき Meta XR SDK Core の tgz を返す。
+     * Linux 以外、またはパッチ不要なら元の tgz をそのまま返す。
+     */
+    private resolveQuestCoreTgz;
+    /** tar をサブプロセスで実行する（Linux 限定の処理なので tar の存在を前提にしてよい）。 */
+    private runTar;
     private integrateQuestSdk;
     private applyQuestXrBootstrap;
     private readQuestSampleDependencies;
@@ -134,6 +246,15 @@ export declare class UnityBuilder extends EventEmitter {
     private executeUnityBuild;
     private parseUnityProgress;
     private verifyBuildOutput;
+    /**
+     * エラー行と、それに続くインデントされた本文をまとめて1つのメッセージにする。
+     *
+     * Gradle/AGP は原因を次の行にインデントで書く:
+     *     [:nr_loader:] .../AndroidManifest.xml Error:
+     *         Namespace 'nrsdk.pack' is used in multiple modules and/or libraries: ...
+     * 行単位で拾うと "... Error:" だけがUIに出て、肝心の原因が消えてしまう。
+     */
+    private collectErrorMessage;
     private readUnityLogIssues;
     private resolveAdapterDir;
     private emitProgress;

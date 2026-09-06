@@ -287,6 +287,39 @@ namespace Arsist.Runtime.Scripting
             return new List<string>(_dynamicObjects.Keys);
         }
 
+        /// <summary>
+        /// 登録済みオブジェクト全ての Transform を一度に返す。
+        ///
+        /// ライブ配置モードは「今の実機のシーンの見た目」を数Hzで描き直すので、
+        /// ID一覧→ID毎に getState と往復すると、オブジェクト数だけ往復が増える。
+        /// 1往復で全部返す口を用意しておく。
+        /// </summary>
+        public List<ObjectState> GetAllStates()
+        {
+            var states = new List<ObjectState>(_dynamicObjects.Count);
+            foreach (var pair in _dynamicObjects)
+            {
+                var obj = pair.Value;
+                if (obj == null)
+                {
+                    states.Add(new ObjectState { Id = pair.Key, Error = "destroyed" });
+                    continue;
+                }
+
+                var t = obj.transform;
+                states.Add(new ObjectState
+                {
+                    Id       = pair.Key,
+                    Name     = obj.name,
+                    Active   = obj.activeInHierarchy,
+                    Position = new float[] { t.position.x, t.position.y, t.position.z },
+                    Rotation = new float[] { t.eulerAngles.x, t.eulerAngles.y, t.eulerAngles.z },
+                    Scale    = new float[] { t.localScale.x,  t.localScale.y,  t.localScale.z  }
+                });
+            }
+            return states;
+        }
+
         // ========================================
         // PropertySystem (汎用BlendShape・ボーン制御)
         // ========================================
@@ -490,6 +523,9 @@ namespace Arsist.Runtime.Scripting
         {
             public string Id        = "";
             public string Error     = null;
+            /// <summary>GameObject 名（ライブ配置モードの一覧表示用。GetAllStates のみ設定）</summary>
+            public string Name      = null;
+            public bool Active      = true;
             public float[] Position = new float[3];
             public float[] Rotation = new float[3];
             public float[] Scale    = new float[] { 1f, 1f, 1f };

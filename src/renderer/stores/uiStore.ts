@@ -6,6 +6,14 @@ import { create } from 'zustand';
 
 export type ViewType = 'scene' | 'ui' | 'dataflow' | 'script';
 
+/**
+ * アプリ全体のモード。
+ * 'editor' = 通常のオーサリング画面、'live' = ライブ配置モード。
+ * ライブ配置モードは通常の編集UIと完全に別画面にする（同じ画面に混ぜると
+ * 「今いじっているのはプロジェクトなのか実機なのか」が分からなくなるため）。
+ */
+export type AppMode = 'editor' | 'live';
+
 export interface ConsoleLog {
   type: 'info' | 'warning' | 'error';
   message: string;
@@ -13,6 +21,9 @@ export interface ConsoleLog {
 }
 
 interface UIState {
+  appMode: AppMode;
+  setAppMode: (mode: AppMode) => void;
+
   currentView: ViewType;
   setCurrentView: (view: ViewType) => void;
 
@@ -41,9 +52,12 @@ interface UIState {
   // 3D Viewport
   showGrid: boolean;
   showAxes: boolean;
+  /** ユーザーの初期視点（スポーン位置＝原点）とその視野を表示する */
+  showSpawnView: boolean;
   snapToGrid: boolean;
   setShowGrid: (v: boolean) => void;
   setShowAxes: (v: boolean) => void;
+  setShowSpawnView: (v: boolean) => void;
   setSnapToGrid: (v: boolean) => void;
 
   transformMode: 'translate' | 'rotate' | 'scale';
@@ -75,6 +89,9 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set) => ({
+  appMode: 'editor',
+  setAppMode: (appMode) => set({ appMode }),
+
   currentView: 'scene',
   setCurrentView: (view) => set({ currentView: view === 'dataflow' ? 'ui' : view }),
 
@@ -100,9 +117,11 @@ export const useUIStore = create<UIState>((set) => ({
 
   showGrid: true,
   showAxes: true,
+  showSpawnView: true,
   snapToGrid: false,
   setShowGrid: (v) => set({ showGrid: v }),
   setShowAxes: (v) => set({ showAxes: v }),
+  setShowSpawnView: (v) => set({ showSpawnView: v }),
   setSnapToGrid: (v) => set({ snapToGrid: v }),
 
   transformMode: 'translate',

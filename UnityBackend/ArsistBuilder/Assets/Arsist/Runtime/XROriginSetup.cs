@@ -17,10 +17,26 @@ namespace Arsist.Runtime
     /// </summary>
     public class XROriginSetup : MonoBehaviour
     {
+        /// <summary>背景の描き方。ArsistBuildPipeline がビルド時に arSettings.backgroundMode から設定する。</summary>
+        public enum BackgroundMode
+        {
+            /// <summary>透過（光学シースルー / Quest のパススルー）。カメラは alpha=0 の黒でクリアする。</summary>
+            Passthrough = 0,
+            /// <summary>Skybox を背景に描く（VR）。</summary>
+            Skybox = 1,
+            /// <summary>単色で塗りつぶす（VR）。</summary>
+            SolidColor = 2,
+        }
+
         [Header("Camera Settings")]
         [SerializeField] private Camera _mainCamera;
         [SerializeField] private Transform _cameraOffset;
         [SerializeField] private float _defaultHeight = 1.6f;
+
+        [Tooltip("背景の描き方。ビルド時に arSettings.backgroundMode から設定される。")]
+        [SerializeField] private BackgroundMode _backgroundMode = BackgroundMode.Passthrough;
+        [Tooltip("_backgroundMode = SolidColor のときの背景色。")]
+        [SerializeField] private Color _backgroundColor = Color.black;
         
         [Header("Interaction")]
         [SerializeField] private bool _enableGazeInteraction = true;
@@ -36,10 +52,30 @@ namespace Arsist.Runtime
         private Vector3 _lastHeadPosition;
         private Quaternion _lastHeadRotation;
 
+        // コントローラーレイの選択状態（Enter/Exit と トリガー立ち上がりでの決定を検出するため）
+        private GameObject _rayCurrentTarget;
+        private bool _rayTriggerWasPressed;
+
+        [Header("Performance")]
+        [Tooltip("ARグラス側のリフレッシュレートに合わせた目標フレームレート。0以下で未設定。")]
+        [SerializeField] private int _targetFrameRate = 60;
+
         private void Awake()
         {
+            ApplyFrameRateSettings();
             SetupCamera();
             SetupInteraction();
+        }
+
+        /// <summary>
+        /// Application.targetFrameRate はランタイムでしか効かないため、ここで適用する。
+        /// (以前は XrealBuildPatcher がビルド時に設定していたが、APKには反映されていなかった)
+        /// </summary>
+        private void ApplyFrameRateSettings()
+        {
+            if (_targetFrameRate <= 0) return;
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = _targetFrameRate;
         }
 
         private void Start()
@@ -47,17 +83,50 @@ namespace Arsist.Runtime
             StartCoroutine(InitializeXR());
         }
 
+        [Header("XR Initialization")]
+        [Tooltip("XRディスプレイの起動を待つ最大秒数。XREAL SDKの初期化は環境により遅れるため固定待ちにしない。")]
+        [SerializeField] private float _xrInitTimeoutSeconds = 8f;
+
         private IEnumerator InitializeXR()
         {
-            // XRの初期化を待つ
-            yield return new WaitForSeconds(0.5f);
-            
+            // XRディスプレイが「running」になるまでポーリングする。
+            // 以前は固定 WaitForSeconds(0.5f) で判定しており、XREAL SDK の初期化が
+            // 遅い環境ではまだ起動していないのにフォールバック（マウス操作）へ落ちて
+            // 「トラッキングが効かない」ように見える誤発火の原因になっていた。
             var xrDisplaySubsystems = new List<XRDisplaySubsystem>();
-            SubsystemManager.GetInstances(xrDisplaySubsystems);
-            
+            float elapsed = 0f;
+
+            while (elapsed < _xrInitTimeoutSeconds)
+            {
+                xrDisplaySubsystems.Clear();
+                SubsystemManager.GetInstances(xrDisplaySubsystems);
+
+                bool running = false;
+                foreach (var ds in xrDisplaySubsystems)
+                {
+                    if (ds != null && ds.running)
+                    {
+                        running = true;
+                        break;
+                    }
+                }
+
+                if (running)
+                {
+                    Debug.Log($"[Arsist] XR Display initialized after {elapsed:F1}s");
+                    _isTracking = true;
+                    yield break;
+                }
+
+                elapsed += Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            // タイムアウト: それでも見つかった（=生成はされたがまだrunningでない）なら
+            // トラッキング扱いにし、完全に無ければフォールバックへ。
             if (xrDisplaySubsystems.Count > 0)
             {
-                Debug.Log("[Arsist] XR Display initialized");
+                Debug.LogWarning($"[Arsist] XR Display present but not running after {_xrInitTimeoutSeconds:F0}s; continuing in XR mode");
                 _isTracking = true;
             }
             else
@@ -85,14 +154,13 @@ namespace Arsist.Runtime
                 {
                     _mainCamera.tag = "MainCamera";
                 }
-                _mainCamera.clearFlags = CameraClearFlags.SolidColor;
-                // XREAL: 黒(RGB0)を透過扱い。alpha=0の黒に揃える。
-                _mainCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                ApplyBackground(_mainCamera);
                 _mainCamera.nearClipPlane = 0.1f;
                 _mainCamera.farClipPlane = 100f;
 
                 // AR Foundation の ARCameraBackground が付いていると視界が塗りつぶされることがあるため除去
                 // （パッケージが無い場合もあるので、型名で安全に取得する）
+                // VR 背景（Skybox / SolidColor）でも、AR 用のカメラ映像描画は不要なので同じく外す。
                 var arCameraBackground = _mainCamera.GetComponent("UnityEngine.XR.ARFoundation.ARCameraBackground");
                 if (arCameraBackground != null)
                 {
@@ -107,6 +175,35 @@ namespace Arsist.Runtime
                 {
                     _cameraOffset = _mainCamera.transform.parent;
                 }
+            }
+        }
+
+        /// <summary>
+        /// 背景（カメラの clear）を _backgroundMode に従って設定する。
+        ///
+        /// 以前はここで無条件に alpha=0 の黒クリアを強制していたため、ビルド時に
+        /// Skybox / 単色を選んでもランタイムで上書きされて必ず透過になっていた。
+        /// </summary>
+        private void ApplyBackground(Camera cam)
+        {
+            switch (_backgroundMode)
+            {
+                case BackgroundMode.Skybox:
+                    cam.clearFlags = CameraClearFlags.Skybox;
+                    break;
+
+                case BackgroundMode.SolidColor:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    // VR 背景は不透過。alpha を落とすと Quest 側で素通しになってしまう。
+                    cam.backgroundColor = new Color(_backgroundColor.r, _backgroundColor.g, _backgroundColor.b, 1f);
+                    break;
+
+                default:
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    // 光学シースルー(XREAL)は黒(RGB0)がそのまま透過。
+                    // Quest のパススルーも、アンダーレイ合成のために alpha=0 の黒が必要。
+                    cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                    break;
             }
         }
 
@@ -297,32 +394,77 @@ namespace Arsist.Runtime
             var inputDevices = new List<InputDevice>();
             InputDevices.GetDevicesWithCharacteristics(InputDeviceCharacteristics.Controller, inputDevices);
 
-            if (inputDevices.Count > 0)
+            if (inputDevices.Count == 0)
             {
-                var controller = inputDevices[0];
-                
-                if (controller.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 pos) &&
-                    controller.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion rot))
+                _rayLine.enabled = false;
+                ReleaseRayTarget();
+                return;
+            }
+
+            var controller = inputDevices[0];
+
+            if (!controller.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 pos) ||
+                !controller.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion rot))
+            {
+                _rayLine.enabled = false;
+                ReleaseRayTarget();
+                return;
+            }
+
+            _rayLine.enabled = true;
+
+            var startPos = pos;
+            var direction = rot * Vector3.forward;
+            var endPos = startPos + direction * 10f;
+
+            GameObject hitTarget = null;
+            Vector3 hitPoint = default;
+            if (Physics.Raycast(startPos, direction, out RaycastHit hit, 10f))
+            {
+                endPos = hit.point;
+                hitPoint = hit.point;
+                hitTarget = hit.collider.gameObject;
+            }
+
+            _rayLine.SetPosition(0, startPos);
+            _rayLine.SetPosition(1, endPos);
+
+            // Enter/Exit 通知（ArsistGazeTarget と同じ SendMessage を再利用。
+            // 視線・コントローラーレイ・ハンドトラッキングのどれでも同じ IR ロジックが動く）
+            if (hitTarget != _rayCurrentTarget)
+            {
+                if (_rayCurrentTarget != null)
                 {
-                    _rayLine.enabled = true;
-                    
-                    var startPos = pos;
-                    var direction = rot * Vector3.forward;
-                    var endPos = startPos + direction * 10f;
-                    
-                    if (Physics.Raycast(startPos, direction, out RaycastHit hit, 10f))
-                    {
-                        endPos = hit.point;
-                    }
-                    
-                    _rayLine.SetPosition(0, startPos);
-                    _rayLine.SetPosition(1, endPos);
+                    _rayCurrentTarget.SendMessage("OnGazeExit", SendMessageOptions.DontRequireReceiver);
                 }
-                else
+                _rayCurrentTarget = hitTarget;
+                if (_rayCurrentTarget != null)
                 {
-                    _rayLine.enabled = false;
+                    _rayCurrentTarget.SendMessage("OnGazeEnter", hitPoint, SendMessageOptions.DontRequireReceiver);
                 }
             }
+
+            // トリガーの立ち上がりだけを「決定」として送る（押しっぱなしで連打しない）
+            var triggerPressed = controller.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigger) && trigger;
+            if (triggerPressed && !_rayTriggerWasPressed && _rayCurrentTarget != null)
+            {
+                _rayCurrentTarget.SendMessage("OnGazeDwellSelect", hitPoint, SendMessageOptions.DontRequireReceiver);
+            }
+            // 押し続けている間は毎フレーム送る（Slider を掴んでドラッグする用途。
+            // Button 等 OnGazeDrag を実装しないターゲットには何も起きない）
+            if (triggerPressed && _rayCurrentTarget != null)
+            {
+                _rayCurrentTarget.SendMessage("OnGazeDrag", hitPoint, SendMessageOptions.DontRequireReceiver);
+            }
+            _rayTriggerWasPressed = triggerPressed;
+        }
+
+        private void ReleaseRayTarget()
+        {
+            if (_rayCurrentTarget == null) return;
+            _rayCurrentTarget.SendMessage("OnGazeExit", SendMessageOptions.DontRequireReceiver);
+            _rayCurrentTarget = null;
+            _rayTriggerWasPressed = false;
         }
 
         /// <summary>

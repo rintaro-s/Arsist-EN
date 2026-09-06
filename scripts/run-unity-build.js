@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 // Use the same compiled entrypoint Electron uses (dist/main/main/*)
 const { UnityBuilder } = require(path.join('..', 'dist', 'main', 'main', 'unity', 'UnityBuilder'));
+const { getConfigStorePath } = require(path.join(__dirname, 'lib', 'config-path'));
 
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -22,10 +22,7 @@ function pickFirstExisting(paths) {
 }
 
 (async () => {
-  const appName = 'arsist-engine';
-  const storePath = process.platform === 'win32'
-    ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), appName, 'config.json')
-    : path.join(os.homedir(), '.config', appName, 'config.json');
+  const storePath = getConfigStorePath('arsist-engine');
   let store = {};
   try {
     if (fs.existsSync(storePath)) {
