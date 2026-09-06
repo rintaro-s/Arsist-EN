@@ -536,6 +536,9 @@ namespace Arsist.Runtime.Network
                 case "query":
                     return ExecuteQueryCommand(scriptEngine, cmd, out errorMsg);
 
+                case "viewer":
+                    return ExecuteViewerCommand(scriptEngine, cmd, out errorMsg);
+
                 case "script":
                     ExecuteScript(scriptEngine, cmd);
                     return new { ok = true };
@@ -649,6 +652,15 @@ namespace Arsist.Runtime.Network
 
                 case "getstate":
                     return scriptEngine.SceneWrapper.GetState(p.id ?? p.object_id);
+
+                // ライブ配置モード用: 1往復でシーン全体の Transform を取る
+                case "getscene":
+                    return new { objects = scriptEngine.SceneWrapper.GetAllStates() };
+
+                // ライブ配置モード用: ユーザー視点（実行時Unityワールド座標）
+                case "getheadpose":
+                case "getviewerpose":
+                    return scriptEngine.ViewerWrapper.GetPose();
 
                 case "ping":
                     return new { pong = true, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
@@ -841,6 +853,46 @@ namespace Arsist.Runtime.Network
             }
         }
 
+        /// <summary>
+        /// ユーザー視点まわりの操作。ライブ配置モード（エディタ側の別UI）から使う。
+        ///   viewer.getPose      : 今の視点の位置・向き
+        ///   viewer.recenter     : 視点の位置リセット
+        ///   viewer.placeInFront : 対象を「ユーザーの正面 distance[m]」に置く
+        /// </summary>
+        private object ExecuteViewerCommand(Scripting.ScriptEngineManager scriptEngine, RemoteCommand cmd, out string errorMsg)
+        {
+            errorMsg = null;
+            var p = cmd.parameters ?? new CommandParameters();
+            var viewer = scriptEngine.ViewerWrapper;
+
+            switch (cmd.method)
+            {
+                case "getpose":
+                    return viewer.GetPose();
+
+                case "recenter":
+                case "resetposition":
+                    return new { ok = viewer.recenter() };
+
+                case "placeinfront":
+                {
+                    var id = p.id ?? p.object_id;
+                    if (string.IsNullOrEmpty(id))
+                    {
+                        errorMsg = "placeInFront requires parameters.id";
+                        return null;
+                    }
+                    var distance = p.distance ?? p.value ?? 2f;
+                    var faceUser = p.faceUser ?? true;
+                    return new { ok = viewer.placeInFront(id, distance, faceUser) };
+                }
+
+                default:
+                    errorMsg = $"Unknown viewer method: {cmd.method}";
+                    return null;
+            }
+        }
+
         private void ExecuteScript(Scripting.ScriptEngineManager engine, RemoteCommand cmd)
         {
             if (!string.IsNullOrEmpty(cmd.parameters.code))
@@ -885,6 +937,8 @@ namespace Arsist.Runtime.Network
             public string side;           // setHandTarget 用: "left" / "right"
             public string name;           // Python/legacy互換: setExpression 用
             public float? value;
+            public float? distance;       // viewer.placeInFront 用: ユーザーからの距離[m]
+            public bool? faceUser;        // viewer.placeInFront 用: ユーザーに正対させるか
             public string code;
             /// <summary>type="batch" のときに実行するサブコマンド列。</summary>
             public List<RemoteCommand> commands;

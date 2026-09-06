@@ -3279,7 +3279,7 @@ ScriptedImporter:
                     textAreaRect.anchorMax = Vector2.one;
                     textAreaRect.offsetMin = new Vector2(10, 6);
                     textAreaRect.offsetMax = new Vector2(-10, -6);
-                    textAreaGO.AddComponent<RectMask2D>();
+                    textAreaGO.AddComponent<UnityEngine.UI.RectMask2D>();
 
                     var placeholderGO = new GameObject("Placeholder");
                     placeholderGO.transform.SetParent(textAreaGO.transform, false);
@@ -3614,7 +3614,11 @@ ScriptedImporter:
         /// </summary>
         private static void SizeBoxColliderToRect(GameObject go, RectTransform rectTransform)
         {
-            var collider = go.GetComponent<BoxCollider>() ?? go.AddComponent<BoxCollider>();
+            // NOTE: UnityEngine.Object は「破棄済み/未取得」を偽装 null で表すため、
+            // C# の ?? / ?. は効かない（偽装 null が非 null と判定され、AddComponent が走らない）。
+            // Unity がオーバーロードした == を通す必要があるので、素直に if で書く。
+            var collider = go.GetComponent<BoxCollider>();
+            if (collider == null) collider = go.AddComponent<BoxCollider>();
             var rect = rectTransform.rect;
             collider.center = new Vector3(rect.center.x, rect.center.y, 0f);
             collider.size = new Vector3(Mathf.Max(rect.width, 1f), Mathf.Max(rect.height, 1f), 2f);
@@ -4960,18 +4964,19 @@ ScriptedImporter:
 
             // EnsureQuestOvrManager が付けた直後のものを最優先で拾う（非アクティブでも取れる）。
             var manager = xrOrigin != null ? xrOrigin.GetComponentInChildren(ovrManagerType, true) : null;
-            if (manager != null)
+            if (manager == null) manager = FindComponentInLoadedScenes(ovrManagerType);
+
+            if (manager == null)
             {
-                TrySetMemberValue(manager, "isInsightPassthroughEnabled", true);
+                // ここに来たらパススルーは実機で出ない。黙って進むと原因が追えないので必ず出す。
+                Debug.LogWarning(
+                    "[Arsist] No OVRManager found in the scene; insight passthrough cannot be enabled " +
+                    "(the app will show a black background instead of passthrough).");
                 return;
             }
 
-            var managers = UnityEngine.Object.FindObjectsByType(ovrManagerType, FindObjectsSortMode.None);
-            if (managers == null) return;
-            foreach (var found in managers)
-            {
-                TrySetMemberValue(found, "isInsightPassthroughEnabled", true);
-            }
+            var wired = TrySetMemberValue(manager, "isInsightPassthroughEnabled", true);
+            Debug.Log($"[Arsist] OVRManager.isInsightPassthroughEnabled = true on '{manager.gameObject.name}' (wired={wired})");
         }
 
         private static void ApplyQuestBuildBootstrap()
@@ -4980,6 +4985,32 @@ ScriptedImporter:
 
             Debug.Log("[Arsist] Phase 3.15: Applying Quest build bootstrap...");
             ConfigureOculusProjectConfigForQuest();
+        }
+
+        /// <summary>
+        /// 「今開いているシーンに実在するコンポーネント」だけを探す。
+        ///
+        /// Resources.FindObjectsOfTypeAll はプレハブアセット側のコンポーネントも返してしまうため、
+        /// シーンへの追加要否の判定には使えない。非アクティブなオブジェクトも対象にしたいので
+        /// FindObjectsByType(..., FindObjectsInactive.Include, ...) を使う。
+        /// </summary>
+        private static Component FindComponentInLoadedScenes(Type componentType)
+        {
+            if (componentType == null) return null;
+
+            var found = UnityEngine.Object.FindObjectsByType(
+                componentType, FindObjectsInactive.Include, FindObjectsSortMode.None);
+            if (found == null) return null;
+
+            foreach (var obj in found)
+            {
+                var component = obj as Component;
+                if (component == null) continue;
+                if (EditorUtility.IsPersistent(component)) continue;      // プレハブ等のアセット
+                if (!component.gameObject.scene.IsValid()) continue;      // シーンに属さない一時オブジェクト
+                return component;
+            }
+            return null;
         }
 
         private static void EnsureQuestOvrManager(GameObject xrOrigin)
@@ -4991,10 +5022,15 @@ ScriptedImporter:
                 return;
             }
 
-            var existingManagers = Resources.FindObjectsOfTypeAll(ovrManagerType);
-            if (existingManagers != null && existingManagers.Length > 0)
+            // NOTE: Resources.FindObjectsOfTypeAll は「読み込み済みの全オブジェクト」を返すので、
+            // Meta XR SDK のプレハブ (OVRCameraRig 等) に付いている OVRManager までヒットする。
+            // それを「シーンにある」と誤判定すると OVRManager がシーンに入らず、
+            // 実機で OVRPlugin が初期化されない＝パススルーが出ない（背景が黒のまま）。
+            // 判定は必ず「シーンに実在するインスタンスか」で行う。
+            var existing = FindComponentInLoadedScenes(ovrManagerType);
+            if (existing != null)
             {
-                Debug.Log("[Arsist] OVRManager already exists in scene.");
+                Debug.Log($"[Arsist] OVRManager already in scene on '{existing.gameObject.name}'.");
                 return;
             }
 

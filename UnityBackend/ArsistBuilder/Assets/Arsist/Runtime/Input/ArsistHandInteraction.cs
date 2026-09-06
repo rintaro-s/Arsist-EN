@@ -79,9 +79,14 @@ namespace Arsist.Runtime.Input
             line.positionCount = 2;
             line.useWorldSpace = true;
 
-            var shader = Shader.Find("Unlit/Color")
-                         ?? Shader.Find("Universal Render Pipeline/Unlit")
-                         ?? Shader.Find("Sprites/Default");
+            // Unity の Object は == をオーバーロードしているので、?? ではなく == で見る
+            // （XROriginSetup.FindSafeShader と同じ方針）
+            Shader shader = null;
+            foreach (var shaderName in new[] { "Unlit/Color", "Universal Render Pipeline/Unlit", "Sprites/Default" })
+            {
+                var candidate = Shader.Find(shaderName);
+                if (candidate != null) { shader = candidate; break; }
+            }
             if (shader != null)
             {
                 line.material = new Material(shader) { color = _rayColor };

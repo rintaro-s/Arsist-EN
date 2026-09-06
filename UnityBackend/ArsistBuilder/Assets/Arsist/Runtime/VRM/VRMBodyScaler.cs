@@ -83,7 +83,9 @@ namespace Arsist.Runtime.VRM
                 return bone.TransformPoint(offset);
             }
 
-            var animator = GetComponent<Animator>() ?? GetComponentInChildren<Animator>(true);
+            // ?? は Unity の偽装 null を見抜けないので使わない（== はオーバーロードされている）
+            var animator = GetComponent<Animator>();
+            if (animator == null) animator = GetComponentInChildren<Animator>(true);
             if (animator != null && animator.isHuman)
             {
                 var head = animator.GetBoneTransform(HumanBodyBones.Head);

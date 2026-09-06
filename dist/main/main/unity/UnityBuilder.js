@@ -1149,13 +1149,18 @@ class UnityBuilder extends events_1.EventEmitter {
                     resolve({ success: true });
                 }
                 else {
-                    // エラーメッセージをログから取得
-                    let errorMsg = stderr.trim() || stdout.trim() || `Unity package import failed with exit code ${code}`;
-                    // 最初の100文字のみを返す（冗長なログを避けるため）
-                    if (errorMsg.length > 200) {
-                        errorMsg = errorMsg.substring(0, 200) + '...';
-                    }
-                    resolve({ success: false, error: errorMsg });
+                    // Unity の stdout/stderr は起動時の設定ダンプで埋まっていて、失敗理由はまず入っていない。
+                    // 実際の原因（コンパイルエラー等）は -logFile の中にあるので、そちらを優先して抜き出す。
+                    void this.extractUnityFailureReason(logFile).then((fromLog) => {
+                        let errorMsg = fromLog
+                            || stderr.trim()
+                            || stdout.trim()
+                            || `Unity package import failed with exit code ${code}`;
+                        if (errorMsg.length > 600) {
+                            errorMsg = errorMsg.substring(0, 600) + '...';
+                        }
+                        resolve({ success: false, error: errorMsg });
+                    });
                 }
             });
             proc.on('error', (err) => {
@@ -1163,6 +1168,35 @@ class UnityBuilder extends events_1.EventEmitter {
                 resolve({ success: false, error: err.message });
             });
         });
+    }
+    /**
+     * Unity のログファイルから「本当の失敗理由」を拾う。
+     *
+     * batchmode の Unity は、スクリプトのコンパイルが1件でも通らないと、
+     * 何をしようとしていたか（パッケージのインポートでもビルドでも）に関係なく落ちる。
+     * その理由は stdout ではなくログファイルにしか出ないため、ここで探して呼び出し側に返す。
+     */
+    async extractUnityFailureReason(logFile) {
+        let content;
+        try {
+            content = await fs.readFile(logFile, 'utf-8');
+        }
+        catch {
+            return null;
+        }
+        // C# のコンパイルエラー（同じ行が何度も出るので重複を潰す）
+        const compileErrors = Array.from(new Set((content.match(/^.*?\(\d+,\d+\): error [A-Z]+\d+: .*$/gm) ?? []).map((l) => l.trim())));
+        if (compileErrors.length > 0) {
+            const head = compileErrors.slice(0, 5).join('\n');
+            const rest = compileErrors.length > 5 ? `\n(他 ${compileErrors.length - 5} 件)` : '';
+            return `Unity script compilation failed:\n${head}${rest}\nFull log: ${logFile}`;
+        }
+        // それ以外の代表的な失敗（ライセンス等）
+        const known = content.match(/^.*(No valid Unity Editor license found|Failed to activate|Aborting batchmode due to failure).*$/m);
+        if (known) {
+            return `${known[0].trim()}\nFull log: ${logFile}`;
+        }
+        return null;
     }
     /**
      * Jint 4.x と Acornima の DLL を Assets/Plugins/ へ配置する。
@@ -1531,6 +1565,122 @@ class UnityBuilder extends events_1.EventEmitter {
         // （Unity 6 では TextMeshPro が com.unity.ugui 2.0.0 に統合されている）
         this.applyUnityUiDependencies(deps);
     }
+    /**
+     * Linux エディタでコンパイルが通らない Meta XR SDK の箇所に当てるパッチ。
+     *
+     * Meta XR SDK Core 85.0.0 の `Editor/MetaXRSimulator/Installer.cs` は
+     * `#if UNITY_EDITOR_WIN / #elif UNITY_EDITOR_OSX` しか持たず、Linux では
+     * `downloadedInstallerPath` がどの分岐でも宣言されないため CS0103 になる。
+     * これは MetaXRSimulatorCore.Editor アセンブリ全体のコンパイルを失敗させ、
+     * その時点で Unity のバッチ処理（UniVRM インポートやビルド）ごと止まる。
+     *
+     * Meta XR Simulator 自体が Linux 非対応なので、変数は使われない。
+     * 「宣言だけ足してコンパイルを通す」のが最小の修正になる。
+     *
+     * 将来 Meta 側が修正したら正規表現がマッチしなくなり、自動的に何もしなくなる。
+     */
+    static QUEST_CORE_LINUX_PATCHES = [
+        {
+            file: 'package/Editor/MetaXRSimulator/Installer.cs',
+            // #elif UNITY_EDITOR_OSX ... .dmg"); の直後の #endif の前に #else を差し込む
+            find: /(#elif UNITY_EDITOR_OSX[\s\S]*?meta_xr_simulator\.dmg"\);[ \t]*\r?\n)(#endif)/,
+            replace: '$1#else\n' +
+                '            // [Arsist patch] Linux 用の分岐が無く downloadedInstallerPath が未定義になる (CS0103)。\n' +
+                '            // Meta XR Simulator は Linux 非対応で値は使われないが、コンパイルを通すため宣言する。\n' +
+                '            var downloadedInstallerPath =\n' +
+                '                            Path.Combine(XRSimConstants.DownloadFolderPath, "meta_xr_simulator.bin");\n' +
+                '$2',
+            reason: 'CS0103: downloadedInstallerPath is not defined on Linux editors',
+        },
+    ];
+    /** パッチ内容を変えたらこの版数を上げる（キャッシュを作り直させるため）。 */
+    static QUEST_CORE_PATCH_VERSION = 1;
+    /**
+     * Packages/ に置くべき Meta XR SDK Core の tgz を返す。
+     * Linux 以外、またはパッチ不要なら元の tgz をそのまま返す。
+     */
+    async resolveQuestCoreTgz(sourceTgz, unityProjectPath) {
+        if (process.platform !== 'linux')
+            return sourceTgz;
+        if (UnityBuilder.QUEST_CORE_LINUX_PATCHES.length === 0)
+            return sourceTgz;
+        const cacheDir = path.join(unityProjectPath, '.arsist-quest-sdk-patch');
+        const patchedTgz = path.join(cacheDir, path.basename(sourceTgz));
+        const stampFile = path.join(cacheDir, 'stamp.json');
+        const stamp = `${this.stampOf(await fs.stat(sourceTgz))}:v${UnityBuilder.QUEST_CORE_PATCH_VERSION}`;
+        // 同じ入力から作ったものが残っていれば使い回す（展開+再圧縮は数秒かかる）
+        try {
+            const existing = await fs.readJSON(stampFile);
+            if (existing?.stamp === stamp && await fs.pathExists(patchedTgz)) {
+                this.emit('log', '[Arsist] Using cached Linux-patched Quest SDK core package');
+                return patchedTgz;
+            }
+        }
+        catch {
+            // キャッシュ無し／壊れている場合は作り直す
+        }
+        const workDir = path.join(cacheDir, 'work');
+        await fs.remove(workDir);
+        await fs.ensureDir(workDir);
+        try {
+            this.emit('log', '[Arsist] Patching Quest SDK core package for Linux editor...');
+            await this.runTar(['-xzf', sourceTgz, '-C', workDir]);
+            const applied = [];
+            for (const patch of UnityBuilder.QUEST_CORE_LINUX_PATCHES) {
+                const target = path.join(workDir, patch.file);
+                if (!await fs.pathExists(target)) {
+                    this.emit('log', `[Arsist] Quest SDK patch skipped (file not in package): ${patch.file}`);
+                    continue;
+                }
+                const before = await fs.readFile(target, 'utf-8');
+                if (before.includes('[Arsist patch]')) {
+                    applied.push(`${patch.file} (already patched)`);
+                    continue;
+                }
+                const after = before.replace(patch.find, patch.replace);
+                if (after === before) {
+                    // Meta 側が直したか、構造が変わった。黙って通すと原因不明のビルド失敗になるので必ず出す。
+                    this.emit('log', `[Arsist] Quest SDK patch did not match (${patch.file}). ` +
+                        `If the build fails with "${patch.reason}", this patch needs updating.`);
+                    continue;
+                }
+                await fs.writeFile(target, after, 'utf-8');
+                applied.push(patch.file);
+            }
+            if (applied.length === 0) {
+                this.emit('log', '[Arsist] No Quest SDK patches applied; using the original package');
+                await fs.remove(workDir);
+                return sourceTgz;
+            }
+            await this.runTar(['-czf', patchedTgz, '-C', workDir, 'package']);
+            await fs.writeJSON(stampFile, { stamp, applied }, { spaces: 0 });
+            this.emit('log', `[Arsist] Quest SDK core patched for Linux: ${applied.join(', ')}`);
+            return patchedTgz;
+        }
+        catch (e) {
+            // パッチに失敗しても元の tgz でビルドを続ける（そこで落ちれば元の症状に戻るだけ）
+            this.emit('log', `[Arsist] Quest SDK patch failed, falling back to the original package: ${e instanceof Error ? e.message : String(e)}`);
+            return sourceTgz;
+        }
+        finally {
+            await fs.remove(workDir).catch(() => { });
+        }
+    }
+    /** tar をサブプロセスで実行する（Linux 限定の処理なので tar の存在を前提にしてよい）。 */
+    runTar(args) {
+        return new Promise((resolve, reject) => {
+            const proc = (0, child_process_1.spawn)('tar', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+            let stderr = '';
+            proc.stderr?.on('data', (d) => { stderr += d.toString(); });
+            proc.on('error', (err) => reject(err));
+            proc.on('close', (code) => {
+                if (code === 0)
+                    resolve();
+                else
+                    reject(new Error(`tar ${args[0]} failed (exit ${code}): ${stderr.trim().slice(0, 300)}`));
+            });
+        });
+    }
     async integrateQuestSdk(unityProjectPath) {
         const questSdkDir = path.join(this.resolveSdkDir(), 'quest');
         if (!await fs.pathExists(questSdkDir)) {
@@ -1546,7 +1696,11 @@ class UnityBuilder extends events_1.EventEmitter {
         await fs.ensureDir(packagesDir);
         const copiedPackages = [];
         const copyTgzToPackages = async (packageId, fileName) => {
-            const source = path.join(questSdkDir, fileName);
+            // Linux では Meta XR SDK Core にコンパイルが通らない箇所があるため、
+            // パッチ済みの派生 tgz に差し替える（sdk/ 側は書き換えない）
+            const source = packageId === 'com.meta.xr.sdk.core'
+                ? await this.resolveQuestCoreTgz(path.join(questSdkDir, fileName), unityProjectPath)
+                : path.join(questSdkDir, fileName);
             const destination = path.join(packagesDir, fileName);
             // tgz の mtime が変わると Unity が tarball を展開し直すので、変化が無ければ触らない
             const sourceStamp = this.stampOf(await fs.stat(source));
@@ -2108,6 +2262,10 @@ class UnityBuilder extends events_1.EventEmitter {
                 }
                 const isLicensingMessage = (text) => this.isLicensingNoise(text);
                 const pickBestError = (errors) => {
+                    // 0) Arsist 自身が出した失敗理由（最も具体的）
+                    const arsistFailure = errors.find((e) => /^\[Arsist\]\s*Build failed:/i.test(e));
+                    if (arsistFailure)
+                        return arsistFailure;
                     // 1) コンパイルエラー
                     const csError = errors.find((e) => /error\s+CS\d+/i.test(e));
                     if (csError)
@@ -2306,6 +2464,14 @@ class UnityBuilder extends events_1.EventEmitter {
                     continue;
                 if (/Scripts have compiler errors\./i.test(t)) {
                     errors.push(t);
+                    continue;
+                }
+                // ArsistBuildPipeline が自分で catch して出す失敗。「何が起きたか」が
+                // 一番具体的に書かれているので、error という語が無くても必ず拾う。
+                if (/^\[Arsist\]\s*Build failed:/i.test(t)) {
+                    const { message, nextIndex } = this.collectErrorMessage(lines, i);
+                    errors.push(message);
+                    i = nextIndex;
                     continue;
                 }
                 if (this.isLicensingNoise(t)) {

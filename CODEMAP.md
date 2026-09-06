@@ -150,6 +150,21 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
 - **A build fails / retry / licensing** → [UnityBuilder.ts](src/main/unity/UnityBuilder.ts) `build()` and retry ladder.
 - **XREAL setup / stability / DoF / manifest** → [XrealBuildPatcher.cs](Adapters/XREAL_One/XrealBuildPatcher.cs) + `CreateXROrigin` in [ArsistBuildPipeline.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs); ground truth in `sdk/com.xreal.xr/package/`.
 - **Quest setup** → [QuestBuildPatcher.cs](Adapters/Meta_Quest/QuestBuildPatcher.cs).
+- **Live layout mode (a separate UI from the editor)** → [src/renderer/live/](src/renderer/live/).
+  Entered from the toolbar (`uiStore.appMode = 'live'`); `App.tsx` swaps `MainLayout` for `LiveLayoutMode`,
+  so it shares no panels or toolbar with the authoring UI. Two sources feed the same views
+  (`useLiveScene`): the project IR converted to runtime space (simulation, no device needed), or the live
+  device polled over WebSocket (`LiveClient` + `useDevicePolling`). `WorldView` draws the user's viewpoint
+  and gaze; `FirstPersonView` draws what the user sees at the device FOV — the same component powers the
+  pre-build simulation. Editing sends `scene.set*` / `viewer.placeInFront` straight to the device; writing
+  back to the project is an explicit action (`LiveInspector`) that converts runtime → IR coordinates
+  (`live/coords.ts`, tested in `coords.test.ts`). **Test it without a headset** with
+  `npm run mock:device` ([scripts/mock-device.mjs](scripts/mock-device.mjs) speaks the same protocol);
+  `LiveClient.test.ts` drives the real client against it.
+- **Viewpoint (head pose) and recenter, from outside the app** → `ViewerWrapper`
+  ([Runtime/Scripting/ViewerWrapper.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Scripting/ViewerWrapper.cs)),
+  exposed to scripts as `viewer` and over WebSocket as `query.getHeadPose` / `query.getScene` /
+  `viewer.recenter` / `viewer.placeInFront`. Everything it reports is **runtime Unity world space**.
 - **Where the user starts / what they see** → `SpawnViewMarker` in
   [SceneViewport.tsx](src/renderer/components/viewport/SceneViewport.tsx) (FOV read from the adapter's
   `display.fieldOfView`, toggled by `showSpawnView`) + `PinSpawnViewpointToOrigin` in `ArsistBuildPipeline.cs`.
@@ -203,6 +218,27 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   `extraResources` references it.
 - `sdk/com.xreal.xr/package/Runtime/Scripts/XREALXRLoader.cs` has **local (non-pristine) modifications** — don't
   assume it matches stock SDK 3.1.0.
+- **Meta XR SDK Core does not compile on a Linux editor as shipped.** In 85.0.0,
+  `Editor/MetaXRSimulator/Installer.cs` only has `#if UNITY_EDITOR_WIN / #elif UNITY_EDITOR_OSX`, so
+  `downloadedInstallerPath` is undeclared on Linux (CS0103). That fails the whole
+  `MetaXRSimulatorCore.Editor` assembly, which aborts *any* Unity batch run — the visible symptom is an
+  unrelated step failing (e.g. "UniVRM package import failed") with only Unity's stdout noise as the message;
+  the real error is in the step's `-logFile`. `UnityBuilder.resolveQuestCoreTgz` unpacks the tgz, applies
+  `QUEST_CORE_LINUX_PATCHES`, and repacks it into `<unityProject>/.arsist-quest-sdk-patch/` (~5 s, cached by
+  source stamp). **`sdk/` itself is never modified.** If Meta fixes this upstream the regex stops matching and
+  the patch quietly no-ops (it logs when that happens).
+- **`Resources.FindObjectsOfTypeAll` is not "what's in the scene".** It returns every *loaded* object,
+  including components inside package prefabs — e.g. the `OVRManager` on Meta's own `OVRCameraRig` prefab.
+  Using it to decide "is this component already in the scene?" silently skips adding it, and the symptom
+  shows up only on device (no `OVRManager` ⇒ passthrough never initializes ⇒ **black background** even though
+  every build-time log says passthrough was configured). Use
+  `ArsistBuildPipeline.FindComponentInLoadedScenes` (FindObjectsByType + `EditorUtility.IsPersistent` and
+  `scene.IsValid()` filtering) instead.
+- **Never use `??` / `?.` on a `UnityEngine.Object`.** Unity overloads `==` so a destroyed-or-absent object
+  compares equal to null, but the null-coalescing operators bypass that overload and see the "fake null" as a
+  real reference. `GetComponent<T>() ?? AddComponent<T>()` therefore never adds the component, and the next
+  field access throws `There is no 'T' attached to the "X" game object`. Write it as
+  `var c = go.GetComponent<T>(); if (c == null) c = go.AddComponent<T>();`.
 - Unity version: project is pinned in `ProjectVersion.txt`; keep detection scripts and README consistent with it.
 - Standalone helper scripts (`scripts/*.js`) reconstruct the electron-store config path by hand — keep in sync with
   `src/main/platform/` config-path logic.

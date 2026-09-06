@@ -16,6 +16,7 @@ import {
   Plus,
   Server,
   Zap,
+  Radar,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
@@ -38,6 +39,7 @@ export function Toolbar() {
     setSnapToGrid,
     setShowBuildDialog,
     setShowSettingsDialog,
+    setAppMode,
     setShowNewProjectDialog,
     setShowPreviewDialog,
     setShowMCPDialog,
@@ -117,6 +119,16 @@ export function Toolbar() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
+        {/* ライブ配置モードへ。通常の編集画面とは別UIに切り替わる */}
+        <button
+          onClick={() => setAppMode('live')}
+          className="btn btn-ghost text-xs h-7 px-2"
+          disabled={!project}
+          title={t('toolbar.liveLayoutHint')}
+        >
+          <Radar size={14} />
+          <span>{t('toolbar.liveLayout')}</span>
+        </button>
         <IconBtn icon={<Server size={16} />} tip={t('toolbar.mcpServer')} onClick={() => setShowMCPDialog(true)} />
         <IconBtn icon={<Eye size={16} />} tip={t('toolbar.preview')} onClick={() => setShowPreviewDialog(true)} />
         <IconBtn icon={<Settings size={16} />} tip={t('toolbar.settings')} onClick={() => setShowSettingsDialog(true)} />

@@ -37,7 +37,9 @@ namespace Arsist.Runtime.VRM
 
         private void Awake()
         {
-            _animator = GetComponent<Animator>() ?? GetComponentInChildren<Animator>(true);
+            // ?? は Unity の偽装 null を見抜けないので使わない（== はオーバーロードされている）
+            _animator = GetComponent<Animator>();
+            if (_animator == null) _animator = GetComponentInChildren<Animator>(true);
             if (_animator == null || !_animator.isHuman)
             {
                 Debug.LogWarning("[VRMArmIK] No humanoid Animator; arm IK disabled.");

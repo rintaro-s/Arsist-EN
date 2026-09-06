@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { MainLayout } from './components/MainLayout';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { LiveLayoutMode } from './live/LiveLayoutMode';
 import { BuildDialog } from './components/dialogs/BuildDialog';
 import { NewProjectDialog } from './components/dialogs/NewProjectDialog';
 import { SettingsDialog } from './components/dialogs/SettingsDialog';
@@ -102,7 +103,8 @@ export default function App() {
     setShowPreviewDialog,
     setShowMCPDialog,
     setShowSetupWizard,
-    setCurrentView 
+    setCurrentView,
+    appMode,
   } = useUIStore();
 
   // Auto-show wizard on first launch (no Unity path configured yet)
@@ -169,7 +171,8 @@ export default function App() {
         <TitleBar />
         
         {project ? (
-          <MainLayout />
+          // ライブ配置モードは通常の編集UIと完全に別画面（パネル構成もツールバーも共有しない）
+          appMode === 'live' ? <LiveLayoutMode /> : <MainLayout />
         ) : (
           <WelcomeScreen onNewProject={() => setShowNewProjectDialog(true)} />
         )}

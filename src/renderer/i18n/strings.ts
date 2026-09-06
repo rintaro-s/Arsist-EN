@@ -78,6 +78,80 @@ export const STRINGS: Record<string, Entry> = {
   'toolbar.preview': { en: 'Preview', ja: 'プレビュー' },
   'toolbar.settings': { en: 'Settings', ja: '設定' },
   'toolbar.build': { en: 'Build', ja: 'ビルド' },
+  'toolbar.liveLayout': { en: 'Live Layout', ja: 'ライブ配置' },
+  'toolbar.liveLayoutHint': {
+    en: 'Open the live layout mode: simulate the app on this PC, or connect to a running device and place objects while watching the user\'s viewpoint.',
+    ja: 'ライブ配置モードを開きます。PC上で見え方をシミュレーションしたり、実機に接続してユーザーの視点を見ながら配置を調整できます。',
+  },
+
+  // ─── Live layout mode ───
+  'live.title': { en: 'Live Layout Mode', ja: 'ライブ配置モード' },
+  'live.backToEditor': { en: 'Back to editor', ja: 'エディタに戻る' },
+  'live.connect': { en: 'Connect', ja: '接続' },
+  'live.disconnect': { en: 'Disconnect', ja: '切断' },
+  'live.passwordPlaceholder': { en: 'password', ja: 'パスワード' },
+  'live.connectionLost': { en: 'Connection lost', ja: '接続が切れました' },
+  'live.modeSimulation': { en: 'Simulation', ja: 'シミュレーション' },
+  'live.modeDevice': { en: 'Device', ja: '実機' },
+  'live.modeDeviceNeedsConnection': {
+    en: 'Connect to a running device first.',
+    ja: '先に実機へ接続してください。',
+  },
+  'live.recenter': { en: 'Recenter', ja: '視点リセット' },
+  'live.recenterHint': {
+    en: "Reset the user's position to the origin (horizontal only).",
+    ja: 'ユーザーの位置を原点に戻します（水平方向のみ）。',
+  },
+  'live.objects': { en: 'Objects', ja: 'オブジェクト' },
+  'live.noObjects': {
+    en: 'No objects. In simulation this comes from the project scene; on device it comes from the running app.',
+    ja: 'オブジェクトがありません。シミュレーションではプロジェクトのシーン、実機では動作中のアプリの内容が出ます。',
+  },
+  'live.sourceLabel': { en: 'Source', ja: '表示元' },
+  'live.sourceSimulated': { en: 'simulated (project)', ja: 'シミュレーション（プロジェクト）' },
+  'live.sourceDevice': { en: 'live device', ja: '実機のライブ値' },
+  'live.lastSync': { en: 'Last sync', ja: '最終同期' },
+  'live.notTracking': {
+    en: 'The device reports no head tracking yet.',
+    ja: '実機からヘッドトラッキングが返っていません。',
+  },
+  'live.worldViewLabel': { en: '3D overview — user viewpoint + gaze', ja: '3D俯瞰 — ユーザー視点と視線' },
+  'live.firstPersonLabel': { en: "What the user sees", ja: 'ユーザーに見えている画面' },
+  'live.fovUnknown': { en: 'FOV unknown (16:9 assumed)', ja: '視野角不明（16:9で表示）' },
+  'live.viewerSimulated': { en: 'simulated viewpoint', ja: '仮想視点' },
+  'live.viewerDevice': { en: 'user (live)', ja: 'ユーザー（実機）' },
+  'live.simulationControls': {
+    en: 'Drag to look · WASD to move · Q/E down/up · Shift to speed up',
+    ja: 'ドラッグで見回す・WASDで移動・Q/Eで上下・Shiftで高速',
+  },
+  'live.resetViewpoint': { en: 'Reset viewpoint', ja: '視点を初期位置へ' },
+  'live.selectObjectHint': {
+    en: 'Select an object to move it.',
+    ja: 'オブジェクトを選択すると位置を調整できます。',
+  },
+  'live.orphanObject': {
+    en: 'Only on the device (no matching project object)',
+    ja: '実機のみに存在（対応するプロジェクトのオブジェクトなし）',
+  },
+  'live.position': { en: 'Position', ja: '位置' },
+  'live.rotation': { en: 'Rotation', ja: '回転' },
+  'live.scale': { en: 'Scale', ja: 'スケール' },
+  'live.distanceFromUser': { en: 'Distance from user', ja: 'ユーザーからの距離' },
+  'live.currentDistance': { en: 'Currently {d} m away', ja: '現在 {d} m' },
+  'live.applyToProject': { en: 'Apply to project', ja: 'プロジェクトに反映' },
+  'live.applyToProjectHint': {
+    en: 'Live edits stay on the device until you apply them. Applying writes the position back into the project (converted to editor coordinates).',
+    ja: '実機での変更は、反映するまでプロジェクトには保存されません。反映するとエディタ座標に変換して書き戻します。',
+  },
+  'live.applyToProjectUnavailable': {
+    en: 'This object has no matching project object, so it cannot be applied.',
+    ja: 'このオブジェクトはプロジェクト側に対応が無いため反映できません。',
+  },
+  'live.simulationEditHint': {
+    en: 'No device connected, so edits are written straight into the project.',
+    ja: '実機に接続していないため、変更はプロジェクトに直接反映されます。',
+  },
+
 
   // ── bottom panel / console ────────────────────────────
   'console.tab': { en: 'Console', ja: 'コンソール' },

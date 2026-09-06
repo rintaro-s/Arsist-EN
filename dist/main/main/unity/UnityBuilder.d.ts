@@ -162,6 +162,14 @@ export declare class UnityBuilder extends EventEmitter {
     private ensureUnityPackageImported;
     private importUnityPackage;
     /**
+     * Unity のログファイルから「本当の失敗理由」を拾う。
+     *
+     * batchmode の Unity は、スクリプトのコンパイルが1件でも通らないと、
+     * 何をしようとしていたか（パッケージのインポートでもビルドでも）に関係なく落ちる。
+     * その理由は stdout ではなくログファイルにしか出ないため、ここで探して呼び出し側に返す。
+     */
+    private extractUnityFailureReason;
+    /**
      * Jint 4.x と Acornima の DLL を Assets/Plugins/ へ配置する。
      * - ローカルの sdk/nupkg/ を優先（オフライン対応）。
      * - なければ NuGet から自動ダウンロード。
@@ -182,6 +190,30 @@ export declare class UnityBuilder extends EventEmitter {
     private integrateRequiredSdks;
     private integrateXrealSdk;
     private applyXrealRequiredDependencies;
+    /**
+     * Linux エディタでコンパイルが通らない Meta XR SDK の箇所に当てるパッチ。
+     *
+     * Meta XR SDK Core 85.0.0 の `Editor/MetaXRSimulator/Installer.cs` は
+     * `#if UNITY_EDITOR_WIN / #elif UNITY_EDITOR_OSX` しか持たず、Linux では
+     * `downloadedInstallerPath` がどの分岐でも宣言されないため CS0103 になる。
+     * これは MetaXRSimulatorCore.Editor アセンブリ全体のコンパイルを失敗させ、
+     * その時点で Unity のバッチ処理（UniVRM インポートやビルド）ごと止まる。
+     *
+     * Meta XR Simulator 自体が Linux 非対応なので、変数は使われない。
+     * 「宣言だけ足してコンパイルを通す」のが最小の修正になる。
+     *
+     * 将来 Meta 側が修正したら正規表現がマッチしなくなり、自動的に何もしなくなる。
+     */
+    private static readonly QUEST_CORE_LINUX_PATCHES;
+    /** パッチ内容を変えたらこの版数を上げる（キャッシュを作り直させるため）。 */
+    private static readonly QUEST_CORE_PATCH_VERSION;
+    /**
+     * Packages/ に置くべき Meta XR SDK Core の tgz を返す。
+     * Linux 以外、またはパッチ不要なら元の tgz をそのまま返す。
+     */
+    private resolveQuestCoreTgz;
+    /** tar をサブプロセスで実行する（Linux 限定の処理なので tar の存在を前提にしてよい）。 */
+    private runTar;
     private integrateQuestSdk;
     private applyQuestXrBootstrap;
     private readQuestSampleDependencies;
