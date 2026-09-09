@@ -182,6 +182,15 @@ export declare class UnityBuilder extends EventEmitter {
     private extractFromZip;
     /** dir 以下を再帰的に検索して fileName に一致する最初のファイルパスを返す */
     private findFileRecursive;
+    /**
+     * 実機ログの送り先（このマシンの LAN アドレス）を解決する。
+     *
+     * 「ビルドしたマシンを自動で信頼する」の実体がこれ。ペアリングも設定も要らない代わりに、
+     * 焼き込んだアドレスから動いたら届かなくなる（次のビルドで直る）。
+     */
+    private resolveLogRelay;
+    /** このマシンの IPv4 LAN アドレス。ループバックと仮想NICは除く。 */
+    private static listLanAddresses;
     private transferProjectData;
     private applyDevicePatch;
     private ensureAndroidCleartextHttpPolicy;

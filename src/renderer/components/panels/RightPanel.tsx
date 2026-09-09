@@ -10,6 +10,7 @@ import { useUIStore } from '../../stores/uiStore';
 import type { Vector3, UIElement, UIStyle, DataSourceDefinition, TransformDefinition } from '../../../shared/types';
 import { Box, Compass, Layout, Database, Activity, Wifi, User } from 'lucide-react';
 import { ScriptInspector } from '../viewport/ScriptEditor';
+import { PerceptionTargetInspector, PerceptionTaskInspector, ObjectAnchorSection } from './PerceptionInspector';
 import { useT } from '../../i18n';
 
 export function RightPanel() {
@@ -118,10 +119,17 @@ function ProjectARSettings() {
 
 function ObjectInspector() {
   const t = useT();
-  const { project, currentSceneId, selectedObjectIds, updateObject, removeObject } = useProjectStore();
+  const {
+    project, currentSceneId, selectedObjectIds, updateObject, removeObject,
+    selectedPerceptionTargetId, selectedPerceptionTaskId,
+  } = useProjectStore();
   const scene = project?.scenes.find((s) => s.id === currentSceneId);
   const obj = scene?.objects.find((o) => o.id === selectedObjectIds[0]);
   const canvasLayouts = project?.uiLayouts.filter((l) => l.scope === 'canvas') || [];
+
+  // 画像アンカー / 認識タスクを選んでいるときは、そちらのインスペクタを出す
+  if (!obj && selectedPerceptionTargetId) return <PerceptionTargetInspector />;
+  if (!obj && selectedPerceptionTaskId) return <PerceptionTaskInspector />;
 
   if (!obj) return (
     <ProjectARSettings />
@@ -243,6 +251,9 @@ function ObjectInspector() {
             </div>
           );
         })()}
+
+        {/* Image anchor */}
+        <ObjectAnchorSection object={obj} />
 
         {/* VRM Capabilities (shown only for VRM type) */}
         {obj.type === 'vrm' && <VRMCapabilitiesPanel assetId={obj.assetId} modelPath={obj.modelPath} />}

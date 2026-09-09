@@ -33,12 +33,21 @@ namespace Arsist.Runtime.Scripting
 
         public static void Fire(string eventName)
         {
+            Fire(eventName, true);
+        }
+
+        /// <summary>
+        /// warnIfUnhandled=false で「誰も購読していないのが正常」なイベントを発火する。
+        /// 画像アンカーの found/lost のように、スクリプトが無くても毎回飛ぶものに使う。
+        /// </summary>
+        public static void Fire(string eventName, bool warnIfUnhandled)
+        {
             if (_handlers.TryGetValue(eventName, out var handler))
             {
                 Debug.Log($"[Arsist] Firing script event: {eventName}");
                 handler?.Invoke();
             }
-            else
+            else if (warnIfUnhandled)
             {
                 Debug.LogWarning($"[Arsist] No handler registered for event: {eventName}");
             }

@@ -5,7 +5,7 @@ Guidance for AI agents (Claude Code and others) working in this repository.
 ## Start here
 
 Read [CODEMAP.md](CODEMAP.md) first for the module map and the XREAL/Quest device-responsibility map, then the
-relevant deep-dive in [`doc/`](doc/) (`00-overview` … `10-python-control`). [README.md](README.md) covers user-facing
+relevant deep-dive in [`doc/`](doc/) (`00-overview` … `13-device-logs`). [README.md](README.md) covers user-facing
 setup.
 
 ## What this project is
@@ -23,13 +23,18 @@ npm run build          # build:main (tsc) + build:renderer (vite)
 npm run build:main     # TypeScript main process only — fast typecheck of src/main
 npm run lint           # eslint src --ext .ts,.tsx
 npm test               # vitest
+npm run test:perception # 画像アンカーの姿勢推定を Unity 無しで数値検証 (dotnet)
+npm run logs           # 実機アプリのログを LAN で受ける (adb 不要, doc/13-device-logs.md)
 npm run package        # electron-builder (needs sdk/ present)
 npm run xreal:diag     # build + adb install + filtered logcat (needs Unity + device)
 ```
 
 Unity builds and on-device verification require a full Unity install, the `sdk/` directory, and hardware — usually
 **not available in an automated environment**. For non-Unity changes, `npm run build:main`, `npm run lint`, and
-`npm test` are the fast feedback loop.
+`npm test` are the fast feedback loop. The perception geometry
+(`Runtime/Perception/Vision/{LinAlg,Homography,PlanarPoseSolver}.cs`) has no UnityEngine dependency and is
+covered by `npm run test:perception` — **run it whenever that math changes**, because a wrong sign there
+compiles cleanly and only shows up as a misplaced anchor on hardware.
 
 ## Conventions
 

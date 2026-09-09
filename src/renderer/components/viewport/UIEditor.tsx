@@ -9,6 +9,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useDataValue } from '../../stores/dataStoreContext';
+import { toArsistFileUrl } from '../../utils/assetUrl';
 import { useT } from '../../i18n';
 import type { UIElement, UIElementType } from '../../../shared/types';
 import { UNITY_TEXTURE_FILTER_EXTENSIONS } from '../../../shared/assets';
@@ -657,16 +658,6 @@ function ElementRenderer({
     });
   };
 
-  const toArsistFileUrl = (projectPath: string, assetPath: string) => {
-    // Build absolute path (unify backslashes to forward slashes)
-    const absPath = `${projectPath}/${assetPath}`.replace(/\\/g, '/');
-    // For Windows drive letter (C: etc.), use arsist-file://C:/... format
-    if (/^[A-Za-z]:/.test(absPath)) {
-      return `arsist-file://${absPath}`;
-    }
-    // Unix path is arsist-file:///... format
-    return `arsist-file:///${absPath}`;
-  };
 
   const importImage = async () => {
     if (!projectPath || !window.electronAPI) return;

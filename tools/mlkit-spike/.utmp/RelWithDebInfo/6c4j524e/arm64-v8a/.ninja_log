@@ -1,0 +1,12 @@
+# ninja log v5
+2	59	1788697928681718700	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	e4b2a85e24f6d533
+60	93	1788697928718403200	/mnt/github/Arsist-EN/tools/mlkit-spike/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/6c4j524e/obj/arm64-v8a/libswappywrapper.so	cb86e219aea320e9
+0	513	1788697929129807800	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	e3b7d3f75506435a
+1	572	1788697929189433800	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	5b29b033ac439866
+1	637	1788697929245007800	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	28012a2782c85380
+2	649	1788697929269200800	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	f63719f0de6e8428
+2	674	1788697929292886600	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	14b5a5916f24974a
+0	677	1788697929297781900	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	d495393437ecd6ca
+1	792	1788697929404880100	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	cb9be06523b2d5e9
+0	813	1788697929430210700	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	56188659fce640c5
+814	842	1788697929463613700	/mnt/github/Arsist-EN/tools/mlkit-spike/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/6c4j524e/obj/arm64-v8a/libgame.so	68f4b65154af4389

@@ -1,0 +1,157 @@
+package com.arsist.mlkit;
+
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.util.Log;
+
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.TextRecognizerOptionsInterface;
+import com.unity3d.player.UnityPlayer;
+
+import java.nio.ByteBuffer;
+
+/**
+ * ML Kit Text Recognition v2 (bundled) のブリッジ。
+ *
+ * モデルは APK に同梱されており、Google Play Services にもモデルの
+ * ネット配信にも依存しない（Quest 3 実機で確認済み。tools/mlkit-spike/）。
+ *
+ * このファイルは Assets/Arsist/Editor/AndroidPlugins/ArsistMlkitOcr.java.txt が原本で、
+ * OCR タスクを持つプロジェクトのビルド時にだけ Assets/Plugins/Android/ へコピーされる
+ * (ArsistBuildPipeline.ConfigureMlKitPlugin)。常設しないのは、ML Kit の依存が
+ * 無いプロジェクトでコンパイルが通らないため、また 11MB の .so を
+ * 使わない APK に入れないため。
+ *
+ * 画素は Unity 側から RGBA8888 で渡す。Unity のテクスチャは下から上、
+ * Android の Bitmap は上から下なので、上下反転は呼び出し側で済ませてある前提。
+ *
+ * 結果は "経過ms|認識テキスト" の形で UnitySendMessage で返す
+ * (UnitySendMessage は引数を1つしか取れないため)。
+ */
+public final class ArsistMlkitOcr {
+
+    private static final String TAG = "ArsistMlkitOcr";
+
+    private ArsistMlkitOcr() {}
+
+    /**
+     * @param rgba       RGBA8888 の画素 (長さ = width * height * 4)、行は上から下
+     * @param script     "latin" または "japanese"
+     * @param gameObject 結果を受け取る Unity 側 GameObject 名
+     * @param okMethod   成功時に呼ぶメソッド名
+     * @param failMethod 失敗時に呼ぶメソッド名
+     */
+    public static void recognizeRgba(
+            final byte[] rgba, final int width, final int height, final String script,
+            final String gameObject, final String okMethod, final String failMethod) {
+
+        try {
+            if (rgba == null || width <= 0 || height <= 0 || rgba.length < width * height * 4) {
+                send(gameObject, failMethod, "invalid image (" + width + "x" + height + ")");
+                return;
+            }
+
+            final Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(rgba));
+
+            final TextRecognizerOptionsInterface options = buildOptions(script);
+            if (options == null) {
+                send(gameObject, failMethod, "model not bundled for script: " + script);
+                return;
+            }
+
+            final TextRecognizer recognizer = TextRecognition.getClient(options);
+            final long startedAt = System.nanoTime();
+
+            recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                    .addOnSuccessListener(new OnSuccessListener<Text>() {
+                        @Override
+                        public void onSuccess(Text text) {
+                            long ms = (System.nanoTime() - startedAt) / 1000000L;
+                            Log.i(TAG, "recognized in " + ms + " ms, blocks=" + text.getTextBlocks().size());
+                            recognizer.close();
+                            bitmap.recycle();
+                            send(gameObject, okMethod, ms + "|" + text.getText());
+                        }
+                    })
+                    .addOnFailureListener(new OnFailureListener() {
+                        @Override
+                        public void onFailure(Exception e) {
+                            Log.e(TAG, "recognition failed", e);
+                            recognizer.close();
+                            bitmap.recycle();
+                            send(gameObject, failMethod, describe(e));
+                        }
+                    });
+        } catch (Throwable t) {
+            Log.e(TAG, "recognizeRgba threw", t);
+            send(gameObject, failMethod, describe(t));
+        }
+    }
+
+    /**
+     * 言語モデルのオプションを実行時に解決する。
+     *
+     * import で直接参照しないのは、プロジェクトが実際に使う言語の AAR しか
+     * 積まないため（日本語モデルは Latin も読むので、たいてい1つで足りる）。
+     * 直接参照すると、積んでいない方のクラスが無くて Java のコンパイルが通らない。
+     * 積まれていない言語を指定した場合は null を返し、呼び出し側が理由付きで失敗する。
+     */
+    private static TextRecognizerOptionsInterface buildOptions(String script) {
+        String className = "latin".equalsIgnoreCase(script)
+                ? "com.google.mlkit.vision.text.latin.TextRecognizerOptions"
+                : "com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions";
+        try {
+            Class<?> builderClass = Class.forName(className + "$Builder");
+            Object builder = builderClass.getDeclaredConstructor().newInstance();
+            Object options = builderClass.getMethod("build").invoke(builder);
+            return (TextRecognizerOptionsInterface) options;
+        } catch (Throwable t) {
+            Log.e(TAG, "text recognition model not available for script=" + script, t);
+            return null;
+        }
+    }
+
+    /**
+     * Google Play Services が使えるかどうか。0 = 利用可能。
+     * Quest では 0 以外になるはずで、それでも OCR が通れば
+     * 「GMS 非依存で動いた」ことの証拠になる。
+     */
+    public static String playServicesStatus() {
+        try {
+            Context context = UnityPlayer.currentActivity;
+            Class<?> availability = Class.forName("com.google.android.gms.common.GoogleApiAvailability");
+            Object instance = availability.getMethod("getInstance").invoke(null);
+            Object code = availability
+                    .getMethod("isGooglePlayServicesAvailable", Context.class)
+                    .invoke(instance, context);
+            return String.valueOf(code);
+        } catch (Throwable t) {
+            return "unavailable (" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
+    private static String describe(Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        Throwable current = t;
+        for (int i = 0; i < 4 && current != null; i++) {
+            if (i > 0) sb.append(" <- ");
+            sb.append(current.getClass().getName()).append(": ").append(current.getMessage());
+            current = current.getCause();
+        }
+        return sb.toString();
+    }
+
+    private static void send(String gameObject, String method, String payload) {
+        try {
+            UnityPlayer.UnitySendMessage(gameObject, method, payload);
+        } catch (Throwable t) {
+            Log.e(TAG, "UnitySendMessage failed", t);
+        }
+    }
+}

@@ -4,6 +4,8 @@
  */
 import type { 
   ArsistProject, 
+  PerceptionTarget,
+  PerceptionTask,
   SceneData, 
   SceneObject, 
   UILayoutData, 
@@ -319,6 +321,21 @@ function mapTextAlignment(align?: string): string {
 }
 
 /**
+ * タスクが参照しているターゲット / 領域が実在するか。
+ * エディタで領域を消してもタスクは残るので、ここで落とす。
+ */
+function isTaskResolvable(task: PerceptionTask, targets: PerceptionTarget[]): boolean {
+  if (!task.storeAs) return false;
+
+  const source = task.source;
+  if (source.kind === 'viewport') return true;
+
+  const target = targets.find((t) => t.id === source.targetId);
+  if (!target) return false;
+  return (target.regions ?? []).some((r) => r.id === source.regionId);
+}
+
+/**
  * プロジェクト全体をUnityマニフェストに変換
  */
 export function generateUnityManifest(project: ArsistProject): object {
@@ -372,7 +389,45 @@ export function generateUnityManifest(project: ArsistProject): object {
     })),
 
     scriptBundle,
-    
+
+    // 画像アンカー。ターゲットが無いプロジェクトでは undefined になり、
+    // Unity 側は Perception 一式を丸ごとスキップする。
+    // ターゲットが無くてもタスクだけのプロジェクトは成立する
+    // （viewport ソースは「カメラ画像の矩形」なので追跡対象を必要としない）。
+    perception: project.perception &&
+      (project.perception.targets.length > 0 || (project.perception.tasks?.length ?? 0) > 0)
+      ? {
+          targets: project.perception.targets.map((t) => ({
+            id: t.id,
+            name: t.name,
+            type: t.type,
+            imagePath: t.imagePath,
+            physicalWidth: t.physicalWidth,
+            physicalHeight: t.physicalHeight,
+            holdMs: t.holdMs ?? 2000,
+            // 領域はランタイムで「正対化して読む枠」にも「配置の基準」にもなる
+            regions: (t.regions ?? []).map((r) => ({
+              id: r.id,
+              name: r.name,
+              rect: r.rect,
+            })),
+          })),
+          // 参照先が消えているタスクは出さない。ビルドは通るのに実行時に必ず失敗する
+          // オブジェクトを APK に入れないため。
+          tasks: (project.perception.tasks ?? [])
+            .filter((task) => isTaskResolvable(task, project.perception!.targets))
+            .map((task) => ({
+              id: task.id,
+              name: task.name,
+              type: task.type,
+              source: task.source,
+              trigger: task.trigger,
+              storeAs: task.storeAs,
+              engine: task.engine ?? { kind: 'mlkit', script: 'japanese' },
+            })),
+        }
+      : undefined,
+
     generatedAt: new Date().toISOString(),
   };
 }

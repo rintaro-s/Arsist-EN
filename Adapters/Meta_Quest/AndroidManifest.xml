@@ -3,6 +3,17 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Quest VR アプリとして認識させる必須エントリ -->
+    <!--
+        テーマについて:
+        Unity 6 のエントリポイントは GameActivity (com.google.androidgamesdk.GameActivity) で、
+        これは AppCompatActivity を継承しているため Theme.AppCompat 派生のテーマが必須。
+        AppCompat 派生でないテーマを当てると、起動直後に
+          IllegalStateException: You need to use a Theme.AppCompat theme (or descendant)
+        で落ちる（Unity のロゴだけ出て終わる）。
+        application 側は従来どおり全画面の素のテーマにしつつ、activity には
+        Unity 同梱の BaseUnityGameActivityTheme (= Theme.AppCompat.Light.NoActionBar 派生) を
+        明示する。マージ順に依存して Unity 側のテーマが落ちることがあるため、ここで固定する。
+    -->
     <application
         android:label="@string/app_name"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
@@ -11,6 +22,7 @@
 
         <activity
             android:name="com.unity3d.player.UnityPlayerGameActivity"
+            android:theme="@style/BaseUnityGameActivityTheme"
             android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|mnc|mcc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|touchscreen"
             android:exported="true"
             android:hardwareAccelerated="false"

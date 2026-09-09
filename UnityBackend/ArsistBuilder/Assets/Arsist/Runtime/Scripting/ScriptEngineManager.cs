@@ -44,6 +44,7 @@ namespace Arsist.Runtime.Scripting
         private VRMWrapper _vrmWrapper;
         private RemoteControlWrapper _remoteControlWrapper;
         private ViewerWrapper _viewerWrapper;
+        private PerceptionWrapper _perceptionWrapper;
 
         /// <summary>
         /// 非同期ロード結果を保持するフィールド
@@ -55,6 +56,7 @@ namespace Arsist.Runtime.Scripting
         public SceneWrapper SceneWrapper => _sceneWrapper;
         public VRMWrapper VRMWrapper => _vrmWrapper;
         public ViewerWrapper ViewerWrapper => _viewerWrapper;
+        public PerceptionWrapper PerceptionWrapper => _perceptionWrapper;
 
         private void Awake()
         {
@@ -86,6 +88,7 @@ namespace Arsist.Runtime.Scripting
             _vrmWrapper = new VRMWrapper();
             _remoteControlWrapper = new RemoteControlWrapper();
             _viewerWrapper = new ViewerWrapper(_sceneWrapper);
+            _perceptionWrapper = new PerceptionWrapper(_engine);
 
             // JS 環境に安全なラッパーのみを公開
             _engine.SetValue("api", _apiWrapper);
@@ -95,6 +98,7 @@ namespace Arsist.Runtime.Scripting
             _engine.SetValue("vrm", _vrmWrapper);
             _engine.SetValue("remote", _remoteControlWrapper);
             _engine.SetValue("viewer", _viewerWrapper);
+            _engine.SetValue("perception", _perceptionWrapper);
             _engine.SetValue("log", new Action<object>(msg =>
                 Debug.Log($"[ArsistJS] {msg}")));
             _engine.SetValue("error", new Action<object>(msg =>

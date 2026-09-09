@@ -9,12 +9,14 @@ import {
   Box, Circle, Square, Cylinder,
   Layout, Plus,
   FolderOpen, ChevronDown, ChevronRight,
-  Database, Activity, Trash2, User,
+  Database, Activity, Trash2, User, Image as ImageIcon, Pin, ScanText,
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { UIElement } from '../../../shared/types';
 import { ScriptFileList } from '../viewport/ScriptEditor';
+import { scoreImageFromUrl } from '../../perception/imageQuality';
+import { toArsistFileUrl } from '../../utils/assetUrl';
 import { useT } from '../../i18n';
 
 export function LeftPanel() {
@@ -37,6 +39,8 @@ function SceneHierarchy() {
   const {
     project, projectPath, currentSceneId, setCurrentScene,
     selectedObjectIds, selectObjects, addObject, addUILayout,
+    addPerceptionTarget, selectPerceptionTarget, selectedPerceptionTargetId,
+    addPerceptionTask, selectPerceptionTask, selectedPerceptionTaskId,
   } = useProjectStore();
   const scene = project?.scenes.find((s) => s.id === currentSceneId);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -95,6 +99,53 @@ function SceneHierarchy() {
     });
   };
 
+  /**
+   * 画像アンカーの追加。写真を1枚選ぶだけで、あとは実物の幅を入れるだけにする。
+   * 追跡しやすさのスコアはこの時点で測っておき、ダメな写真をビルド前に気付けるようにする。
+   */
+  const addImageAnchor = async () => {
+    setMenuOpen(false);
+    if (!window.electronAPI || !projectPath) return;
+
+    const selected = await window.electronAPI.fs.selectFile([
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg'] },
+    ]);
+    if (!selected) return;
+
+    const imported = await window.electronAPI.assets.import({
+      projectPath,
+      sourcePath: selected,
+      kind: 'texture',
+    });
+    if (!imported?.success || !imported.assetPath) return;
+
+    const quality = await scoreImageFromUrl(toArsistFileUrl(projectPath, imported.assetPath));
+    const baseName = selected.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') || 'Image Anchor';
+
+    addPerceptionTarget({
+      name: baseName,
+      imagePath: imported.assetPath,
+      physicalWidth: 0.3, // 30cm 相当。ユーザーが実測値に直す前提の初期値
+      quality: quality?.score,
+    });
+  };
+
+  /**
+   * 画像認識タスクの追加。写真の上に枠が既にあればそれを見るタスクに、
+   * 無ければ「画面上の枠を狙う」タスクとして作る（枠が無くても始められるように）。
+   */
+  const addRecognitionTask = () => {
+    setMenuOpen(false);
+    const targetWithRegion = project?.perception?.targets.find((x) => (x.regions ?? []).length > 0);
+    addPerceptionTask({
+      name: 'OCR',
+      type: 'ocr',
+      source: targetWithRegion
+        ? { kind: 'region', targetId: targetWithRegion.id, regionId: targetWithRegion.regions![0].id }
+        : { kind: 'viewport', rect: { x: 0.25, y: 0.35, width: 0.5, height: 0.3 } },
+    });
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="panel-header">
@@ -112,6 +163,8 @@ function SceneHierarchy() {
               <MenuItem icon={<Cylinder size={14} />} label={t('leftPanel.cylinder')} onClick={() => add('primitive', 'cylinder')} />
               <div className="context-menu-separator" />
               <MenuItem icon={<Layout size={14} />} label={t('leftPanel.canvasUiSurface')} onClick={addCanvas} />
+              <MenuItem icon={<ImageIcon size={14} />} label={t('perception.addTarget')} onClick={addImageAnchor} />
+              <MenuItem icon={<ScanText size={14} />} label={t('perception.addTask')} onClick={addRecognitionTask} />
             </div>
           )}
         </div>
@@ -124,6 +177,40 @@ function SceneHierarchy() {
             <button key={s.id} onClick={() => setCurrentScene(s.id)}
               className={`px-2 py-0.5 rounded text-[11px] ${s.id === currentSceneId ? 'bg-arsist-active text-arsist-accent' : 'text-arsist-muted hover:bg-arsist-hover'}`}
             >{s.name}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Image anchors */}
+      {(project?.perception?.targets.length ?? 0) > 0 && (
+        <div className="px-1.5 py-1 border-b border-arsist-border">
+          <div className="flex items-center gap-1.5 px-1 py-0.5 text-[10px] text-arsist-muted uppercase tracking-wider">
+            <ImageIcon size={11} />
+            <span>{t('perception.section')}</span>
+          </div>
+          {project!.perception!.targets.map((target) => (
+            <div key={target.id} onClick={() => selectPerceptionTarget(target.id)}
+              className={`tree-item ${selectedPerceptionTargetId === target.id ? 'selected' : ''}`}>
+              <ImageIcon size={13} className="text-emerald-400" />
+              <span className="text-[12px] truncate">{target.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recognition tasks */}
+      {(project?.perception?.tasks?.length ?? 0) > 0 && (
+        <div className="px-1.5 py-1 border-b border-arsist-border">
+          <div className="flex items-center gap-1.5 px-1 py-0.5 text-[10px] text-arsist-muted uppercase tracking-wider">
+            <ScanText size={11} />
+            <span>{t('perception.tasks')}</span>
+          </div>
+          {project!.perception!.tasks!.map((task) => (
+            <div key={task.id} onClick={() => selectPerceptionTask(task.id)}
+              className={`tree-item ${selectedPerceptionTaskId === task.id ? 'selected' : ''}`}>
+              <ScanText size={13} className="text-sky-400" />
+              <span className="text-[12px] truncate">{task.name}</span>
+            </div>
           ))}
         </div>
       )}
@@ -143,6 +230,7 @@ function SceneHierarchy() {
               className={`tree-item ${selectedObjectIds.includes(obj.id) ? 'selected' : ''}`}>
               {icon}
               <span className="text-[12px] truncate">{obj.name}</span>
+              {obj.anchor && <Pin size={11} className="ml-auto shrink-0 text-emerald-400" />}
             </div>
           );
         })}

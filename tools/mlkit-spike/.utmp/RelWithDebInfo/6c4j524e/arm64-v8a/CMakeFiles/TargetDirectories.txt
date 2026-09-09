@@ -1,0 +1,8 @@
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/CMakeFiles/edit_cache.dir
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/CMakeFiles/rebuild_cache.dir
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/GameActivity/CMakeFiles/game.dir
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/GameActivity/CMakeFiles/edit_cache.dir
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/GameActivity/CMakeFiles/rebuild_cache.dir
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/FramePacing/CMakeFiles/swappywrapper.dir
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/FramePacing/CMakeFiles/edit_cache.dir
+/mnt/github/Arsist-EN/tools/mlkit-spike/.utmp/RelWithDebInfo/6c4j524e/arm64-v8a/FramePacing/CMakeFiles/rebuild_cache.dir

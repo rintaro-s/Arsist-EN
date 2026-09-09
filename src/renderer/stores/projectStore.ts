@@ -20,6 +20,9 @@ import type {
   ARSettings,
   ScriptData,
   ScriptBundle,
+  PerceptionTarget,
+  PerceptionRegion,
+  PerceptionTask,
 } from '../../shared/types';
 
 /** Surface a project error to the console panel instead of failing silently. */
@@ -58,6 +61,11 @@ interface ProjectState {
 
   // Script
   currentScriptId: string | null;
+
+  // Perception (画像アンカー)
+  selectedPerceptionTargetId: string | null;
+  selectedPerceptionRegionId: string | null;
+  selectedPerceptionTaskId: string | null;
 
   // --- Project Lifecycle ---
   createProject: (options: CreateProjectOptions) => Promise<void>;
@@ -100,6 +108,23 @@ interface ProjectState {
   // --- AR ---
   updateARSettings: (updates: Partial<ARSettings>) => void;
 
+  // --- Perception ---
+  addPerceptionTarget: (target: Pick<PerceptionTarget, 'name' | 'imagePath' | 'physicalWidth'> &
+    Partial<PerceptionTarget>) => string | null;
+  updatePerceptionTarget: (id: string, updates: Partial<PerceptionTarget>) => void;
+  removePerceptionTarget: (id: string) => void;
+  selectPerceptionTarget: (id: string | null) => void;
+
+  addPerceptionRegion: (targetId: string, rect: PerceptionRegion['rect'], name?: string) => string | null;
+  updatePerceptionRegion: (targetId: string, regionId: string, updates: Partial<PerceptionRegion>) => void;
+  removePerceptionRegion: (targetId: string, regionId: string) => void;
+  selectPerceptionRegion: (regionId: string | null) => void;
+
+  addPerceptionTask: (task: Partial<PerceptionTask>) => string | null;
+  updatePerceptionTask: (id: string, updates: Partial<PerceptionTask>) => void;
+  removePerceptionTask: (id: string) => void;
+  selectPerceptionTask: (id: string | null) => void;
+
   // --- Script ---
   addScript: (name: string) => void;
   updateScript: (id: string, updates: Partial<ScriptData>) => void;
@@ -128,6 +153,9 @@ export const useProjectStore = create<ProjectState>()(
     isDirty: false,
     currentSceneId: null,
     selectedObjectIds: [],
+    selectedPerceptionTargetId: null,
+    selectedPerceptionRegionId: null,
+    selectedPerceptionTaskId: null,
     currentUILayoutId: null,
     selectedUIElementId: null,
     selectedDataSourceId: null,
@@ -265,6 +293,7 @@ export const useProjectStore = create<ProjectState>()(
           primitiveType: obj.primitiveType,
           modelPath: obj.modelPath,
           canvasSettings: obj.canvasSettings,
+          anchor: obj.anchor,
           transform: obj.transform || {
             position: { x: 0, y: 0, z: 2 },
             rotation: { x: 0, y: 0, z: 0 },
@@ -306,6 +335,11 @@ export const useProjectStore = create<ProjectState>()(
     selectObjects: (objectIds) => {
       set((s) => {
         s.selectedObjectIds = objectIds;
+        // オブジェクト / アンカー / タスクはインスペクタを共有するので選択は排他にする
+        if (objectIds.length > 0) {
+          s.selectedPerceptionTargetId = null;
+          s.selectedPerceptionTaskId = null;
+        }
       });
     },
 
@@ -603,6 +637,214 @@ export const useProjectStore = create<ProjectState>()(
     // ========================================
     // Script
     // ========================================
+
+    // ========================================
+    // Perception (画像アンカー)
+    // ========================================
+
+    addPerceptionTarget: (target) => {
+      const id = uuidv4();
+      let created = false;
+      set((s) => {
+        if (!s.project) return;
+        if (!target.imagePath || !(target.physicalWidth > 0)) return;
+
+        if (!s.project.perception) s.project.perception = { targets: [] };
+        s.project.perception.targets.push({
+          id,
+          name: target.name || 'Image Anchor',
+          type: 'image',
+          imagePath: target.imagePath,
+          physicalWidth: target.physicalWidth,
+          physicalHeight: target.physicalHeight,
+          holdMs: target.holdMs ?? 2000,
+          quality: target.quality,
+        });
+        s.selectedPerceptionTargetId = id;
+        s.selectedObjectIds = [];
+        s.isDirty = true;
+        created = true;
+      });
+      if (!created) {
+        notifyProjectError('Failed to add image anchor', 'image path and physical width are required');
+        return null;
+      }
+      return id;
+    },
+
+    updatePerceptionTarget: (id, updates) => {
+      set((s) => {
+        const targets = s.project?.perception?.targets;
+        if (!targets) return;
+        const idx = targets.findIndex((t) => t.id === id);
+        if (idx === -1) return;
+        targets[idx] = { ...targets[idx], ...updates, id };
+        s.isDirty = true;
+      });
+    },
+
+    removePerceptionTarget: (id) => {
+      set((s) => {
+        if (!s.project?.perception) return;
+        s.project.perception.targets = s.project.perception.targets.filter((t) => t.id !== id);
+
+        // このターゲットを参照していたオブジェクトは、宙ぶらりんの anchor を持たないよう外す。
+        // 残すと「ビルドは通るが実行時に絶対に出てこない」オブジェクトができる。
+        for (const scene of s.project.scenes) {
+          for (const obj of scene.objects) {
+            if (obj.anchor?.targetId === id) delete obj.anchor;
+          }
+        }
+
+        // このターゲットを見ていたタスクも一緒に消す（残っても実行時に必ず失敗する）
+        if (s.project.perception.tasks) {
+          s.project.perception.tasks = s.project.perception.tasks.filter(
+            (task) => !(task.source.kind === 'region' && task.source.targetId === id),
+          );
+        }
+
+        if (s.selectedPerceptionTargetId === id) s.selectedPerceptionTargetId = null;
+        s.isDirty = true;
+      });
+    },
+
+    selectPerceptionTarget: (id) => {
+      set((s) => {
+        s.selectedPerceptionTargetId = id;
+        if (id) {
+          s.selectedObjectIds = [];
+          s.selectedPerceptionTaskId = null;
+        }
+        s.selectedPerceptionRegionId = null;
+      });
+    },
+
+    // ========================================
+    // Perception: 領域（写真の上に描く枠）
+    // ========================================
+
+    addPerceptionRegion: (targetId, rect, name) => {
+      const id = uuidv4();
+      let created = false;
+      set((s) => {
+        const target = s.project?.perception?.targets.find((t) => t.id === targetId);
+        if (!target) return;
+        if (!target.regions) target.regions = [];
+        target.regions.push({
+          id,
+          name: name || `Region ${target.regions.length + 1}`,
+          rect,
+        });
+        s.selectedPerceptionRegionId = id;
+        s.isDirty = true;
+        created = true;
+      });
+      return created ? id : null;
+    },
+
+    updatePerceptionRegion: (targetId, regionId, updates) => {
+      set((s) => {
+        const regions = s.project?.perception?.targets.find((t) => t.id === targetId)?.regions;
+        if (!regions) return;
+        const idx = regions.findIndex((r) => r.id === regionId);
+        if (idx === -1) return;
+        regions[idx] = { ...regions[idx], ...updates, id: regionId };
+        s.isDirty = true;
+      });
+    },
+
+    removePerceptionRegion: (targetId, regionId) => {
+      set((s) => {
+        const target = s.project?.perception?.targets.find((t) => t.id === targetId);
+        if (!target?.regions) return;
+        target.regions = target.regions.filter((r) => r.id !== regionId);
+
+        // この領域を見ていたタスクは、残しても実行時に必ず失敗するだけなので消す
+        if (s.project?.perception?.tasks) {
+          s.project.perception.tasks = s.project.perception.tasks.filter(
+            (task) => !(task.source.kind === 'region' && task.source.regionId === regionId),
+          );
+        }
+        // 配置の基準にしていたオブジェクトはターゲット全体基準に戻す
+        for (const scene of s.project?.scenes ?? []) {
+          for (const obj of scene.objects) {
+            if (obj.anchor?.placement?.regionId === regionId) {
+              obj.anchor.placement.regionId = undefined;
+            }
+          }
+        }
+
+        if (s.selectedPerceptionRegionId === regionId) s.selectedPerceptionRegionId = null;
+        s.isDirty = true;
+      });
+    },
+
+    selectPerceptionRegion: (regionId) => {
+      set((s) => {
+        s.selectedPerceptionRegionId = regionId;
+      });
+    },
+
+    // ========================================
+    // Perception: タスク（枠の中を読む）
+    // ========================================
+
+    addPerceptionTask: (task) => {
+      const id = uuidv4();
+      let created = false;
+      set((s) => {
+        if (!s.project) return;
+        if (!s.project.perception) s.project.perception = { targets: [] };
+        if (!s.project.perception.tasks) s.project.perception.tasks = [];
+
+        const count = s.project.perception.tasks.length + 1;
+        s.project.perception.tasks.push({
+          id,
+          name: task.name || `Task ${count}`,
+          type: task.type || 'ocr',
+          source: task.source || { kind: 'viewport', rect: { x: 0.25, y: 0.35, width: 0.5, height: 0.3 } },
+          trigger: task.trigger || { type: 'manual' },
+          storeAs: task.storeAs || `taskResult${count}`,
+          engine: task.engine || { kind: 'mlkit', script: 'japanese' },
+        });
+        s.selectedPerceptionTaskId = id;
+        s.selectedObjectIds = [];
+        s.selectedPerceptionTargetId = null;
+        s.isDirty = true;
+        created = true;
+      });
+      return created ? id : null;
+    },
+
+    updatePerceptionTask: (id, updates) => {
+      set((s) => {
+        const tasks = s.project?.perception?.tasks;
+        if (!tasks) return;
+        const idx = tasks.findIndex((t) => t.id === id);
+        if (idx === -1) return;
+        tasks[idx] = { ...tasks[idx], ...updates, id };
+        s.isDirty = true;
+      });
+    },
+
+    removePerceptionTask: (id) => {
+      set((s) => {
+        if (!s.project?.perception?.tasks) return;
+        s.project.perception.tasks = s.project.perception.tasks.filter((t) => t.id !== id);
+        if (s.selectedPerceptionTaskId === id) s.selectedPerceptionTaskId = null;
+        s.isDirty = true;
+      });
+    },
+
+    selectPerceptionTask: (id) => {
+      set((s) => {
+        s.selectedPerceptionTaskId = id;
+        if (id) {
+          s.selectedObjectIds = [];
+          s.selectedPerceptionTargetId = null;
+        }
+      });
+    },
 
     addScript: (name) => {
       set((s) => {

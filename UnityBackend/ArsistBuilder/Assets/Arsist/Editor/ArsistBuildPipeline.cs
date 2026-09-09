@@ -72,6 +72,9 @@ namespace Arsist.Builder
                 Debug.Log("[Arsist] Phase 2: Copying UI assets...");
                 CopyUICodeToStreamingAssets();
                 CopyScriptsToStreamingAssets();
+                CopyPerceptionAssetsToStreamingAssets();
+                ConfigureMlKitPlugin();
+                EnsurePerceptionLinkXml(ProjectHasPerceptionTargets() || ProjectHasPerceptionTasks());
 
                 // Phase 3: ビルド設定適用
                 Debug.Log("[Arsist] Phase 3: Applying build settings...");
@@ -897,7 +900,108 @@ namespace Arsist.Builder
                 }
             }
 
+            // 画像アンカー指定があれば貼り付けコンポーネントを追加
+            ApplyImageAnchor(go, objData, name);
+
             return go;
+        }
+
+        /// <summary>
+        /// IR の SceneObject.anchor を ArsistImageAnchor に落とす。
+        ///
+        /// transform は既に「ターゲット座標系のオフセット」として localPosition/localRotation に
+        /// 入っている（X反転も済んでいる）。ArsistImageAnchor は Awake でその値を読み取るので、
+        /// ここでは何も動かさない。
+        /// </summary>
+        private static void ApplyImageAnchor(GameObject go, JObject objData, string name)
+        {
+            var anchor = objData?["anchor"] as JObject;
+            if (anchor == null) return;
+
+            var targetId = anchor["targetId"]?.ToString();
+            if (string.IsNullOrEmpty(targetId))
+            {
+                Debug.LogWarning($"[Arsist] Object '{name}' has an anchor without targetId; ignored.");
+                return;
+            }
+
+            var anchorType = System.Type.GetType("Arsist.Runtime.Perception.ArsistImageAnchor, Assembly-CSharp");
+            if (anchorType == null)
+            {
+                Debug.LogWarning($"[Arsist] ArsistImageAnchor type not found; '{name}' will stay at its authored pose.");
+                return;
+            }
+
+            var component = go.AddComponent(anchorType);
+            TrySetMemberValue(component, "TargetId", targetId);
+            ApplyAnchorPlacement(component, anchorType, anchor["placement"] as JObject);
+
+            // 'hidden' | 'lastKnown' | 'visible' → AnchorFallback
+            var whenNotFound = anchor["whenNotFound"]?.ToString();
+            int fallback = whenNotFound switch
+            {
+                "hidden" => 0,
+                "visible" => 2,
+                _ => 1, // lastKnown（既定。検出後はワールドに固定され続ける）
+            };
+            var fallbackField = anchorType.GetField("Fallback",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (fallbackField != null)
+            {
+                fallbackField.SetValue(component, System.Enum.ToObject(fallbackField.FieldType, fallback));
+            }
+
+            Debug.Log($"[Arsist] Image anchor attached: '{name}' -> target '{targetId}' (whenNotFound={whenNotFound ?? "lastKnown"})");
+        }
+
+        /// <summary>
+        /// 「その物の右に10cm」のような相対配置を ArsistImageAnchor に写す。
+        /// placement が無ければ従来どおり transform を素のオフセットとして使う。
+        /// </summary>
+        private static void ApplyAnchorPlacement(Component component, Type anchorType, JObject placement)
+        {
+            if (component == null || anchorType == null) return;
+
+            if (placement == null)
+            {
+                TrySetMemberValue(component, "UsePlacement", false);
+                return;
+            }
+
+            TrySetMemberValue(component, "UsePlacement", true);
+            TrySetMemberValue(component, "RegionId", placement["regionId"]?.ToString() ?? string.Empty);
+            TrySetMemberValue(component, "Gap", placement["gap"]?.Value<float>() ?? 0.05f);
+            TrySetMemberValue(component, "AlignNear", (placement["align"]?.ToString() ?? "near") == "near");
+            TrySetMemberValue(component, "FaceUser", (placement["facing"]?.ToString() ?? "user") == "user");
+
+            int cross = placement["cross"]?.ToString() switch
+            {
+                "start" => -1,
+                "end" => 1,
+                _ => 0,
+            };
+            TrySetMemberValue(component, "Cross", cross);
+
+            int side = placement["side"]?.ToString() switch
+            {
+                "left" => 1,
+                "right" => 2,
+                "above" => 3,
+                "below" => 4,
+                "front" => 5,
+                "behind" => 6,
+                _ => 0,
+            };
+            var sideField = anchorType.GetField("Side",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (sideField != null)
+            {
+                sideField.SetValue(component, Enum.ToObject(sideField.FieldType, side));
+            }
+
+            Debug.Log($"[Arsist]   placement: side={placement["side"]}, gap={placement["gap"]}m, " +
+                      $"align={placement["align"]}, cross={placement["cross"]}, facing={placement["facing"]}" +
+                      $"{(string.IsNullOrEmpty(placement["regionId"]?.ToString()) ? "" : ", region=" + placement["regionId"])}");
         }
 
         /// <summary>
@@ -1455,6 +1559,499 @@ namespace Arsist.Builder
             {
                 Debug.LogError($"[Arsist] Failed to configure TMP Settings default font: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 画像アンカーの参照写真と設定を StreamingAssets/Perception に出す。
+        ///
+        /// AR Foundation の XRReferenceImageLibrary は作らない。認識はランタイム側で
+        /// 自前に行うため、写真は素のファイルのまま置けばよく、Editor 側の仕事は
+        /// コピーだけで済む（PCシミュレータでも同じファイルがそのまま使える）。
+        /// </summary>
+        private static void CopyPerceptionAssetsToStreamingAssets()
+        {
+            var targets = _manifest?["perception"]?["targets"] as JArray;
+            var taskArray = _manifest?["perception"]?["tasks"] as JArray;
+            var outputDir = Path.Combine(Application.dataPath, "StreamingAssets", "Perception");
+
+            if ((targets == null || targets.Count == 0) && (taskArray == null || taskArray.Count == 0))
+            {
+                // 前回ビルドの残骸を消す（ターゲットを削除したのに APK に残るのを防ぐ）
+                if (Directory.Exists(outputDir))
+                {
+                    Directory.Delete(outputDir, true);
+                    var meta = outputDir + ".meta";
+                    if (File.Exists(meta)) File.Delete(meta);
+                    Debug.Log("[Arsist] No perception targets; removed stale StreamingAssets/Perception.");
+                }
+                return;
+            }
+
+            Directory.CreateDirectory(outputDir);
+
+            var emitted = new JArray();
+            foreach (JObject target in targets ?? new JArray())
+            {
+                var id = target["id"]?.ToString();
+                var imagePath = target["imagePath"]?.ToString();
+                var physicalWidth = target["physicalWidth"]?.Value<float>() ?? 0f;
+
+                if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(imagePath))
+                {
+                    Debug.LogWarning("[Arsist] Perception target without id/imagePath; skipped.");
+                    continue;
+                }
+                if (physicalWidth <= 0f)
+                {
+                    Debug.LogError($"[Arsist] Perception target '{id}' has no physical width. " +
+                                   "Set the real-world width of the object; it cannot be recovered from the photo.");
+                    continue;
+                }
+
+                var sourcePath = ResolveProjectAssetPath(imagePath);
+                if (string.IsNullOrEmpty(sourcePath))
+                {
+                    Debug.LogError($"[Arsist] Reference image not found for target '{id}': {imagePath}");
+                    continue;
+                }
+
+                var extension = Path.GetExtension(sourcePath);
+                if (string.IsNullOrEmpty(extension)) extension = ".png";
+                var fileName = id + extension;
+
+                try
+                {
+                    File.Copy(sourcePath, Path.Combine(outputDir, fileName), true);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[Arsist] Failed to copy reference image for '{id}': {e.Message}");
+                    continue;
+                }
+
+                emitted.Add(new JObject
+                {
+                    ["id"] = id,
+                    ["name"] = target["name"]?.ToString() ?? id,
+                    ["image"] = fileName,
+                    ["widthMeters"] = physicalWidth,
+                    ["heightMeters"] = target["physicalHeight"]?.Value<float>() ?? 0f,
+                    ["holdMs"] = target["holdMs"]?.Value<float>() ?? 2000f,
+                    // 領域は配置の基準にも OCR の枠にもなる。そのまま通す。
+                    ["regions"] = target["regions"] as JArray ?? new JArray(),
+                });
+
+                WarnIfReferenceImageTooSmall(id, sourcePath);
+                Debug.Log($"[Arsist] Perception target packaged: {id} ({fileName}, width={physicalWidth}m)");
+            }
+
+            var tasks = _manifest?["perception"]?["tasks"] as JArray ?? new JArray();
+            var config = new JObject { ["targets"] = emitted, ["tasks"] = tasks };
+            File.WriteAllText(Path.Combine(outputDir, "perception.json"), config.ToString());
+            AssetDatabase.Refresh();
+
+            Debug.Log($"[Arsist] {emitted.Count} perception target(s) and {tasks.Count} task(s) " +
+                      "written to StreamingAssets/Perception.");
+        }
+
+        /// <summary>
+        /// 端末内 OCR (ML Kit bundled) の Android プラグインを出し入れする。
+        ///
+        /// OCR タスクを持つプロジェクトのときだけ、
+        ///   - Java ブリッジ (Assets/Plugins/Android/ArsistMlkitOcr.java)
+        ///   - Maven 依存を足した mainTemplate.gradle
+        /// を置く。常設しないのは、依存の無いプロジェクトで Java のコンパイルが通らず、
+        /// また使いもしない 11MB のネイティブライブラリを APK に積むことになるため。
+        ///
+        /// Arsist にとって初めての「Android の Maven 依存を足す」機構でもある。
+        /// バーコードや BLE を足すときも同じ口を使う。
+        /// </summary>
+        private static void ConfigureMlKitPlugin()
+        {
+            var pluginDir = Path.Combine(Application.dataPath, "Plugins", "Android");
+            var javaDest = Path.Combine(pluginDir, "ArsistMlkitOcr.java");
+            var gradleDest = Path.Combine(pluginDir, "mainTemplate.gradle");
+
+            var scripts = CollectOcrScripts();
+            if (scripts.Count == 0)
+            {
+                RemoveIfExists(javaDest);
+                RemoveIfExists(gradleDest);
+                return;
+            }
+
+            Directory.CreateDirectory(pluginDir);
+
+            var javaSource = Path.Combine(
+                Application.dataPath, "Arsist", "Editor", "AndroidPlugins", "ArsistMlkitOcr.java.txt");
+            if (!File.Exists(javaSource))
+            {
+                Debug.LogError($"[Arsist] ML Kit bridge source missing: {javaSource}");
+                return;
+            }
+            File.Copy(javaSource, javaDest, true);
+
+            if (!TryWriteMlKitGradleTemplate(gradleDest, scripts)) return;
+
+            AssetDatabase.Refresh();
+            Debug.Log($"[Arsist] On-device OCR enabled (ML Kit bundled, models: {string.Join(", ", scripts)}).");
+        }
+
+        /// <summary>
+        /// リフレクションでしか触らない型を、IL2CPP のマネージドコード除去から守る。
+        ///
+        /// Quest のカメラ供給は MRUK の PassthroughCameraAccess をリフレクションで使う
+        /// （XREAL 向けビルドには MRUK が入らないため直接参照できない）。
+        /// 直接の参照が無い型は除去の対象になり、実機では
+        /// 「No camera frame source available」とだけ出て静かに動かなくなる。
+        /// ビルドログもエディタも何も言わないので、link.xml で明示的に残す。
+        /// </summary>
+        private static void EnsurePerceptionLinkXml(bool enabled)
+        {
+            var path = Path.Combine(Application.dataPath, "Arsist", "link.xml");
+
+            if (!enabled)
+            {
+                RemoveIfExists(path);
+                return;
+            }
+
+            const string contents =
+                "<!-- Generated by Arsist. Types reached only through reflection, which the\n" +
+                "     IL2CPP managed-code stripper would otherwise remove. -->\n" +
+                "<linker>\n" +
+                "  <assembly fullname=\"meta.xr.mrutilitykit\">\n" +
+                "    <!-- Namespace is Meta.XR, which matches neither the package name\n" +
+                "         (com.meta.xr.mrutilitykit) nor the assembly name (meta.xr.mrutilitykit). -->\n" +
+                "    <type fullname=\"Meta.XR.PassthroughCameraAccess\" preserve=\"all\" />\n" +
+                "    <type fullname=\"Meta.XR.PassthroughCameraAccess/CameraIntrinsics\" preserve=\"all\" />\n" +
+                "  </assembly>\n" +
+                "</linker>\n";
+
+            if (File.Exists(path) && File.ReadAllText(path) == contents) return;
+
+            File.WriteAllText(path, contents);
+            AssetDatabase.Refresh();
+            Debug.Log("[Arsist] link.xml written (preserves MRUK's PassthroughCameraAccess for reflection).");
+        }
+
+        /// <summary>OCR タスクが実際に使う言語モデルだけを集める。使わないモデルは積まない。</summary>
+        private static List<string> CollectOcrScripts()
+        {
+            var scripts = new List<string>();
+            var tasks = _manifest?["perception"]?["tasks"] as JArray;
+            if (tasks == null) return scripts;
+
+            foreach (JObject task in tasks)
+            {
+                if ((task["type"]?.ToString() ?? "ocr") != "ocr") continue;
+                var engine = task["engine"] as JObject;
+                if ((engine?["kind"]?.ToString() ?? "mlkit") != "mlkit") continue;
+
+                var script = engine?["script"]?.ToString() ?? "japanese";
+                if (script != "latin") script = "japanese";
+                if (!scripts.Contains(script)) scripts.Add(script);
+            }
+            return scripts;
+        }
+
+        /// <summary>
+        /// Unity 同梱の mainTemplate.gradle をコピーし、ML Kit の依存行を足す。
+        ///
+        /// 固定のテンプレートをリポジトリに置かずインストール済みエディタから取るのは、
+        /// 置換されるプレースホルダが Unity のバージョンごとに違うため。
+        /// </summary>
+        private static bool TryWriteMlKitGradleTemplate(string destination, List<string> scripts)
+        {
+            var source = Path.Combine(
+                EditorApplication.applicationContentsPath,
+                "PlaybackEngines", "AndroidPlayer", "Tools", "GradleTemplates", "mainTemplate.gradle");
+
+            if (!File.Exists(source))
+            {
+                Debug.LogError($"[Arsist] Unity's mainTemplate.gradle not found at {source}; " +
+                               "on-device OCR cannot be enabled.");
+                return false;
+            }
+
+            // "**" + "DEPS" + "**"。ここでリテラルに書かないのは、このソース自身が
+            // 置換対象になる事故を避けるため（下の検査も参照）。
+            var token = "**" + "DEPS" + "**";
+            var template = File.ReadAllText(source);
+            if (!template.Contains(token))
+            {
+                Debug.LogError("[Arsist] Unity's mainTemplate.gradle has no dependency placeholder; " +
+                               "the Gradle injection needs updating for this Unity version.");
+                return false;
+            }
+
+            var deps = new System.Text.StringBuilder();
+            deps.AppendLine("    // ML Kit Text Recognition v2 (bundled models, no Google Play Services)");
+            deps.AppendLine("    // Added by Arsist because this project has on-device OCR tasks.");
+            foreach (var script in scripts)
+            {
+                deps.AppendLine(script == "latin"
+                    ? "    implementation 'com.google.mlkit:text-recognition:16.0.1'"
+                    : "    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'");
+            }
+
+            var header =
+                "// Generated by Arsist. Do not edit; it is rewritten on every build.\n" +
+                "// Source: the mainTemplate.gradle of the Unity editor performing the build,\n" +
+                "// with the ML Kit dependency lines below added to the dependencies block.\n" +
+                "//\n" +
+                "// Two rules for anything written here, both found the hard way:\n" +
+                "//  1. ASCII only. Unity rewrites this file while substituting placeholders and\n" +
+                "//     turns other bytes into '?', which produces invalid Groovy.\n" +
+                "//  2. Never write a Unity placeholder token literally, not even in a comment:\n" +
+                "//     Unity substitutes it there too and injects a dependency list mid-sentence.\n" +
+                "// Both failures surface as a Gradle error about the launcher module's compileSdk,\n" +
+                "// nowhere near the real cause.\n\n";
+
+            var output = header + template.Replace(token, deps.ToString() + token);
+
+            if (!IsAscii(output))
+            {
+                Debug.LogError("[Arsist] Generated mainTemplate.gradle is not ASCII; refusing to write it " +
+                               "(Unity would mangle it into invalid Groovy).");
+                return false;
+            }
+            if (CountOccurrences(output, token) != 1)
+            {
+                Debug.LogError("[Arsist] Generated mainTemplate.gradle mentions the dependency placeholder " +
+                               "more than once; refusing to write it.");
+                return false;
+            }
+
+            File.WriteAllText(destination, output);
+            return true;
+        }
+
+        private static bool IsAscii(string text)
+        {
+            foreach (var c in text)
+            {
+                if (c > 127) return false;
+            }
+            return true;
+        }
+
+        private static int CountOccurrences(string haystack, string needle)
+        {
+            int count = 0, index = 0;
+            while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                index += needle.Length;
+            }
+            return count;
+        }
+
+        private static void RemoveIfExists(string path)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            var meta = path + ".meta";
+            if (File.Exists(meta)) File.Delete(meta);
+        }
+
+        /// <summary>
+        /// 参照写真が小さすぎないか、PNG / JPEG のヘッダだけ見て警告する。
+        ///
+        /// ランタイムの ORB は 1.2 倍ずつ 6 段のピラミッドを作り、各段の外周 22px を捨てる。
+        /// 短辺が 240px を切ると、模様がどれだけ細かくても特徴が 1 つも取れない。
+        /// 実際に 48x48 のロゴを指定してしまい、実機で「0 features」になるまで
+        /// 誰も気付けなかったので、ビルド時にも言う。
+        /// </summary>
+        private static void WarnIfReferenceImageTooSmall(string id, string path)
+        {
+            const int minShortSide = 240;
+
+            if (!TryReadImageSize(path, out int width, out int height)) return;
+
+            int shortSide = Math.Min(width, height);
+            if (shortSide >= minShortSide) return;
+
+            Debug.LogWarning(
+                $"[Arsist] Reference image for '{id}' is only {width}x{height}. " +
+                $"The tracker needs at least {minShortSide}px on the short side (480px or more is safer); " +
+                "below that it finds no features at all and the anchor will never appear.");
+        }
+
+        /// <summary>PNG / JPEG のヘッダから寸法を読む。デコードはしない。</summary>
+        private static bool TryReadImageSize(string path, out int width, out int height)
+        {
+            width = height = 0;
+            try
+            {
+                using var stream = File.OpenRead(path);
+                using var reader = new BinaryReader(stream);
+                var header = reader.ReadBytes(8);
+                if (header.Length < 8) return false;
+
+                // PNG: 8 バイトのシグネチャ + IHDR(長さ4 + 型4 + 幅4 + 高さ4)、いずれもビッグエンディアン
+                if (header[0] == 0x89 && header[1] == 'P' && header[2] == 'N' && header[3] == 'G')
+                {
+                    stream.Seek(16, SeekOrigin.Begin);
+                    width = ReadBigEndianInt32(reader);
+                    height = ReadBigEndianInt32(reader);
+                    return width > 0 && height > 0;
+                }
+
+                // JPEG: SOFn マーカーを探す
+                if (header[0] == 0xFF && header[1] == 0xD8)
+                {
+                    stream.Seek(2, SeekOrigin.Begin);
+                    while (stream.Position < stream.Length - 8)
+                    {
+                        if (reader.ReadByte() != 0xFF) continue;
+                        byte marker = reader.ReadByte();
+                        if (marker == 0xFF) { stream.Seek(-1, SeekOrigin.Current); continue; }
+                        if (marker == 0xD8 || marker == 0xD9 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+
+                        int length = (reader.ReadByte() << 8) | reader.ReadByte();
+                        bool isStartOfFrame = marker >= 0xC0 && marker <= 0xCF
+                                              && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
+                        if (isStartOfFrame)
+                        {
+                            reader.ReadByte(); // precision
+                            height = (reader.ReadByte() << 8) | reader.ReadByte();
+                            width = (reader.ReadByte() << 8) | reader.ReadByte();
+                            return width > 0 && height > 0;
+                        }
+                        stream.Seek(length - 2, SeekOrigin.Current);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                // 寸法が読めないだけなら黙って諦める。ビルドを止める話ではない。
+                Debug.Log($"[Arsist] Could not read image size for {path}: {e.Message}");
+            }
+            return false;
+        }
+
+        private static int ReadBigEndianInt32(BinaryReader reader)
+        {
+            var bytes = reader.ReadBytes(4);
+            if (bytes.Length < 4) return 0;
+            return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+        }
+
+        /// <summary>プロジェクト側アセット（Assets/ArsistProjectAssets 配下にミラーされる）を実パスに解決する。</summary>
+        private static string ResolveProjectAssetPath(string relativePath)
+        {
+            var fileName = Path.GetFileName(relativePath);
+            var candidates = new[]
+            {
+                relativePath,
+                Path.Combine(Application.dataPath, "..", relativePath),
+                Path.Combine(Application.dataPath, "ArsistProjectAssets", relativePath),
+                Path.Combine(Application.dataPath, "..", "ArsistProjectAssets", relativePath),
+            };
+            foreach (var candidate in candidates)
+            {
+                if (File.Exists(candidate)) return candidate;
+            }
+
+            if (string.IsNullOrEmpty(fileName)) return null;
+            var root = Path.Combine(Application.dataPath, "ArsistProjectAssets");
+            if (Directory.Exists(root))
+            {
+                var matched = Directory.GetFiles(root, fileName, SearchOption.AllDirectories);
+                if (matched.Length > 0) return matched[0];
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 実機ログを開発マシンへ流すコンポーネントをシーンに入れる。
+        ///
+        /// 宛先はビルド時に UnityBuilder が manifest へ書き込む
+        /// （＝そのビルドを作ったマシンの LAN アドレス）。無ければ何もしない。
+        /// </summary>
+        private static void EnsureLogRelayInScene(JObject manifest)
+        {
+            var relay = manifest?["logRelay"] as JObject;
+            if (relay == null || relay["enabled"]?.Value<bool>() != true) return;
+
+            var hosts = relay["hosts"] as JArray;
+            if (hosts == null || hosts.Count == 0) return;
+
+            var go = new GameObject("[ArsistLogRelay]");
+            var component = TryAddComponentByTypeName(go, "Arsist.Runtime.Diagnostics.ArsistLogRelay");
+            if (component == null)
+            {
+                Debug.LogWarning("[Arsist] ArsistLogRelay type not found; device logs will not be streamed.");
+                UnityEngine.Object.DestroyImmediate(go);
+                return;
+            }
+
+            var hostList = new List<string>();
+            foreach (var host in hosts)
+            {
+                var value = host?.ToString();
+                if (!string.IsNullOrWhiteSpace(value)) hostList.Add(value);
+            }
+
+            var type = component.GetType();
+            type.GetField("Hosts")?.SetValue(component, hostList.ToArray());
+            type.GetField("Port")?.SetValue(component, relay["port"]?.Value<int>() ?? 9770);
+            type.GetField("Token")?.SetValue(component, relay["token"]?.ToString() ?? "arsist");
+            type.GetField("AppName")?.SetValue(component, manifest?["projectName"]?.ToString() ?? "Arsist");
+            EditorUtility.SetDirty(component);
+
+            Debug.Log($"[Arsist] Log relay configured -> {string.Join(", ", hostList)}:" +
+                      $"{relay["port"]?.Value<int>() ?? 9770}");
+        }
+
+        /// <summary>画像アンカーのターゲットが1つでも定義されているか。</summary>
+        private static bool ProjectHasPerceptionTargets()
+        {
+            var targets = _manifest?["perception"]?["targets"] as JArray;
+            return targets != null && targets.Count > 0;
+        }
+
+        /// <summary>画像認識タスクが1つでも定義されているか。</summary>
+        private static bool ProjectHasPerceptionTasks()
+        {
+            var tasks = _manifest?["perception"]?["tasks"] as JArray;
+            return tasks != null && tasks.Count > 0;
+        }
+
+        /// <summary>
+        /// 画像アンカーか認識タスクがあれば、認識ランタイムをシーンに入れる。
+        ///
+        /// タスクだけのプロジェクト（viewport ソース）でもマネージャは要る。
+        /// カメラのフレーム供給はマネージャが持っているため。
+        /// </summary>
+        private static void EnsurePerceptionManagerInScene(JObject manifest)
+        {
+            var targets = manifest?["perception"]?["targets"] as JArray;
+            var taskList = manifest?["perception"]?["tasks"] as JArray;
+            bool hasTargets = targets != null && targets.Count > 0;
+            bool hasTasks = taskList != null && taskList.Count > 0;
+            if (!hasTargets && !hasTasks) return;
+
+            var go = new GameObject("[ArsistPerception]");
+            if (TryAddComponentByTypeName(go, "Arsist.Runtime.Perception.ArsistPerceptionManager") == null)
+            {
+                Debug.LogError("[Arsist] ArsistPerceptionManager type not found; image anchors will not work.");
+                UnityEngine.Object.DestroyImmediate(go);
+                return;
+            }
+            Debug.Log($"[Arsist] ArsistPerceptionManager added ({(hasTargets ? targets.Count : 0)} image target(s)).");
+
+            var tasks = taskList;
+            if (!hasTasks) return;
+
+            var runnerGO = new GameObject("[ArsistPerceptionTasks]");
+            if (TryAddComponentByTypeName(runnerGO, "Arsist.Runtime.Perception.ArsistPerceptionTaskRunner") == null)
+            {
+                Debug.LogError("[Arsist] ArsistPerceptionTaskRunner type not found; perception tasks will not run.");
+                UnityEngine.Object.DestroyImmediate(runnerGO);
+                return;
+            }
+            Debug.Log($"[Arsist] ArsistPerceptionTaskRunner added for {tasks.Count} task(s).");
         }
 
         /// <summary>
@@ -2431,6 +3028,12 @@ ScriptedImporter:
             // UI Manager
             var uiManagerGO = new GameObject("[ArsistUIManager]");
             TryAddComponentByTypeName(uiManagerGO, "Arsist.Runtime.UI.ArsistUIManager");
+
+            // 画像アンカー（ターゲットが定義されている場合のみ）
+            EnsurePerceptionManagerInScene(manifest);
+
+            // 実機ログの LAN 中継（ビルドしたマシンの宛先が manifest にある場合のみ）
+            EnsureLogRelayInScene(manifest);
             
             // Note: Canvas visibility and font fixes are handled at build time in GenerateCanvasUI and CreateUIElement
             
@@ -3852,6 +4455,13 @@ ScriptedImporter:
                         manifestPath,
                         ProjectHasInputElement()
                     );
+                    // 画像アンカーを使うプロジェクトだけカメラ権限を宣言する。
+                    InvokeStaticIfExists(
+                        "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
+                        "ConfigurePassthroughCamera",
+                        manifestPath,
+                        ProjectHasPerceptionTargets()
+                    );
                 }
             }
             catch (Exception e)
@@ -4371,37 +4981,169 @@ ScriptedImporter:
                 return;
             }
 
-            var hasQuestLoader = manager.activeLoaders.Any(loader => loader != null && (
-                loader.GetType().FullName == "UnityEngine.XR.OpenXR.OpenXRLoader" ||
-                loader.GetType().FullName == "Unity.XR.Oculus.OculusLoader"
-            ));
+            // 非推奨の Oculus XR Plugin ローダーが残っていたら外す。
+            // これが有効だと自前の古い OVRPlugin (v1.92 系) が読み込まれ、
+            // Meta XR Core SDK 85 が前提とする v1.117 の機能が使えなくなる。
+            // 実機での症状は "You are using an old version of OVRPlugin" と
+            // Passthrough Camera Access の "Unsupported graphics API 0"。
+            RemoveXRLoaderByType(manager, "Unity.XR.Oculus.OculusLoader");
 
-            if (hasQuestLoader)
+            var hasOpenXRLoader = manager.activeLoaders.Any(loader =>
+                loader != null && loader.GetType().FullName == "UnityEngine.XR.OpenXR.OpenXRLoader");
+
+            if (!hasOpenXRLoader && !TryAddXRLoaderByType(manager, "UnityEngine.XR.OpenXR.OpenXRLoader"))
             {
+                // 「型が無い」のか「追加に失敗した」のかで対処が違うので、区別して言う
+                var loaderTypeExists = FindTypeWithAssemblyHints(
+                    "UnityEngine.XR.OpenXR.OpenXRLoader", "Unity.XR.OpenXR") != null;
+                Debug.LogError(loaderTypeExists
+                    ? "[Arsist] OpenXRLoader exists but could not be added to XR Manager. " +
+                      "Check XRPackageMetadataStore.AssignLoader availability in this Unity version."
+                    : "[Arsist] OpenXRLoader type not found. com.unity.xr.openxr must be present " +
+                      "for Unity 6 + Meta XR SDK v74 or newer.");
                 return;
             }
 
-            var added =
-                TryAddXRLoaderByType(manager, "UnityEngine.XR.OpenXR.OpenXRLoader") ||
-                TryAddXRLoaderByType(manager, "Unity.XR.Oculus.OculusLoader");
+            EditorUtility.SetDirty(manager);
+            AssetDatabase.SaveAssets();
+            Debug.Log("[Arsist] Quest XR loader configured (OpenXR)");
 
-            if (added)
+            EnableQuestOpenXRFeatures();
+        }
+
+        /// <summary>
+        /// XR Manager から指定のローダーを取り除く。
+        /// </summary>
+        private static void RemoveXRLoaderByType(XRManagerSettings manager, string loaderTypeName)
+        {
+            try
             {
-                EditorUtility.SetDirty(manager);
-                AssetDatabase.SaveAssets();
-                Debug.Log("[Arsist] Quest XR loader configured");
+                var loaderType = FindTypeWithAssemblyHints(
+                    loaderTypeName, "Unity.XR.OpenXR", "Unity.XR.Oculus");
+                if (loaderType == null) return;
+
+                var present = manager.activeLoaders
+                    .FirstOrDefault(loader => loader != null && loaderType.IsAssignableFrom(loader.GetType()));
+                if (present == null) return;
+
+                var tryRemove = manager.GetType().GetMethod(
+                    "TryRemoveLoader",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    new[] { typeof(Type) },
+                    null);
+
+                if (tryRemove != null && tryRemove.Invoke(manager, new object[] { loaderType }) is bool ok && ok)
+                {
+                    Debug.Log($"[Arsist] Removed deprecated XR loader: {loaderTypeName}");
+                    EditorUtility.SetDirty(manager);
+                }
+                else
+                {
+                    Debug.LogWarning($"[Arsist] Could not remove XR loader {loaderTypeName}; " +
+                                     "it may shadow the Meta XR SDK's OVRPlugin at runtime.");
+                }
             }
-            else
+            catch (Exception e)
             {
-                Debug.LogWarning("[Arsist] Quest XR loader could not be configured automatically");
+                Debug.LogWarning($"[Arsist] RemoveXRLoaderByType({loaderTypeName}) failed: {e.Message}");
             }
+        }
+
+        /// <summary>
+        /// Quest 向けに必要な OpenXR 機能を有効にする。
+        ///
+        /// 2つとも要る。片方だけだと実機で無言のまま落ちる:
+        ///  - com.unity.openxr.feature.metaquest (Unity "Meta Quest Support")
+        ///      XR_OCULUS_android_initialize_loader を提供する。これが無いと
+        ///      Android 上で OpenXR ローダーが初期化できず、何も表示されずに終了する。
+        ///      Quest 用のマニフェスト項目 (com.oculus.intent.category.VR,
+        ///      com.oculus.supportedDevices, android.hardware.vr.headtracking) もこれが入れる。
+        ///  - com.meta.openxr.feature.metaxr (Meta "Meta XR Feature")
+        ///      OVRPlugin と Meta 固有の拡張 (パススルー、Passthrough Camera Access 等) を有効にする。
+        /// </summary>
+        private static void EnableQuestOpenXRFeatures()
+        {
+            var featureIds = new[]
+            {
+                "com.unity.openxr.feature.metaquest",
+                "com.meta.openxr.feature.metaxr",
+            };
+
+            try
+            {
+                var helpersType = FindTypeWithAssemblyHints(
+                    "UnityEditor.XR.OpenXR.Features.FeatureHelpers", "Unity.XR.OpenXR.Editor");
+                if (helpersType == null)
+                {
+                    Debug.LogError("[Arsist] FeatureHelpers not found; Quest OpenXR features cannot be enabled. " +
+                                   "The build will crash on launch.");
+                    return;
+                }
+
+                // 機能一覧を最新化してから取りに行かないと、初回は null が返ることがある
+                helpersType
+                    .GetMethod("RefreshFeatures", BindingFlags.Public | BindingFlags.Static)
+                    ?.Invoke(null, new object[] { BuildTargetGroup.Android });
+
+                var getFeature = helpersType.GetMethod(
+                    "GetFeatureWithIdForBuildTarget",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[] { typeof(BuildTargetGroup), typeof(string) },
+                    null);
+
+                if (getFeature == null)
+                {
+                    Debug.LogError("[Arsist] FeatureHelpers.GetFeatureWithIdForBuildTarget not found.");
+                    return;
+                }
+
+                bool anyFailed = false;
+                foreach (var featureId in featureIds)
+                {
+                    if (!TryEnableOpenXRFeature(getFeature, featureId)) anyFailed = true;
+                }
+
+                if (!anyFailed) AssetDatabase.SaveAssets();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Arsist] Failed to enable the Quest OpenXR features: {e.Message}");
+            }
+        }
+
+        private static bool TryEnableOpenXRFeature(MethodInfo getFeature, string featureId)
+        {
+            var feature = getFeature.Invoke(null, new object[] { BuildTargetGroup.Android, featureId });
+            if (feature == null)
+            {
+                Debug.LogError($"[Arsist] OpenXR feature '{featureId}' not found; the app will not start on Quest.");
+                return false;
+            }
+
+            // OpenXRFeature の有効・無効は "enabled" プロパティ (直列化名は m_enabled)。
+            // ScriptableObject 標準の m_Enabled とは別物なので混同しないこと。
+            var enabledProperty = feature.GetType().GetProperty("enabled",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (enabledProperty == null || !enabledProperty.CanWrite)
+            {
+                Debug.LogError($"[Arsist] Could not set 'enabled' on OpenXR feature '{featureId}'.");
+                return false;
+            }
+
+            enabledProperty.SetValue(feature, true);
+            if (feature is UnityEngine.Object featureAsset) EditorUtility.SetDirty(featureAsset);
+            Debug.Log($"[Arsist] OpenXR feature enabled: {featureId}");
+            return true;
         }
 
         private static bool TryAddXRLoaderByType(XRManagerSettings manager, string loaderTypeName)
         {
             try
             {
-                var loaderType = FindTypeInLoadedAssemblies(loaderTypeName);
+                var loaderType = FindTypeWithAssemblyHints(
+                    loaderTypeName, "Unity.XR.OpenXR", "Unity.XR.Oculus");
                 if (loaderType == null) return false;
 
                 if (manager.activeLoaders.Any(loader => loader != null && loaderType.IsAssignableFrom(loader.GetType())))
@@ -4438,7 +5180,13 @@ ScriptedImporter:
                     if (result is bool ok && ok) return true;
                 }
 
-                var metadataStoreType = FindTypeInLoadedAssemblies("UnityEditor.XR.Management.XRPackageMetadataStore");
+                // 名前空間は UnityEditor.XR.Management.Metadata。".Metadata" を落として探していたため
+                // ここは常に null になり、ローダーを追加できないまま false を返していた。
+                // これまで表面化しなかったのは、同梱サンプル由来の OculusLoader が既にいて
+                // 追加処理まで到達していなかったから。
+                var metadataStoreType = FindTypeWithAssemblyHints(
+                    "UnityEditor.XR.Management.Metadata.XRPackageMetadataStore",
+                    "Unity.XR.Management.Editor");
                 var assignLoader = metadataStoreType?.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
                     .FirstOrDefault(mi =>
                     {
@@ -4619,6 +5367,41 @@ ScriptedImporter:
                 try
                 {
                     var t = asm.GetType(fullName, throwOnError: false);
+                    if (t != null) return t;
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 型を探す。読み込み済みアセンブリの走査だけでは足りないので、
+        /// アセンブリ名を指定して「まだ読み込まれていないアセンブリ」も引かせる。
+        ///
+        /// エディタは必要になるまでアセンブリを読み込まないため、
+        /// AppDomain.GetAssemblies() だけだと、パッケージが入っているのに
+        /// 型が見つからないことがある（OpenXRLoader がまさにそれで、
+        /// com.unity.xr.openxr が入っているのに "not found" になっていた）。
+        /// </summary>
+        private static Type FindTypeWithAssemblyHints(string fullName, params string[] assemblyNames)
+        {
+            var found = FindTypeInLoadedAssemblies(fullName);
+            if (found != null) return found;
+
+            foreach (var assemblyName in assemblyNames)
+            {
+                try
+                {
+                    // アセンブリ修飾名で引くと、未読み込みでも解決してくれる
+                    var t = Type.GetType($"{fullName}, {assemblyName}", throwOnError: false);
+                    if (t != null) return t;
+                }
+                catch { }
+
+                try
+                {
+                    var asm = System.Reflection.Assembly.Load(assemblyName);
+                    var t = asm?.GetType(fullName, throwOnError: false);
                     if (t != null) return t;
                 }
                 catch { }

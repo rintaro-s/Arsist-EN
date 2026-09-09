@@ -1370,6 +1370,44 @@ class UnityBuilder extends events_1.EventEmitter {
         catch { /* ignore */ }
         return null;
     }
+    /**
+     * 実機ログの送り先（このマシンの LAN アドレス）を解決する。
+     *
+     * 「ビルドしたマシンを自動で信頼する」の実体がこれ。ペアリングも設定も要らない代わりに、
+     * 焼き込んだアドレスから動いたら届かなくなる（次のビルドで直る）。
+     */
+    resolveLogRelay(manifestData) {
+        const settings = manifestData
+            ?.arSettings?.logRelay;
+        // 明示的に無効化されたときだけ切る（既定は有効。開発中に毎回設定させない）
+        if (settings?.enabled === false)
+            return undefined;
+        const hosts = UnityBuilder.listLanAddresses();
+        if (hosts.length === 0) {
+            this.emit('log', '[Arsist] Log relay disabled: no LAN address found on this machine');
+            return undefined;
+        }
+        const port = settings?.port && settings.port > 0 ? settings.port : 9770;
+        this.emit('log', `[Arsist] Log relay -> ${hosts.join(', ')}:${port} (npm run logs to watch)`);
+        return { enabled: true, hosts, port, token: 'arsist' };
+    }
+    /** このマシンの IPv4 LAN アドレス。ループバックと仮想NICは除く。 */
+    static listLanAddresses() {
+        const found = [];
+        const interfaces = os.networkInterfaces();
+        for (const [name, entries] of Object.entries(interfaces)) {
+            // docker0 / veth / virbr のような仮想NICへ投げても誰も聞いていない
+            if (/^(docker|veth|virbr|br-|lo)/i.test(name))
+                continue;
+            for (const entry of entries ?? []) {
+                if (entry.family !== 'IPv4' || entry.internal)
+                    continue;
+                if (!found.includes(entry.address))
+                    found.push(entry.address);
+            }
+        }
+        return found;
+    }
     async transferProjectData(unityProjectPath, config) {
         const dataDir = path.join(unityProjectPath, 'Assets', 'ArsistGenerated');
         await fs.ensureDir(dataDir);
@@ -1380,6 +1418,10 @@ class UnityBuilder extends events_1.EventEmitter {
         const manifestWithScenes = {
             ...config.manifestData,
             scenes: config.scenesData,
+            // 実機ログの送り先は「今ビルドしているマシン」なので、ここで決まる。
+            // IR には持たせず（プロジェクトを他人に渡しても他人のIPが残らないように）、
+            // ビルドのたびに現在の LAN アドレスを焼き込む。
+            logRelay: this.resolveLogRelay(config.manifestData),
         };
         await fs.writeJSON(path.join(dataDir, 'manifest.json'), manifestWithScenes, { spaces: 2 });
         // シーンデータ
@@ -1751,6 +1793,13 @@ class UnityBuilder extends events_1.EventEmitter {
         if (await fs.pathExists(sampleAssetsXr)) {
             const destAssetsXr = path.join(unityProjectPath, 'Assets', 'XR');
             await this.syncDirectory(sampleAssetsXr, destAssetsXr);
+            // 同梱サンプルは Unity 2022 / Meta XR v83 世代で、非推奨の Oculus XR Plugin を使う。
+            // その OculusLoader.asset をそのまま持ち込むと、Unity 6 + SDK 85 のビルドでも
+            // 古い OVRPlugin 側が動いてしまい、Passthrough Camera Access が使えなくなる。
+            // ローダーは ArsistBuildPipeline が OpenXR + MetaXRFeature で組み直すので、ここでは捨てる。
+            for (const stale of ['OculusLoader.asset', 'OculusLoader.asset.meta']) {
+                await fs.remove(path.join(destAssetsXr, 'Loaders', stale)).catch(() => { });
+            }
         }
         const copySettingIfExists = async (fileName) => {
             const src = path.join(sampleProjectSettings, fileName);
@@ -1793,8 +1842,22 @@ class UnityBuilder extends events_1.EventEmitter {
         setIfMissing('com.unity.modules.uielements', '1.0.0');
         setIfMissing('com.unity.ugui', '1.0.0');
         setIfMissing('com.unity.xr.management', '4.5.0');
-        setIfMissing('com.unity.xr.oculus', '4.4.0');
+        // com.unity.xr.oculus (Oculus XR Plugin) は入れない。
+        //
+        // 非推奨パッケージで、自前の OVRPlugin ネイティブ (v1.92 系) を同梱している。
+        // Meta XR Core SDK 85 の C# 側は OVRPlugin v1.117 を前提にしているので、
+        // 両方入れると古い方が読み込まれ、実機で次のように壊れる:
+        //   "You are using an old version of OVRPlugin"
+        //   "Failed to initialize Open XR ... xrInstanceProcAddrFunc: 0"
+        //   Passthrough Camera Access が "Unsupported graphics API 0" で失敗する
+        // Unity 6 + Meta XR SDK v74 以降の正しい構成は OpenXR Loader + MetaXRFeature。
+        // 既に入っている場合は取り除く。
+        if (targetDependencies['com.unity.xr.oculus']) {
+            delete targetDependencies['com.unity.xr.oculus'];
+        }
+        setIfMissing('com.unity.xr.openxr', '1.15.1');
         // サンプルにある built-in modules を不足分だけ補完
+        // （同梱サンプルは Unity 2022 / Meta XR v83 世代なので、modules 以外は取り込まない）
         if (sampleDependencies) {
             for (const [pkg, version] of Object.entries(sampleDependencies)) {
                 if (!pkg.startsWith('com.unity.modules.'))

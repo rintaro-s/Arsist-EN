@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    画像アンカーの姿勢推定を Unity 無しで数値検証するためのハーネス。
+
+    Vision/ の幾何まわり (LinAlg / Homography / PlanarPoseSolver / RegionRectifier) は UnityEngine に
+    依存していないので、ソースをそのまま取り込んで素の .NET でテストできる。
+    ここが狂うとアンカーが数 cm 〜 数十 cm ずれるが、実機ビルドでは気付けないため、
+    数式を触ったら必ずこれを通すこと。
+
+      npm run test:perception
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>PerceptionCheck</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/LinAlg.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Homography.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/PlanarPoseSolver.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/GrayImage.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/RegionRectifier.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/PlacementSolver.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Keypoint.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/FastDetector.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/OrbDescriptor.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/FeatureExtractor.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/DescriptorMatcher.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/ReferenceTarget.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/ImageRecognizer.cs" />
+  </ItemGroup>
+
+</Project>

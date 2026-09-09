@@ -5,7 +5,6 @@ import {
   Grid, 
   GizmoHelper, 
   GizmoViewport,
-  TransformControls,
   useGLTF,
   Line,
   Text
@@ -16,6 +15,12 @@ import { useUIStore } from '../../stores/uiStore';
 import type { SceneObject } from '../../../shared/types';
 import { Eye, HelpCircle, Box, Circle, Square, Cylinder } from 'lucide-react';
 import { VRMViewer } from './VRMViewer';
+import { AnchorPlane } from './AnchorPlane';
+import { SceneTransformControls } from './SceneTransformControls';
+import { anchorPlacement } from '../../perception/anchorLayout';
+import { estimateObjectExtents } from '../../perception/objectExtents';
+import { resolvePlacement, regionToBase } from '../../../shared/placement';
+import type { PerceptionTarget } from '../../../shared/types';
 import { useT } from '../../i18n';
 import { useDeviceFov, type DeviceFov } from '../../utils/deviceFov';
 
@@ -127,7 +132,11 @@ function SpawnViewMarker({ fov, distance }: { fov: DeviceFov | null; distance: n
 export function SceneViewport() {
   const t = useT();
   const { showGrid, showAxes, showSpawnView, transformMode, transformSpace, setTransformMode } = useUIStore();
-  const { project, currentSceneId, selectedObjectIds, selectObjects, updateObject, addObject } = useProjectStore();
+  const {
+    project, projectPath, currentSceneId, selectedObjectIds,
+    selectObjects, updateObject, addObject,
+    selectedPerceptionTargetId, selectPerceptionTarget,
+  } = useProjectStore();
   const [cameraPos, setCameraPos] = useState({ x: 5, y: 5, z: 5 });
   const [showHelp, setShowHelp] = useState(false);
   const trackingMode = project?.arSettings?.trackingMode || '6dof';
@@ -140,6 +149,67 @@ export function SceneViewport() {
   const deviceFov = useDeviceFov(project?.targetDevice);
   
   const currentScene = project?.scenes.find(s => s.id === currentSceneId);
+
+  const perceptionTargets = project?.perception?.targets ?? [];
+
+  // 貼り付け済みのオブジェクトは、対応するアンカーのグループ内で描く。
+  // 参照先が消えているものは通常のオブジェクトとして扱う（画面から消さない）。
+  const { unanchoredObjects, anchoredObjects } = useMemo(() => {
+    const unanchored: SceneObject[] = [];
+    const anchored = new Map<string, SceneObject[]>();
+    const knownTargets = new Set(perceptionTargets.map((x) => x.id));
+
+    for (const obj of currentScene?.objects ?? []) {
+      const targetId = obj.anchor?.targetId;
+      if (targetId && knownTargets.has(targetId)) {
+        const list = anchored.get(targetId);
+        if (list) list.push(obj);
+        else anchored.set(targetId, [obj]);
+      } else {
+        unanchored.push(obj);
+      }
+    }
+    return { unanchoredObjects: unanchored, anchoredObjects: anchored };
+  }, [currentScene?.objects, project?.perception?.targets]);
+
+  /**
+   * placement 指定があれば、その基準位置を返す（無ければ null）。
+   * ランタイムと同じ src/shared/placement.ts を使うので、
+   * ここで見た位置がそのまま実機の位置になる。
+   */
+  const placementOffset = (obj: SceneObject, target: PerceptionTarget): [number, number, number] | null => {
+    const placement = obj.anchor?.placement;
+    if (!placement) return null;
+
+    const height = target.physicalHeight && target.physicalHeight > 0
+      ? target.physicalHeight
+      : target.physicalWidth;
+    const region = placement.regionId
+      ? target.regions?.find((r) => r.id === placement.regionId)
+      : undefined;
+
+    const at = resolvePlacement(
+      placement,
+      regionToBase(target.physicalWidth, height, region?.rect),
+      estimateObjectExtents(obj),
+    );
+    return [at.x, at.y, at.z];
+  };
+
+  const renderSceneObject = (obj: SceneObject) => {
+    const shared = {
+      key: obj.id,
+      object: obj,
+      isSelected: selectedObjectIds.includes(obj.id),
+      onSelect: () => selectObjects([obj.id]),
+      onUpdate: (updates: Partial<SceneObject>) => updateObject(obj.id, updates),
+      transformMode,
+      transformSpace,
+    };
+    if (obj.type === 'vrm') return <VRMViewer {...shared} />;
+    if (obj.type === 'model') return <ModelObject {...shared} />;
+    return <SceneObjectMesh {...shared} />;
+  };
 
   const handleAddObject = (type: string, primitiveType?: string) => {
     addObject({
@@ -343,44 +413,32 @@ export function SceneViewport() {
 
         {/* Scene objects */}
         <Suspense fallback={null}>
-          {currentScene?.objects.map(obj => {
-            if (obj.type === 'vrm') {
-              return (
-                <VRMViewer
-                  key={obj.id}
-                  object={obj}
-                  isSelected={selectedObjectIds.includes(obj.id)}
-                  onSelect={() => selectObjects([obj.id])}
-                  onUpdate={(updates) => updateObject(obj.id, updates)}
-                  transformMode={transformMode}
-                  transformSpace={transformSpace}
+          {unanchoredObjects.map(renderSceneObject)}
+
+          {/* 画像アンカー。実行時の姿勢は現実の物体次第なので、ここは編集用の仮置き。
+              貼り付けたオブジェクトはこのグループの子として描くので、
+              作者はいつも通りのギズモでアンカーからのオフセットを編集できる。 */}
+          {perceptionTargets.map((target, index) => {
+            const placement = anchorPlacement(index, perceptionTargets.length);
+            return (
+              <group key={target.id} position={placement.position} rotation={[0, placement.rotationY, 0]}>
+                <AnchorPlane
+                  target={target}
+                  projectPath={projectPath}
+                  isSelected={selectedPerceptionTargetId === target.id}
+                  onSelect={() => selectPerceptionTarget(target.id)}
                 />
-              );
-            } else if (obj.type === 'model') {
-              return (
-                <ModelObject
-                  key={obj.id}
-                  object={obj}
-                  isSelected={selectedObjectIds.includes(obj.id)}
-                  onSelect={() => selectObjects([obj.id])}
-                  onUpdate={(updates) => updateObject(obj.id, updates)}
-                  transformMode={transformMode}
-                  transformSpace={transformSpace}
-                />
-              );
-            } else {
-              return (
-                <SceneObjectMesh
-                  key={obj.id}
-                  object={obj}
-                  isSelected={selectedObjectIds.includes(obj.id)}
-                  onSelect={() => selectObjects([obj.id])}
-                  onUpdate={(updates) => updateObject(obj.id, updates)}
-                  transformMode={transformMode}
-                  transformSpace={transformSpace}
-                />
-              );
-            }
+                {(anchoredObjects.get(target.id) ?? []).map((obj) => {
+                  const offset = placementOffset(obj, target);
+                  // placement 指定のオブジェクトは、計算した基準位置のグループの中に置く。
+                  // こうすると object.transform は「微調整」として上に乗り、
+                  // ギズモの編集結果もランタイムと同じ意味になる。
+                  return offset
+                    ? <group key={obj.id} position={offset}>{renderSceneObject(obj)}</group>
+                    : renderSceneObject(obj);
+                })}
+              </group>
+            );
           })}
         </Suspense>
 
@@ -437,7 +495,6 @@ function SceneObjectMesh({
 }: SceneObjectMeshProps) {
   if (object.type === 'model') return null;
   const meshRef = useRef<THREE.Mesh>(null);
-  const transformRef = useRef<any>(null);
 
   // Create geometry based on primitive type
   const geometry = useMemo(() => {
@@ -544,8 +601,7 @@ function SceneObjectMesh({
 
       {/* Transform Controls */}
       {isSelected && meshRef.current && (
-        <TransformControls
-          ref={transformRef}
+        <SceneTransformControls
           object={meshRef.current}
           mode={transformMode}
           space={transformSpace}
@@ -565,7 +621,6 @@ function ModelObject({
   transformSpace
 }: SceneObjectMeshProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const transformRef = useRef<any>(null);
 
   const projectPath = useProjectStore((s) => s.projectPath);
 
@@ -675,8 +730,7 @@ function ModelObject({
       </group>
 
       {isSelected && groupRef.current && (
-        <TransformControls
-          ref={transformRef}
+        <SceneTransformControls
           object={groupRef.current}
           mode={transformMode}
           space={transformSpace}

@@ -17,7 +17,8 @@ ArsistProject
 ├── scenes: SceneData[]
 ├── uiLayouts: UILayoutData[]
 ├── buildSettings: BuildSettings
-└── scripts?: ScriptData[]
+├── scripts?: ScriptData[]
+└── perception?: PerceptionSettings   (画像アンカー)
 ```
 
 The entire project is serialised to `project.json` at the project root. Individual scenes and UI layouts are additionally written to `Scenes/<id>.json` and `UI/<id>.json` for granular diff-ability.
@@ -173,6 +174,74 @@ The scene viewport draws this spawn viewpoint (marker + forward arrow + the devi
 ```
 
 ---
+
+## Perception — image anchors
+
+The first IR construct whose pose is **not** authored: it comes from the real world at runtime.
+Full design in [11-perception.md](11-perception.md).
+
+```
+ArsistProject.perception?: { targets: PerceptionTarget[] }
+
+PerceptionTarget
+├── id, name
+├── type: 'image'            (future: 'plane' | 'objectClass')
+├── imagePath                reference photo, project-relative
+├── physicalWidth            real-world width in metres — REQUIRED, scale is unrecoverable from a photo
+├── physicalHeight?          metres; omitted = derived from the photo's aspect ratio
+├── holdMs?                  how long an anchor counts as "visible" after leaving view (default 2000)
+└── quality?                 editor-computed trackability 0-100, advisory only
+```
+
+A `SceneObject` joins a target through `anchor`:
+
+```
+SceneObject.anchor?: {
+  targetId,
+  whenNotFound: 'hidden' | 'lastKnown' | 'visible',
+  placement?: AnchorPlacement,          // 「その物の右に10cm」
+}
+
+AnchorPlacement
+├── regionId?          基準にする枠。省略 = 写真全体
+├── side               center | left | right | above | below | front | behind
+├── gap                縁からの間隔 (m)
+├── align              near (縁から縁まで) | center
+├── cross              start | center | end   縁に沿った揃え
+└── facing             user (常に正面を向く) | target
+```
+
+**When `anchor` is present, `transform` changes meaning**: it is no longer an absolute pose but an
+offset in the target's frame (`+X` printed right, `+Y` up, `+Z` out of the surface). Everything else
+about the object — material, children, `assetId`, scripting — is unchanged, and it still goes through
+the same `x → -x` export mirror as every other object.
+
+`placement` と `transform` は合成される: placement が実寸から基準姿勢を決め、`transform` が
+その上の微調整になる（ギズモで動かすと `transform` が変わる）。生の座標だけだと、ターゲットか
+オブジェクトの大きさが変わった瞬間に「横に並ぶ」という意図が失われる。
+
+### 枠と、枠に対する処理
+
+```
+PerceptionTarget.regions?: PerceptionRegion[]
+PerceptionRegion { id, name, rect }        rect は 0..1、原点は写真の左下
+
+ArsistProject.perception.tasks?: PerceptionTask[]
+PerceptionTask
+├── type       'ocr' | 'capture'
+├── source     { kind:'region', targetId, regionId } | { kind:'viewport', rect }
+├── trigger    ScriptTrigger (onStart / interval / event) または { type:'manual' }
+├── storeAs    DataStore キー。UI の bind から <storeAs>.text / .status が読める
+└── engine?    { kind:'mlkit'|'mock', script?:'latin'|'japanese', mockText? }
+```
+
+`region` 指定は「追跡中のターゲット上の枠」なので、斜めから見ていてもランタイムが正対に
+起こしてから読む。`viewport` は「カメラ画像そのものの矩形」で、ターゲットを必要としない。
+
+Targets are referenced across scenes, which is why they live on the project rather than inside
+`SceneData`. Deleting a target strips `anchor` from every object that referenced it
+(`removePerceptionTarget` in `projectStore`), because an anchor pointing at nothing builds fine and
+then never appears at runtime.
 
 ## UI Layout Data
 

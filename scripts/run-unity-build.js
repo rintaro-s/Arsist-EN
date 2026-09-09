@@ -64,6 +64,10 @@ function pickFirstExisting(paths) {
     buildSettings: project.buildSettings,
     remoteInput,
     scripting: { enabled: hasActiveScripts },
+    // 画像アンカー（src/bridge/UnityBridge.ts の generateUnityManifest と同じ形）
+    perception: project.perception && project.perception.targets && project.perception.targets.length > 0
+      ? project.perception
+      : undefined,
     exportedAt: new Date().toISOString(),
   };
   const scriptsData = {

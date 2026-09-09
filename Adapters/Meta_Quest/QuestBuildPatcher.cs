@@ -224,6 +224,41 @@ namespace Arsist.Adapters.MetaQuest
             Debug.Log($"[QuestBuildPatcher] システムキーボード設定完了 (enabled={enabled})");
         }
 
+        /// <summary>
+        /// パススルーカメラ (Passthrough Camera Access) の権限宣言。
+        ///
+        /// 画像アンカーを使うプロジェクトだけに付ける。カメラ権限は実行時に
+        /// ユーザーへ確認ダイアログが出る強い権限なので、使わないアプリに
+        /// 付けてしまうと不必要な不信感を招く。
+        /// Horizon OS v74 以降 / Quest 3・3S のみ有効。
+        /// </summary>
+        public static void ConfigurePassthroughCamera(string manifestPath, bool enabled)
+        {
+            if (!File.Exists(manifestPath)) return;
+
+            var doc = new XmlDocument();
+            doc.Load(manifestPath);
+
+            var ns = "http://schemas.android.com/apk/res/android";
+            var nsMgr = new XmlNamespaceManager(doc.NameTable);
+            nsMgr.AddNamespace("android", ns);
+
+            var manifest = doc.SelectSingleNode("/manifest");
+            if (manifest == null) return;
+
+            if (enabled)
+            {
+                EnsurePermission(doc, ns, manifest, "horizonos.permission.HEADSET_CAMERA");
+            }
+            else
+            {
+                RemoveNode(manifest, nsMgr, "uses-permission[@android:name='horizonos.permission.HEADSET_CAMERA']");
+            }
+
+            doc.Save(manifestPath);
+            Debug.Log($"[QuestBuildPatcher] パススルーカメラ権限設定完了 (enabled={enabled})");
+        }
+
         // ─────────────────────────────────────────
         // XML ユーティリティ
         // ─────────────────────────────────────────

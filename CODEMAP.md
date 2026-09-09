@@ -3,7 +3,7 @@
 A machine-readable orientation map. If you are an AI agent modifying this repo, **read this first**, then the
 relevant `doc/NN-*.md` deep-dive. For "where do I change X" jump to [Task index](#task-index).
 
-> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `10-python-control`). This file is the fast index +
+> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `13-device-logs`). This file is the fast index +
 > the device/SDK responsibility map that those docs don't cover.
 
 ---
@@ -59,7 +59,9 @@ Four editor views switched by `uiStore.currentView`: `scene` / `ui` / `dataflow`
 ### Unity runtime engine — `UnityBackend/ArsistBuilder/Assets/Arsist/`
 Interprets the IR at runtime, by domain: `Runtime/Scripting/` (Jint JS host + wrappers), `Runtime/Scene/`,
 `Runtime/UI/`, `Runtime/DataFlow/`, `Runtime/Data/`, `Runtime/VRM/`, `Runtime/Network/` (WebSocket for Python),
-`Runtime/Input/` (gaze), `Runtime/Events/`, `Runtime/Audio/`, `Runtime/Animation/`, `Runtime/Pooling/`.
+`Runtime/Input/` (gaze), `Runtime/Events/`, `Runtime/Audio/`, `Runtime/Animation/`, `Runtime/Pooling/`,
+`Runtime/Perception/` (image anchors: `Vision/` = device-independent recogniser, `Sources/` = per-device camera
+frame supply; see `doc/11-perception.md`).
 `Editor/` holds the build pipeline + code generators. Key: [Editor/ArsistBuildPipeline.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs) (`BuildFromCLI` entry), [Runtime/XROriginSetup.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/XROriginSetup.cs) (runtime rig).
 
 ### Device adapters — `Adapters/<device>/`
@@ -151,6 +153,25 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
 - **XREAL setup / stability / DoF / manifest** → [XrealBuildPatcher.cs](Adapters/XREAL_One/XrealBuildPatcher.cs) + `CreateXROrigin` in [ArsistBuildPipeline.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs); ground truth in `sdk/com.xreal.xr/package/`.
 - **Quest setup** → [QuestBuildPatcher.cs](Adapters/Meta_Quest/QuestBuildPatcher.cs).
 - **Live layout mode (a separate UI from the editor)** → [src/renderer/live/](src/renderer/live/).
+- **Image anchors ("put this on that real thing")** → `doc/11-perception.md`. IR in
+  [types.ts](src/shared/types.ts) (`PerceptionTarget` / `SceneObject.anchor`); recogniser in
+  `UnityBackend/.../Runtime/Perception/Vision/`; camera supply per device in `.../Perception/Sources/`;
+  editor UI in [PerceptionInspector.tsx](src/renderer/components/panels/PerceptionInspector.tsx) +
+  [AnchorPlane.tsx](src/renderer/components/viewport/AnchorPlane.tsx).
+- **Placing things *relative* to a real object ("10 cm to its right")** → `doc/12-ar-behaviors.md` §2.2/§3.1.
+  Maths in [src/shared/placement.ts](src/shared/placement.ts) (used by both the editor preview and, as a
+  mirrored copy, by `ArsistImageAnchor`); UI in `PerceptionInspector.ObjectAnchorSection`.
+- **OCR of a named frame, triggered by a button/script** → `doc/12-ar-behaviors.md` §2.3/§3.2.
+  `Runtime/Perception/RegionRectifier` (geometry) → `Runtime/Perception/Text/` (recognisers) →
+  `ArsistPerceptionTaskRunner` → DataStore. Frames are drawn on the photo in
+  [RegionEditor.tsx](src/renderer/components/panels/RegionEditor.tsx).
+- **Reading a headset's logs without adb** → `doc/13-device-logs.md`; `npm run logs`. Relay component in
+  `Runtime/Diagnostics/ArsistLogRelay.cs`, receiver in [scripts/arsist-logs.mjs](scripts/arsist-logs.mjs).
+  The builder machine's LAN address is baked in at build time (`UnityBuilder.resolveLogRelay`), so there is
+  no pairing — and no way for the app to reach anyone else.
+- **Adding an Android Maven dependency** → `ArsistBuildPipeline.ConfigureMlKitPlugin` /
+  `TryWriteMlKitGradleTemplate`; the standalone reference is [tools/mlkit-spike/](tools/mlkit-spike/)
+  (`npm run spike:mlkit`), which is also the Quest 3 hardware proof for on-device OCR.
   Entered from the toolbar (`uiStore.appMode = 'live'`); `App.tsx` swaps `MainLayout` for `LiveLayoutMode`,
   so it shares no panels or toolbar with the authoring UI. Two sources feed the same views
   (`useLiveScene`): the project IR converted to runtime space (simulation, no device needed), or the live
@@ -239,6 +260,56 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   real reference. `GetComponent<T>() ?? AddComponent<T>()` therefore never adds the component, and the next
   field access throws `There is no 'T' attached to the "X" game object`. Write it as
   `var c = go.GetComponent<T>(); if (c == null) c = go.AddComponent<T>();`.
+- **Quest has no image tracking API at all.** Meta ships passthrough camera *pixels*
+  (`PassthroughCameraAccess`, `horizonos.permission.HEADSET_CAMERA`) but no recogniser, while XREAL and ARCore
+  do expose `ARTrackedImageManager`. That asymmetry is why `Runtime/Perception/` recognises images itself for
+  every device rather than calling each SDK — see `doc/11-perception.md` §2.
+- **The perception geometry is not covered by the Unity build.** A sign error in
+  `Vision/{LinAlg,Homography,PlanarPoseSolver,RegionRectifier}.cs` compiles fine and ships an anchor that is
+  centimetres off, or a crop that reads the wrong part of a panel. Those files deliberately avoid
+  `UnityEngine` (Color32 conversion lives in `GrayImageUnity.cs` for exactly this reason), so
+  `npm run test:perception` ([tools/perception-check/](tools/perception-check/)) checks them against
+  synthetic data in plain .NET. Placement arithmetic has the same problem and is covered by
+  `src/shared/placement.test.ts`. **Run both whenever that math changes.**
+- **Quest builds must use the OpenXR loader, never the Oculus XR Plugin.** `com.unity.xr.oculus` is
+  deprecated and bundles its *own* OVRPlugin native binary (v1.92-era). With Meta XR Core SDK 85 (whose C#
+  expects OVRPlugin v1.117) both are present and the old one wins, which breaks anything added after v1.92
+  — Passthrough Camera Access fails with `PcaCameraAndroid … Unsupported graphics API 0`, preceded by
+  `You are using an old version of OVRPlugin` and `Failed to initialize Open XR … xrInstanceProcAddrFunc: 0`.
+  The correct Unity 6 setup is **OpenXR Loader + the `com.meta.openxr.feature.metaxr` feature**
+  (`ArsistBuildPipeline.ConfigureQuestXR` / `EnableMetaXROpenXRFeature`). Note that
+  `sdk/quest/Unity-InteractionSDK-Samples` is a **Unity 2022 / Meta XR v83** project — do not copy its
+  `Assets/XR/Loaders` into a Unity 6 build (`UnityBuilder.applyQuestXrBootstrap` strips `OculusLoader.asset`).
+- **`AppDomain.GetAssemblies()` is not "every assembly in the project".** The editor loads assemblies
+  lazily, so a type can be missing from that scan while its package is installed and its DLL sits in
+  `Library/ScriptAssemblies` — `OpenXRLoader` reported "not found" that way. Use
+  `ArsistBuildPipeline.FindTypeWithAssemblyHints`, which also tries the assembly-qualified name.
+- **Anything reached only by reflection must be listed in `link.xml`.** IL2CPP's managed-code stripper
+  removes types with no direct reference, and the failure is silent — the Quest camera source reaches
+  MRUK's `PassthroughCameraAccess` by name and simply reported "no camera frame source available" until
+  `ArsistBuildPipeline.EnsurePerceptionLinkXml` started preserving it. The same applies to methods called
+  through `UnitySendMessage` (mark them `public` + `[Preserve]`).
+- **A reference photo's *resolution* decides whether it works at all.** The ORB pyramid discards a 22 px
+  border on each of six levels, so a short side under ~240 px yields zero keypoints however detailed the
+  image is. A 48×48 logo scored 72/100 in the editor and found nothing on device before the score became
+  resolution-aware (`src/renderer/perception/imageQuality.ts`) and the pipeline started warning from the
+  PNG/JPEG header.
+- **A Gradle template Arsist generates must be ASCII and must never spell a Unity placeholder token.**
+  Unity re-encodes the file while substituting placeholders: non-ASCII bytes become `?`, and a token
+  written inside a comment gets substituted there too. Either one produces invalid Groovy, and the Gradle
+  error blames the *launcher* module's `compileSdk` — nowhere near the cause.
+  `TryWriteMlKitGradleTemplate` asserts both before writing.
+- **Only the language models a project uses are shipped**, so the Java bridge resolves
+  `TextRecognizerOptions` reflectively. Referencing both languages by `import` fails to compile whenever
+  the other artifact is absent. (The Japanese model reads Latin too, so one is usually enough.)
+- **`whenNotFound` / handedness for anchored objects.** Anchored objects go through the same editor→Unity
+  X-mirror as everything else, which only works because the runtime builds the anchor node as
+  `Quaternion.LookRotation(outwardNormal, printedUp)` — its local +X is the printed *left*. `doc/11-perception.md`
+  §3.3 has the derivation; changing either half alone mirrors every anchored object.
+- **`adapter.json` is not what selects an adapter — the folder name is.** `resolveAdapterDir` matches
+  `targetDevice` against directory names under `Adapters/` (case/`-`/`_`-insensitive), so a project targeting
+  `Meta_Quest3` silently gets *no* device patcher (logged as "No specific patch for …") even though
+  `Adapters/Meta_Quest/` exists.
 - Unity version: project is pinned in `ProjectVersion.txt`; keep detection scripts and README consistent with it.
 - Standalone helper scripts (`scripts/*.js`) reconstruct the electron-store config path by hand — keep in sync with
   `src/main/platform/` config-path logic.

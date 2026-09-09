@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { TransformControls } from '@react-three/drei';
+import { SceneTransformControls } from './SceneTransformControls';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
@@ -26,7 +26,6 @@ function VRMModel({
   transformSpace
 }: VRMViewerProps & { url: string }) {
   const groupRef = useRef<THREE.Group>(null);
-  const transformRef = useRef<any>(null);
   const [vrm, setVrm] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -136,8 +135,7 @@ function VRMModel({
       </group>
 
       {isSelected && groupRef.current && (
-        <TransformControls
-          ref={transformRef}
+        <SceneTransformControls
           object={groupRef.current}
           mode={transformMode}
           space={transformSpace}
