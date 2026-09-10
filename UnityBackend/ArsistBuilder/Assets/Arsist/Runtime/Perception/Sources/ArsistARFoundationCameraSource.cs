@@ -8,6 +8,8 @@
 
 using System;
 using Arsist.Runtime.Perception.Vision;
+using Arsist.Runtime.Perception.Vision.Classic;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
@@ -40,6 +42,12 @@ namespace Arsist.Runtime.Perception.Sources
             Debug.Log("[Arsist] AR Foundation camera source initialized.");
             return true;
         }
+
+        /// <summary>
+        /// 色つきの画も作るか。AR Foundation の CPU 画像は YUV なので、
+        /// RGB が要るときだけ変換を通す。
+        /// </summary>
+        public bool CaptureColor { get; set; }
 
         public bool TryAcquire(out ArsistCameraFrame frame)
         {
@@ -93,6 +101,7 @@ namespace Arsist.Runtime.Perception.Sources
                 frame = new ArsistCameraFrame
                 {
                     Image = gray,
+                    Color = CaptureColor ? TryConvertColor(image, w, h) : null,
                     Intrinsics = k,
                     // CPU 画像の取得は同フレーム内なので、現在のカメラ姿勢を使う。
                     CameraPose = new Pose(_camera.transform.position, _camera.transform.rotation),
@@ -108,6 +117,37 @@ namespace Arsist.Runtime.Perception.Sources
             finally
             {
                 image.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// YUV の CPU 画像を RGB に変換する。plane 0 の輝度だけで済む追跡と違い、
+        /// 古典的な処理は色を見るのでここを通す。MirrorY で行順を下から上に揃える。
+        /// </summary>
+        private static ColorImage TryConvertColor(XRCpuImage image, int width, int height)
+        {
+            try
+            {
+                var parameters = new XRCpuImage.ConversionParams
+                {
+                    inputRect = new RectInt(0, 0, image.width, image.height),
+                    outputDimensions = new Vector2Int(width, height),
+                    outputFormat = TextureFormat.RGBA32,
+                    transformation = XRCpuImage.Transformation.MirrorY,
+                };
+
+                var buffer = new NativeArray<byte>(image.GetConvertedDataSize(parameters), Allocator.Temp);
+                try
+                {
+                    image.Convert(parameters, buffer);
+                    return ColorImage.FromRgba(buffer.ToArray(), width, height);
+                }
+                finally { buffer.Dispose(); }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] AR Foundation colour conversion failed: {e.Message}");
+                return null;
             }
         }
 

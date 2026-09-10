@@ -95,7 +95,12 @@ class ProjectManager {
                     version: '1.0.0',
                     versionCode: 1,
                     minSdkVersion: isQuest ? 32 : 29,
-                    targetSdkVersion: isQuest ? 32 : 34,
+                    // Quest の要件は「target 32 以上」。ただし 32 ちょうどにしてはいけない:
+                    // Unity 同梱の Android SDK は platforms;android-32 を持っておらず
+                    // (Unity 6 は 34/35/36)、compileSdk として要求された時点で Gradle が
+                    // 「licences have not been accepted」で落ちる。要件を満たす最小ではなく、
+                    // Unity が実際に持っている 34 を既定にする。
+                    targetSdkVersion: 34,
                     remoteInput: {
                         udp: { enabled: true, port: 19100 },
                         tcp: { enabled: true, port: 19101 },

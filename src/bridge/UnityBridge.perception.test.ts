@@ -176,3 +176,49 @@ describe('generateUnityManifest — a project with tasks but no image targets', 
     expect((generateUnityManifest(project({ targets: [], tasks: [] })) as any).perception).toBeUndefined();
   });
 });
+
+describe('generateUnityManifest — 古典的な画像処理タスク', () => {
+  // analyze は端末内で完結するので、OCR と違って ML Kit も追跡対象も要らない。
+  // ここを落とすと、エディタで設定できるのに APK では何も起きない、という
+  // 一番気付きにくい壊れ方をする。
+  const skyTask = {
+    id: 'sky',
+    name: 'Look at the sky',
+    type: 'analyze' as const,
+    source: { kind: 'viewport' as const, rect: { x: 0, y: 0.35, width: 1, height: 0.65 } },
+    trigger: { type: 'interval' as const, value: 2000 },
+    storeAs: 'sky',
+    analysis: { kind: 'sky' as const, previewBindingId: 'skyView', repaintStrength: 1 },
+  };
+
+  it('carries the analysis config through', () => {
+    const manifest = generateUnityManifest(project({ targets: [], tasks: [skyTask] })) as any;
+    expect(manifest.perception.tasks).toHaveLength(1);
+    expect(manifest.perception.tasks[0].analysis).toEqual({
+      kind: 'sky',
+      // 既定は現実に重ねる。AR なので Canvas に映すのは確認用の方。
+      display: 'world',
+      previewBindingId: 'skyView',
+      repaintStrength: 1,
+    });
+  });
+
+  it('defaults an analyze task with no config to the dominant colour', () => {
+    const { analysis, ...withoutAnalysis } = skyTask;
+    const manifest = generateUnityManifest(project({ targets: [], tasks: [withoutAnalysis] })) as any;
+    // display は空の塗り替え先なので、他の kind には付けない。
+    expect(manifest.perception.tasks[0].analysis).toEqual({ kind: 'color' });
+  });
+
+  it('keeps an explicit display choice', () => {
+    const inCanvas = { ...skyTask, analysis: { ...skyTask.analysis, display: 'image' as const } };
+    const manifest = generateUnityManifest(project({ targets: [], tasks: [inCanvas] })) as any;
+    expect(manifest.perception.tasks[0].analysis.display).toBe('image');
+  });
+
+  it('leaves analysis off for OCR tasks so the runtime does not branch on it', () => {
+    const ocr = { ...skyTask, id: 'ocr', type: 'ocr' as const };
+    const manifest = generateUnityManifest(project({ targets: [], tasks: [ocr] })) as any;
+    expect(manifest.perception.tasks[0].analysis).toBeUndefined();
+  });
+});

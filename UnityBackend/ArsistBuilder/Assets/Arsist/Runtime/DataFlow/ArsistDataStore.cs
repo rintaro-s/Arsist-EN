@@ -38,24 +38,43 @@ namespace Arsist.Runtime.DataFlow
             return false;
         }
 
+        /// <summary>
+        /// ドット区切りで入れ子の値をたどる。
+        /// 認識タスクが辞書ひとつを書けば <storeAs>.text / .status がそのまま bind できるのは、これのおかげ。
+        ///
+        /// 配列も添字でたどれる。書き方は "items[0].x" でも "items.0.x" でもよい
+        /// （色の塊や形は件数が可変なので、先頭だけ出したいことが多い）。
+        /// </summary>
         public bool TryGetValueByPath(string path, out object value)
         {
             value = null;
             if (string.IsNullOrWhiteSpace(path)) return false;
 
-            var parts = path.Split('.');
+            // "items[0]" を "items.0" に均してから分解する。
+            var parts = path.Replace("[", ".").Replace("]", string.Empty).Split('.');
             object current = _values;
             for (var i = 0; i < parts.Length; i++)
             {
+                var part = parts[i];
+                if (part.Length == 0) continue;   // "items[0]" -> "items", "0", "" になる場合がある
+
                 if (current is Dictionary<string, object> dict)
                 {
-                    if (!dict.TryGetValue(parts[i], out current)) return false;
+                    if (!dict.TryGetValue(part, out current)) return false;
                     continue;
                 }
 
                 if (current is IDictionary<string, object> genericDict)
                 {
-                    if (!genericDict.TryGetValue(parts[i], out current)) return false;
+                    if (!genericDict.TryGetValue(part, out current)) return false;
+                    continue;
+                }
+
+                if (current is System.Collections.IList list)
+                {
+                    if (!int.TryParse(part, out int index)) return false;
+                    if (index < 0 || index >= list.Count) return false;
+                    current = list[index];
                     continue;
                 }
 

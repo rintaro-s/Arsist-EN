@@ -1477,7 +1477,19 @@ class UnityBuilder extends events_1.EventEmitter {
     async applyDevicePatch(unityProjectPath, targetDevice) {
         const adapterDir = await this.resolveAdapterDir(targetDevice);
         if (!adapterDir || !await fs.pathExists(adapterDir)) {
-            this.emit('log', `[Arsist] No specific patch for ${targetDevice}, using default settings`);
+            // Quest / XREAL のつもりで外れているなら、それは設定ミスであって
+            // 「アダプタの無いデバイス」ではない。ここで黙ると、権限もマニフェスト宣言も
+            // 足りない APK がビルド成功として出てくる。
+            const looksLikeKnownDevice = /quest|meta|xreal/i.test(targetDevice);
+            if (looksLikeKnownDevice) {
+                this.emit('log', `[Arsist] WARNING: no adapter matched targetDevice "${targetDevice}". ` +
+                    `Device-specific manifest patches (camera / hand tracking / passthrough permissions) ` +
+                    `will NOT be applied, and the build will still succeed. ` +
+                    `Expected one of the folder names under Adapters/.`);
+            }
+            else {
+                this.emit('log', `[Arsist] No specific patch for ${targetDevice}, using default settings`);
+            }
             await this.ensureAndroidCleartextHttpPolicy(unityProjectPath);
             return;
         }
@@ -1912,6 +1924,39 @@ class UnityBuilder extends events_1.EventEmitter {
      * Android SDK ルートディレクトリを返す。
      * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
      */
+    /**
+     * targetSdkVersion に対応する platforms/android-N が SDK に入っているか先に見る。
+     *
+     * 入っていないと Gradle が「licences have not been accepted」で落ちるが、
+     * これは licence の話ではなく単に未インストールという意味で、しかも
+     * IL2CPP のコンパイルを全部終えた後、5分以上経ってから出る。
+     * ここで先に言えば、その5分を待たずに済む。
+     */
+    async warnIfTargetSdkPlatformMissing(androidSdkPath, config) {
+        const build = config.manifestData?.build;
+        const target = build?.targetSdkVersion;
+        if (!target)
+            return;
+        const platformsDir = path.join(androidSdkPath, 'platforms');
+        let installed;
+        try {
+            const entries = await fs.readdir(platformsDir);
+            installed = entries
+                .map((name) => /^android-(\d+)/.exec(name))
+                .filter((m) => m !== null)
+                .map((m) => parseInt(m[1], 10));
+        }
+        catch {
+            return; // SDK の形が想定と違うだけかもしれないので、ここでは黙る
+        }
+        if (installed.length === 0 || installed.includes(target))
+            return;
+        const available = installed.sort((a, b) => a - b).join(', ');
+        this.emit('log', `[Arsist] WARNING: targetSdkVersion ${target} is not installed in this Android SDK ` +
+            `(available: ${available}). Gradle will fail with a misleading "licences have not been accepted" ` +
+            `message. Change the project's targetSdkVersion to one of the available levels, or install ` +
+            `platforms;android-${target} with sdkmanager.`);
+    }
     async detectAndroidSdkPath() {
         const detected = await this.detectAndroidSdkPathCandidate();
         if (!detected)
@@ -2186,6 +2231,7 @@ class UnityBuilder extends events_1.EventEmitter {
         }
         if (androidSdkPath) {
             this.emit('log', `[Arsist] Android SDK detected: ${androidSdkPath}`);
+            await this.warnIfTargetSdkPlatformMissing(androidSdkPath, config);
         }
         else {
             this.emit('log', '[Arsist] WARNING: Android SDK not detected. Set ANDROID_HOME or install Android Studio.');
@@ -2572,11 +2618,23 @@ class UnityBuilder extends events_1.EventEmitter {
             return direct;
         const normalizedTarget = targetDevice.replace(/[-\s]/g, '_').toLowerCase();
         const entries = await fs.readdir(adaptersRoot);
-        for (const entry of entries) {
-            const normalizedEntry = entry.replace(/[-\s]/g, '_').toLowerCase();
-            if (normalizedEntry === normalizedTarget) {
+        const normalized = entries.map((entry) => ({
+            entry,
+            name: entry.replace(/[-\s]/g, '_').toLowerCase(),
+        }));
+        for (const { entry, name } of normalized) {
+            if (name === normalizedTarget)
                 return path.join(adaptersRoot, entry);
-            }
+        }
+        // 型番まで書かれていても拾う ("Meta Quest 3" -> Meta_Quest)。
+        // 一致しないと device patch がまるごと飛び、権限の足りない APK が
+        // 何事もなく出来上がるので、少しでも当たるようにしておく。
+        // 複数当たったら、より具体的な（長い）方を採る。
+        const prefixMatches = normalized
+            .filter(({ name }) => normalizedTarget.startsWith(name))
+            .sort((a, b) => b.name.length - a.name.length);
+        if (prefixMatches.length > 0) {
+            return path.join(adaptersRoot, prefixMatches[0].entry);
         }
         return null;
     }

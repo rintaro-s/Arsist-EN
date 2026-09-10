@@ -235,6 +235,20 @@ function isTaskResolvable(task, targets) {
 /**
  * プロジェクト全体をUnityマニフェストに変換
  */
+/**
+ * analyze タスクの設定を埋める。
+ *
+ * display は空の塗り替え先なので、kind === 'sky' のときだけ意味がある。
+ * 他の kind にも付けると、Unity 側が見もしないフィールドを読むことになる。
+ * 既定は 'world' — AR なので、現実の空を青くするのが本筋で、
+ * Canvas に映すのは確認用。
+ */
+function resolveAnalysis(analysis) {
+    const resolved = analysis ?? { kind: 'color' };
+    if (resolved.kind !== 'sky')
+        return resolved;
+    return { ...resolved, display: resolved.display ?? 'world' };
+}
 function generateUnityManifest(project) {
     const scriptBundle = {
         version: '1.0',
@@ -313,7 +327,12 @@ function generateUnityManifest(project) {
                     source: task.source,
                     trigger: task.trigger,
                     storeAs: task.storeAs,
+                    // OCR 以外はエンジンを見ないが、既定を落とすと Unity 側で分岐が増えるので常に入れる
                     engine: task.engine ?? { kind: 'mlkit', script: 'japanese' },
+                    // 古典的な画像処理の設定。未指定なら代表色を測る
+                    analysis: task.type === 'analyze'
+                        ? resolveAnalysis(task.analysis)
+                        : undefined,
                 })),
             }
             : undefined,

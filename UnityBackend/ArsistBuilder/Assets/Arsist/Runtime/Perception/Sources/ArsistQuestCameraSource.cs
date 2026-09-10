@@ -15,6 +15,7 @@
 using System;
 using System.Reflection;
 using Arsist.Runtime.Perception.Vision;
+using Arsist.Runtime.Perception.Vision.Classic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -144,6 +145,9 @@ namespace Arsist.Runtime.Perception.Sources
             return ok;
         }
 
+        /// <summary>色つきの画も作るか。Manager が必要なフレームだけ立てる。</summary>
+        public bool CaptureColor { get; set; }
+
         public bool Initialize()
         {
             if (!Resolve()) return false;
@@ -249,11 +253,15 @@ namespace Arsist.Runtime.Perception.Sources
                 data.GetSubArray(0, needed).CopyTo(_pendingPixels);
 
                 var gray = GrayImageUnity.FromColor32(_pendingPixels, _pendingWidth, _pendingHeight, FlipReadbackRows);
+                var color = CaptureColor
+                    ? ColorImageUnity.FromColor32(_pendingPixels, _pendingWidth, _pendingHeight, FlipReadbackRows)
+                    : null;
                 var intrinsics = ReadIntrinsics(_pendingWidth, _pendingHeight);
 
                 _ready = new ArsistCameraFrame
                 {
                     Image = gray,
+                    Color = color,
                     Intrinsics = intrinsics,
                     CameraPose = _pendingPose,
                     TimestampSeconds = _pendingTimestamp,

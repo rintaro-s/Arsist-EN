@@ -453,6 +453,8 @@ internal static class Program
         TestRectifyRejections();
         TestOutputSizing();
 
+        _failures += ClassicChecks.Run();
+
         Console.WriteLine(_failures == 0 ? "\nALL CHECKS PASSED" : $"\n{_failures} CHECK(S) FAILED");
         return _failures == 0 ? 0 : 1;
     }

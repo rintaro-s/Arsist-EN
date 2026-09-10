@@ -5,7 +5,7 @@ Guidance for AI agents (Claude Code and others) working in this repository.
 ## Start here
 
 Read [CODEMAP.md](CODEMAP.md) first for the module map and the XREAL/Quest device-responsibility map, then the
-relevant deep-dive in [`doc/`](doc/) (`00-overview` … `13-device-logs`). [README.md](README.md) covers user-facing
+relevant deep-dive in [`doc/`](doc/) (`00-overview` … `14-classic-vision`). [README.md](README.md) covers user-facing
 setup.
 
 ## What this project is
@@ -35,6 +35,9 @@ Unity builds and on-device verification require a full Unity install, the `sdk/`
 (`Runtime/Perception/Vision/{LinAlg,Homography,PlanarPoseSolver}.cs`) has no UnityEngine dependency and is
 covered by `npm run test:perception` — **run it whenever that math changes**, because a wrong sign there
 compiles cleanly and only shows up as a misplaced anchor on hardware.
+The same applies to the classical operators in `Runtime/Perception/Vision/Classic/` (thresholding,
+morphology, labelling, contours, sky segmentation): they are deliberately UnityEngine-free so the same
+harness covers them — see `doc/14-classic-vision.md` for the mistakes that harness has already caught.
 
 ## Conventions
 

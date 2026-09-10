@@ -3,6 +3,10 @@ const path = require('path');
 
 // Use the same compiled entrypoint Electron uses (dist/main/main/*)
 const { UnityBuilder } = require(path.join('..', 'dist', 'main', 'main', 'unity', 'UnityBuilder'));
+// perception ブロックは自前で組まず、エディタと同じ generateUnityManifest から取る。
+// ここに写しを置くと必ず本体から取り残される (実際、ターゲット0個+タスクありの
+// プロジェクトを丸ごと落とす古いゲートが残っていた)。
+const { generateUnityManifest } = require(path.join('..', 'dist', 'main', 'bridge', 'UnityBridge'));
 const { getConfigStorePath } = require(path.join(__dirname, 'lib', 'config-path'));
 
 function readJson(p) {
@@ -43,6 +47,21 @@ function pickFirstExisting(paths) {
   const projectJsonPath = path.join(sourceProjectPath, 'project.json');
   const project = readJson(projectJsonPath);
 
+  // project.json は通常シーンと UI の中身も持っているが、参照だけのこともある
+  // (手で書いたプロジェクトなど)。root が無ければ Scenes/ と UI/ から読み直す。
+  // ここを落とすと、UI が空のまま何事もなくビルドが通ってしまう。
+  const expand = (refs, dir, key) => (refs || []).map((ref) => {
+    if (ref && ref[key]) return ref;
+    const file = path.join(sourceProjectPath, dir, `${ref.id}.json`);
+    if (!fs.existsSync(file)) {
+      console.warn(`[Arsist] ${dir}/${ref.id}.json not found; using the reference as-is`);
+      return ref;
+    }
+    return readJson(file);
+  });
+  project.scenes = expand(project.scenes, 'Scenes', 'objects');
+  project.uiLayouts = expand(project.uiLayouts, 'UI', 'root');
+
   const unityWorkDir = path.join(outputPath, 'TempUnityProject');
   const manualLicenseFile = process.env.ARSIST_MANUAL_LICENSE_FILE;
 
@@ -64,10 +83,9 @@ function pickFirstExisting(paths) {
     buildSettings: project.buildSettings,
     remoteInput,
     scripting: { enabled: hasActiveScripts },
-    // 画像アンカー（src/bridge/UnityBridge.ts の generateUnityManifest と同じ形）
-    perception: project.perception && project.perception.targets && project.perception.targets.length > 0
-      ? project.perception
-      : undefined,
+    // 画像アンカーと認識タスク。ビューポートだけを見るタスクは追跡対象を必要としないので、
+    // ターゲットの有無でゲートしてはいけない。判断は generateUnityManifest 側に任せる。
+    perception: generateUnityManifest(project).perception,
     exportedAt: new Date().toISOString(),
   };
   const scriptsData = {

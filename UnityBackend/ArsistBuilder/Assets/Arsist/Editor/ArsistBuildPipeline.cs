@@ -2052,6 +2052,40 @@ namespace Arsist.Builder
                 return;
             }
             Debug.Log($"[Arsist] ArsistPerceptionTaskRunner added for {tasks.Count} task(s).");
+
+            EnsureSkyOverlayInScene(tasks);
+        }
+
+        /// <summary>
+        /// 空を現実に重ねて描くタスクがあれば、その描画先をシーンに置く。
+        ///
+        /// AR なので、結果は Canvas ではなくパススルーで見えている空そのものに乗る。
+        /// 'image' 表示（確認用に Canvas へ出す）だけのプロジェクトには要らない。
+        /// </summary>
+        private static void EnsureSkyOverlayInScene(JArray tasks)
+        {
+            bool needsOverlay = false;
+            foreach (JObject task in tasks)
+            {
+                if ((task["type"]?.ToString() ?? "ocr") != "analyze") continue;
+                var analysis = task["analysis"] as JObject;
+                if (analysis == null) continue;
+                if (analysis["kind"]?.ToString() != "sky") continue;
+                // display 未指定の既定は 'world'。AR で自然なのは現実に重ねる方なので。
+                if (analysis["display"]?.ToString() == "image") continue;
+                needsOverlay = true;
+                break;
+            }
+            if (!needsOverlay) return;
+
+            var go = new GameObject("[ArsistSkyOverlay]");
+            if (TryAddComponentByTypeName(go, "Arsist.Runtime.Perception.Overlay.ArsistSkyOverlay") == null)
+            {
+                Debug.LogError("[Arsist] ArsistSkyOverlay type not found; the sky will not be repainted in the world.");
+                UnityEngine.Object.DestroyImmediate(go);
+                return;
+            }
+            Debug.Log("[Arsist] ArsistSkyOverlay added (sky is repainted onto passthrough, not onto a Canvas).");
         }
 
         /// <summary>
@@ -4345,9 +4379,13 @@ ScriptedImporter:
             {
                 PlayerSettings.Android.minSdkVersion = (AndroidSdkVersions)32;
             }
-            if (isQuest && (int)PlayerSettings.Android.targetSdkVersion < 32)
+            // Quest の要件は target 32 以上だが、32 ちょうどには上げない。
+            // Unity 同梱の Android SDK には platforms;android-32 が無く (Unity 6 は 34/35/36)、
+            // compileSdk として要求された時点で Gradle が licence 未同意で落ちるため。
+            // 要件を満たす最小ではなく、Unity が持っている 34 まで上げる。
+            if (isQuest && (int)PlayerSettings.Android.targetSdkVersion < 34)
             {
-                PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)32;
+                PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)34;
             }
             
             PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
@@ -4455,12 +4493,14 @@ ScriptedImporter:
                         manifestPath,
                         ProjectHasInputElement()
                     );
-                    // 画像アンカーを使うプロジェクトだけカメラ権限を宣言する。
+                    // 画像を見るプロジェクトだけカメラ権限を宣言する。
+                    // ターゲットの有無で判断してはいけない: ビューポートを見るタスクは
+                    // 追跡対象を持たないが、カメラは同じように要る。
                     InvokeStaticIfExists(
                         "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
                         "ConfigurePassthroughCamera",
                         manifestPath,
-                        ProjectHasPerceptionTargets()
+                        ProjectHasPerceptionTargets() || ProjectHasPerceptionTasks()
                     );
                 }
             }

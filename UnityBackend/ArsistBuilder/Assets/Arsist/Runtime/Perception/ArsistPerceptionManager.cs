@@ -39,6 +39,8 @@ namespace Arsist.Runtime.Perception
     public struct PerceptionStill
     {
         public GrayImage Image;
+        /// <summary>色つきの同じ画。色を要求した RequestStill でのみ入る。</summary>
+        public Vision.Classic.ColorImage Color;
         public CameraIntrinsics Intrinsics;
         public Pose CameraPose;
         public bool Valid;
@@ -112,6 +114,8 @@ namespace Arsist.Runtime.Perception
         private ArsistCameraFrame _pendingFrame;
         private bool _hasPendingFrame;
         private readonly List<Action<PerceptionStill>> _stillRequests = new List<Action<PerceptionStill>>();
+        /// <summary>いま待っている静止画の要求の中に、色つきを求めたものがあるか。</summary>
+        private bool _colorWanted;
         private readonly List<PendingResult> _results = new List<PendingResult>();
 
         private struct PendingResult
@@ -367,6 +371,9 @@ namespace Arsist.Runtime.Perception
             bool wantDetection = _referencesReady && !workerBusy && Time.time >= _nextDetectionTime;
             if (!wantStill && !wantDetection) return;
 
+            // 色の変換は静止画を求められたフレームだけ。追跡は輝度で足りる。
+            _source.CaptureColor = wantStill && _colorWanted;
+
             if (!_source.TryAcquire(out var frame) || frame.Image == null) return;
 
             // 静止画は縮める前のフル解像度で渡す。OCR は枠を切り出して拡大するので、
@@ -406,9 +413,11 @@ namespace Arsist.Runtime.Perception
         /// 必要とするときに使う。検出用のフレームを使い回さないのは、
         /// 落ち着いた後は 1Hz まで落ちていて内容が古いことがあるため。
         /// </summary>
-        public void RequestStill(Action<PerceptionStill> callback)
+        public void RequestStill(Action<PerceptionStill> callback, bool wantColor = false)
         {
             if (callback == null) return;
+            // 色の変換は安くないので、要求している間だけ立てる。
+            if (wantColor) _colorWanted = true;
             // ここでは可否を判断しない。カメラの用意はこの後 Update が行うので、
             // 早すぎる呼び出しでも次にフレームが取れた時点で応える。
             _stillRequests.Add(callback);
@@ -419,6 +428,7 @@ namespace Arsist.Runtime.Perception
             if (_stillRequests.Count == 0) return;
             var pending = new List<Action<PerceptionStill>>(_stillRequests);
             _stillRequests.Clear();
+            _colorWanted = false;
             foreach (var callback in pending)
             {
                 try { callback(new PerceptionStill { Valid = false }); }
@@ -431,6 +441,7 @@ namespace Arsist.Runtime.Perception
             var still = new PerceptionStill
             {
                 Image = frame.Image,
+                Color = frame.Color,
                 Intrinsics = frame.Intrinsics,
                 CameraPose = frame.CameraPose,
                 Valid = true,
@@ -438,6 +449,7 @@ namespace Arsist.Runtime.Perception
 
             var pending = new List<Action<PerceptionStill>>(_stillRequests);
             _stillRequests.Clear();
+            _colorWanted = false;
             foreach (var callback in pending)
             {
                 try { callback(still); }

@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="ClassicChecks.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/DataFlow/ArsistDataStore.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/LinAlg.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Homography.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/PlanarPoseSolver.cs" />
@@ -29,12 +31,22 @@
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/RegionRectifier.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/PlacementSolver.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Keypoint.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/ViewportMapping.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/FastDetector.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/OrbDescriptor.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/FeatureExtractor.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/DescriptorMatcher.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/ReferenceTarget.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/ImageRecognizer.cs" />
+
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ColorImage.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/MaskImage.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ConnectedComponents.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/EdgeDetector.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Contours.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/TemplateMatcher.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/SkySegmenter.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ClassicAnalyzer.cs" />
   </ItemGroup>
 
 </Project>

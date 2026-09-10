@@ -3,7 +3,7 @@
 A machine-readable orientation map. If you are an AI agent modifying this repo, **read this first**, then the
 relevant `doc/NN-*.md` deep-dive. For "where do I change X" jump to [Task index](#task-index).
 
-> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `13-device-logs`). This file is the fast index +
+> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `14-classic-vision`). This file is the fast index +
 > the device/SDK responsibility map that those docs don't cover.
 
 ---
@@ -165,6 +165,11 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   `Runtime/Perception/RegionRectifier` (geometry) → `Runtime/Perception/Text/` (recognisers) →
   `ArsistPerceptionTaskRunner` → DataStore. Frames are drawn on the photo in
   [RegionEditor.tsx](src/renderer/components/panels/RegionEditor.tsx).
+- **Measuring what the camera sees without a trained model** (colour, coloured blobs, shapes, sky)
+  → `doc/14-classic-vision.md`. Operators in `Runtime/Perception/Vision/Classic/`, entered through
+  `ClassicAnalyzer` from an `analyze` perception task. All of it is UnityEngine-free and covered by
+  `npm run test:perception` — **run it whenever a threshold or a sign changes there**. Demo app:
+  `products/BlueSky` (turns a cloudy sky blue).
 - **Reading a headset's logs without adb** → `doc/13-device-logs.md`; `npm run logs`. Relay component in
   `Runtime/Diagnostics/ArsistLogRelay.cs`, receiver in [scripts/arsist-logs.mjs](scripts/arsist-logs.mjs).
   The builder machine's LAN address is baked in at build time (`UnityBuilder.resolveLogRelay`), so there is

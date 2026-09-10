@@ -259,7 +259,58 @@ export interface AnchorPlacement {
 }
 
 /** 画素に対して何をするか。将来: 'barcode' | 'color' | 'classify' */
-export type PerceptionTaskType = 'ocr' | 'capture';
+export type PerceptionTaskType =
+  /** 枠の中の文字を読む */
+  | 'ocr'
+  /** 画素を取るだけ。動作確認や、後段をスクリプトで書きたいとき */
+  | 'capture'
+  /** 古典的な画像処理で画の性質を測る。学習モデルもネットワークも要らない */
+  | 'analyze';
+
+/**
+ * 'analyze' タスクが何を測るか。
+ *
+ * ORB による画像アンカーが「登録した写真を探す」のに対し、こちらは
+ * 「今見えているものがどうなっているか」を測る。端末を選ばず、
+ * モデルのダウンロードも要らないので、初回起動でそのまま動く。
+ */
+export type PerceptionAnalysisKind =
+  /** 代表色。平均ではなく多数派の色相を返すので、赤と緑が灰色にならない */
+  | 'color'
+  /** 指定した色の塊。数・大きさ・位置 */
+  | 'blobs'
+  /** 輪郭の形（三角形・四角形・円…） */
+  | 'shapes'
+  /** 空の抽出。塗り替えにも使う */
+  | 'sky';
+
+export interface PerceptionAnalysisConfig {
+  kind: PerceptionAnalysisKind;
+  /** kind === 'blobs' で拾う HSV 範囲。hueMin > hueMax は 0 度またぎ（赤） */
+  hue?: { min: number; max: number };
+  saturation?: { min: number; max: number };
+  value?: { min: number; max: number };
+  /** 無視する最小面積 (px)。既定 60 */
+  minArea?: number;
+  /** 返す件数の上限。既定 8 */
+  maxItems?: number;
+  /** 処理前に縮める幅 (px)。既定 480。0 で無効 */
+  maxWidth?: number;
+  /**
+   * kind === 'sky' のとき、塗り替えた空をどこに出すか。
+   *
+   * 'world' (既定) = パススルーで見えている空そのものの上に重ねる。AR で自然なのはこちら。
+   * 'image'        = Canvas の Image 要素に小さく出す。確認用。
+   *
+   * 'world' はビューポートソースのタスクだけで使える。領域ソースは正対化で
+   * 幾何が変わるので、現実の向きに戻せない。
+   */
+  display?: 'world' | 'image';
+  /** display === 'image' のとき、塗り替えた空を出す Image 要素の bindingId。 */
+  previewBindingId?: string;
+  /** 塗り替えの強さ 0..1。既定 1 */
+  repaintStrength?: number;
+}
 
 /** どの画素を見るか。 */
 export type PerceptionSource =
@@ -300,6 +351,8 @@ export interface PerceptionTask {
   /** 結果を書き込む DataStore キー */
   storeAs: string;
   engine?: PerceptionEngineConfig;
+  /** type === 'analyze' のときの設定 */
+  analysis?: PerceptionAnalysisConfig;
 }
 
 export interface PerceptionSettings {

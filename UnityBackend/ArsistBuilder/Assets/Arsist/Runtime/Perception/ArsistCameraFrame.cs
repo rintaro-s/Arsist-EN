@@ -14,6 +14,7 @@
 // ==============================================
 
 using Arsist.Runtime.Perception.Vision;
+using Arsist.Runtime.Perception.Vision.Classic;
 using UnityEngine;
 
 namespace Arsist.Runtime.Perception
@@ -21,6 +22,11 @@ namespace Arsist.Runtime.Perception
     public struct ArsistCameraFrame
     {
         public GrayImage Image;
+        /// <summary>
+        /// 色つきの同じ画。CaptureColor が true のときだけ入る。
+        /// 追跡は輝度だけで足りるので、色の変換は要求されたフレームでしか行わない。
+        /// </summary>
+        public ColorImage Color;
         public CameraIntrinsics Intrinsics;
         /// <summary>撮影時のカメラのワールド姿勢（Unity ワールド空間）。</summary>
         public Pose CameraPose;
@@ -31,6 +37,12 @@ namespace Arsist.Runtime.Perception
     {
         /// <summary>この端末でカメラ映像を取得できるか。</summary>
         bool IsSupported { get; }
+
+        /// <summary>
+        /// 次のフレームで色つきの画も作るか。古典的な画像処理 (空の抽出など) は色が要る。
+        /// 毎フレーム変換すると無駄なので、必要なときだけ Manager が立てる。
+        /// </summary>
+        bool CaptureColor { get; set; }
 
         /// <summary>取得を開始する。成功したら true。</summary>
         bool Initialize();

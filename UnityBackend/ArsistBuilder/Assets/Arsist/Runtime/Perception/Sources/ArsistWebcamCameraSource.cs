@@ -8,6 +8,7 @@
 // ==============================================
 
 using Arsist.Runtime.Perception.Vision;
+using Arsist.Runtime.Perception.Vision.Classic;
 using UnityEngine;
 
 namespace Arsist.Runtime.Perception.Sources
@@ -34,6 +35,9 @@ namespace Arsist.Runtime.Perception.Sources
             return true;
         }
 
+        /// <summary>色つきの画も作るか。Manager が必要なフレームだけ立てる。</summary>
+        public bool CaptureColor { get; set; }
+
         public bool TryAcquire(out ArsistCameraFrame frame)
         {
             frame = default;
@@ -53,6 +57,7 @@ namespace Arsist.Runtime.Perception.Sources
             frame = new ArsistCameraFrame
             {
                 Image = gray,
+                Color = CaptureColor ? ColorImageUnity.FromColor32(_pixels, w, h) : null,
                 Intrinsics = k,
                 CameraPose = cam != null
                     ? new Pose(cam.transform.position, cam.transform.rotation)

@@ -731,6 +731,57 @@ export const STRINGS: Record<string, Entry> = {
   'perception.taskType': { en: 'What it does', ja: '処理' },
   'perception.taskTypeOcr': { en: 'Read the text (OCR)', ja: '文字を読む（OCR）' },
   'perception.taskTypeCapture': { en: 'Just grab the pixels', ja: '画像を取るだけ' },
+  'perception.taskTypeAnalyze': { en: 'Analyse the image (on-device)', ja: '画を解析する (端末内)' },
+
+  'perception.analysisKind': { en: 'What to measure', ja: '何を測るか' },
+  'perception.analysisColor': { en: 'Dominant colour', ja: '代表色' },
+  'perception.analysisBlobs': { en: 'Coloured blobs', ja: '色の塊' },
+  'perception.analysisShapes': { en: 'Shapes', ja: '形' },
+  'perception.analysisSky': { en: 'Sky', ja: '空' },
+  'perception.analysisHint.color': {
+    en: 'Returns the majority hue, not the average, so red next to green does not come back as grey. Binds: .name .hex .hue',
+    ja: '平均ではなく多数派の色相を返すので、赤と緑が混ざって灰色になりません。bind: .name .hex .hue',
+  },
+  'perception.analysisHint.blobs': {
+    en: 'Counts patches of the chosen colour. Binds: .count .coverage .items[0].x',
+    ja: '指定した色の塊を数えます。bind: .count .coverage .items[0].x',
+  },
+  'perception.analysisHint.shapes': {
+    en: 'Traces outlines and names them (triangle / square / circle). Binds: .count .items[0].shape',
+    ja: '輪郭を追って形を言います (三角形/四角形/円)。bind: .count .items[0].shape',
+  },
+  'perception.analysisHint.sky': {
+    en: 'Finds the sky and reports how cloudy it is. Binds: .condition .coverage .brightness',
+    ja: '空を見つけて曇り具合を返します。bind: .condition .coverage .brightness',
+  },
+  'perception.analysisHue': { en: 'Hue range', ja: '色相の範囲' },
+  'perception.analysisHueHint': {
+    en: 'Degrees, 0-359. Red wraps around 0, so use 340-20.',
+    ja: '0〜359度。赤は0度をまたぐので 340〜20 と入れます。',
+  },
+  'perception.analysisMinArea': { en: 'Ignore blobs smaller than (px)', ja: 'これ未満の塊は無視 (px)' },
+  'perception.analysisDisplay': { en: 'Where to draw the blue sky', ja: '青空をどこに描くか' },
+  'perception.analysisDisplayWorld': { en: 'On the real sky (passthrough)', ja: '現実の空の上 (パススルー)' },
+  'perception.analysisDisplayImage': { en: 'In a Canvas image (for checking)', ja: 'Canvas の Image に (確認用)' },
+  'perception.analysisDisplayHint.world': {
+    en: 'The sky you see through the headset turns blue. Buildings and trees stay as they are.',
+    ja: 'ヘッドセット越しに見えている空そのものが青くなります。建物や木はそのまま残ります。',
+  },
+  'perception.analysisDisplayHint.image': {
+    en: 'Draws a small preview onto a Canvas instead of the real world. Useful to check the mask.',
+    ja: '現実ではなく Canvas に小さく描きます。抽出範囲の確認に使えます。',
+  },
+  'perception.analysisDisplayNeedsViewport': {
+    en: 'Drawing on the real sky needs a viewport source. A region is rectified, so it cannot be mapped back.',
+    ja: '現実の空に描くにはビューポートソースが必要です。写真の枠は正対化するので現実の向きに戻せません。',
+  },
+  'perception.analysisPreview': { en: 'Show the blue sky in', ja: '青空を表示する要素' },
+  'perception.analysisPreviewOff': { en: 'Do not show it', ja: '表示しない' },
+  'perception.analysisPreviewNone': {
+    en: 'Add an Image element with a binding ID to show the result.',
+    ja: '結果を出すには、bindingId を付けた Image 要素を追加してください。',
+  },
+  'perception.analysisStrength': { en: 'Repaint strength', ja: '塗り替えの強さ' },
   'perception.taskSource': { en: 'What it looks at', ja: '見る範囲' },
   'perception.taskSourceRegion': { en: 'A frame on a photo', ja: '写真の上の枠' },
   'perception.taskSourceViewport': { en: 'A frame on screen (aim at it)', ja: '画面上の枠（狙って使う）' },

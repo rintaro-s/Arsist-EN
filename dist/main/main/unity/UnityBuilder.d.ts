@@ -238,6 +238,15 @@ export declare class UnityBuilder extends EventEmitter {
      * Android SDK ルートディレクトリを返す。
      * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
      */
+    /**
+     * targetSdkVersion に対応する platforms/android-N が SDK に入っているか先に見る。
+     *
+     * 入っていないと Gradle が「licences have not been accepted」で落ちるが、
+     * これは licence の話ではなく単に未インストールという意味で、しかも
+     * IL2CPP のコンパイルを全部終えた後、5分以上経ってから出る。
+     * ここで先に言えば、その5分を待たずに済む。
+     */
+    private warnIfTargetSdkPlatformMissing;
     private detectAndroidSdkPath;
     private detectAndroidSdkPathCandidate;
     private getAndroidSdkMirrorPath;
