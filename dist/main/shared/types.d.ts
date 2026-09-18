@@ -84,6 +84,8 @@ export interface ARSettings {
      * ビデオシースルー機 (Meta Quest) でのみ意味を持つ。XREAL では無視される。
      */
     backgroundMode?: BackgroundMode;
+    /** スマホ (Android_Phone) で動かすときの設定 */
+    phone?: PhoneSettings;
     /** backgroundMode === 'solidColor' のときの背景色 (#RRGGBB, default: '#000000') */
     backgroundColor?: string;
     /**
@@ -103,6 +105,23 @@ export interface ARSettings {
  *
  * 配布するビルドでは切ること（ログが LAN に平文で流れる）。
  */
+/**
+ * スマホ (ヘッドセットではない Android 端末) で動かすときの設定。
+ *
+ * ヘッドセットの頭の向きの代わりにジャイロで見回す (3DoF)。これで同じシーンが
+ * Quest でも XREAL でもスマホでも動く。
+ */
+export interface PhoneSettings {
+    /** 段ボールゴーグル用に画面を左右に分ける。VR のときだけ効く */
+    stereo?: boolean;
+    /**
+     * 背面カメラの横の画角 (度)。既定 63。
+     * WebCamTexture は画角を教えてくれないので仮定値。映像と描いたものがずれるならここを直す
+     */
+    cameraFov?: number;
+    /** 画面の向き。既定 'landscape' */
+    orientation?: 'landscape' | 'portrait';
+}
 export interface LogRelaySettings {
     /** default: true */
     enabled: boolean;
@@ -202,59 +221,98 @@ export type PerceptionTaskType =
 'ocr'
 /** 画素を取るだけ。動作確認や、後段をスクリプトで書きたいとき */
  | 'capture'
-/** 古典的な画像処理で画の性質を測る。学習モデルもネットワークも要らない */
- | 'analyze';
+/** 画像処理パイプラインを流す。中身はユーザーが組む */
+ | 'vision';
 /**
- * 'analyze' タスクが何を測るか。
+ * 画像処理の一手。
  *
- * ORB による画像アンカーが「登録した写真を探す」のに対し、こちらは
- * 「今見えているものがどうなっているか」を測る。端末を選ばず、
- * モデルのダウンロードも要らないので、初回起動でそのまま動く。
+ * 値は名前で受け渡す。型は op ごとに決まっていて、噛み合わない繋ぎ方は
+ * エディタとビルド時の両方で弾く。
  */
-export type PerceptionAnalysisKind = 
-/** 代表色。平均ではなく多数派の色相を返すので、赤と緑が灰色にならない */
-'color'
-/** 指定した色の塊。数・大きさ・位置 */
+export type VisionOpType = 
+/** 色 → 輝度 */
+'grayscale'
+/** 輝度 → 輝度。ノイズを落とす */
+ | 'blur'
+/** 輝度 → 勾配。輪郭の強さと向き */
+ | 'sobel'
+/** 輝度 → マスク。細い輪郭線 */
+ | 'canny'
+/** 勾配 → 境界線。端から走査して最初にぶつかる強い輪郭を追う */
+ | 'edgeScan'
+/** 境界線 → マスク。境界のどちら側を残すか */
+ | 'maskSide'
+/** 色 → マスク。色相・彩度・明度の範囲で拾う */
+ | 'hsvRange'
+/** 輝度 → マスク。固定値・大津法・「周りと比べて」で二値化 */
+ | 'threshold'
+/** マスク → マスク。膨張・収縮で穴と点を整える */
+ | 'morphology'
+/** マスク+マスク → マスク。論理演算 */
+ | 'maskCombine'
+/** マスク → マスク。一番大きい塊だけ残す */
+ | 'largestBlob'
+/** マスク → 塊の一覧。数・大きさ・位置 */
  | 'blobs'
-/** 輪郭の形（三角形・四角形・円…） */
- | 'shapes'
-/** 空の抽出。塗り替えにも使う */
- | 'sky';
-export interface PerceptionAnalysisConfig {
-    kind: PerceptionAnalysisKind;
-    /** kind === 'blobs' で拾う HSV 範囲。hueMin > hueMax は 0 度またぎ（赤） */
-    hue?: {
-        min: number;
-        max: number;
-    };
-    saturation?: {
-        min: number;
-        max: number;
-    };
-    value?: {
-        min: number;
-        max: number;
-    };
-    /** 無視する最小面積 (px)。既定 60 */
-    minArea?: number;
-    /** 返す件数の上限。既定 8 */
-    maxItems?: number;
-    /** 処理前に縮める幅 (px)。既定 480。0 で無効 */
-    maxWidth?: number;
+/** マスク → 輪郭の一覧。形の名前つき */
+ | 'contours'
+/** マスク+画 → 統計値。面積比・平均・マスク外との比 */
+ | 'stats'
+/** 統計値 → 真偽。条件を満たさなければパイプラインを止める */
+ | 'gate'
+/** 色+マスク → 色。マスクの中を塗り替える */
+ | 'recolor'
+/** 色+マスク → 色の情報。代表色 */
+ | 'dominantColor'
+/** 輝度 → 一致位置。テンプレートマッチング */
+ | 'templateMatch';
+export interface VisionOp {
+    id: string;
+    op: VisionOpType;
     /**
-     * kind === 'sky' のとき、塗り替えた空をどこに出すか。
-     *
-     * 'world' (既定) = パススルーで見えている空そのものの上に重ねる。AR で自然なのはこちら。
-     * 'image'        = Canvas の Image 要素に小さく出す。確認用。
-     *
-     * 'world' はビューポートソースのタスクだけで使える。領域ソースは正対化で
-     * 幾何が変わるので、現実の向きに戻せない。
+     * 入力の値名。op ごとに必要な数が決まっている。
+     * 省略すると直前の op の出力を使う。
      */
-    display?: 'world' | 'image';
-    /** display === 'image' のとき、塗り替えた空を出す Image 要素の bindingId。 */
-    previewBindingId?: string;
-    /** 塗り替えの強さ 0..1。既定 1 */
-    repaintStrength?: number;
+    in?: string[];
+    /** 出力の値名。後ろの op や outputs から参照する */
+    out: string;
+    params?: Record<string, unknown>;
+}
+/** パイプラインの結果をどこに出すか。 */
+export type VisionOutput = 
+/** 数値・文字列・統計値を DataStore へ。UI から bind できる */
+{
+    kind: 'store';
+    value: string;
+    storeAs: string;
+}
+/**
+ * 現実に重ねる。value は色の画、alpha はマスク。
+ * 撮影時のカメラ姿勢に合わせてワールドに固定されるので、AR として成立する。
+ * ビューポートソースのタスクでのみ使える。
+ */
+ | {
+    kind: 'world';
+    value: string;
+    alpha?: string;
+}
+/** Canvas の Image 要素に出す。確認用 */
+ | {
+    kind: 'image';
+    value: string;
+    alpha?: string;
+    bindingId: string;
+};
+export interface VisionPipeline {
+    id: string;
+    name: string;
+    /**
+     * 処理前に縮める幅 (px)。既定 480。
+     * 大きいままだと携帯端末では重く、細かいノイズも拾いすぎる。
+     */
+    maxWidth?: number;
+    ops: VisionOp[];
+    outputs: VisionOutput[];
 }
 /** どの画素を見るか。 */
 export type PerceptionSource = 
@@ -287,10 +345,7 @@ export interface PerceptionEngineConfig {
     mockText?: string;
 }
 /**
- * 「所定のアクションで、指定の枠の中を読む」定義。
- *
- * 結果は DataStore に辞書として書かれ、UI の bind から
- * `<storeAs>.text` / `<storeAs>.status` のように参照できる。
+ * 「所定のアクションで、指定の枠の中を見る」定義。
  */
 export interface PerceptionTask {
     id: string;
@@ -307,8 +362,8 @@ export interface PerceptionTask {
     /** 結果を書き込む DataStore キー */
     storeAs: string;
     engine?: PerceptionEngineConfig;
-    /** type === 'analyze' のときの設定 */
-    analysis?: PerceptionAnalysisConfig;
+    /** type === 'vision' のときに流すパイプライン */
+    pipeline?: VisionPipeline;
 }
 export interface PerceptionSettings {
     targets: PerceptionTarget[];

@@ -23,6 +23,11 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="ClassicChecks.cs" />
+    <Compile Include="PipelineChecks.cs" />
+    <Compile Include="GyroChecks.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Tracking/GyroMath.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Tracking/PhoneCameraMath.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Tracking/FramePacing.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/DataFlow/ArsistDataStore.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/LinAlg.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Homography.cs" />
@@ -45,8 +50,16 @@
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/EdgeDetector.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Contours.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/TemplateMatcher.cs" />
-    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/SkySegmenter.cs" />
-    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ClassicAnalyzer.cs" />
+
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/BoundaryScanner.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/MaskAlgebra.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Statistics.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Recolor.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ColorSummary.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Composite.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionValue.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionOps.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionPipelineRunner.cs" />
   </ItemGroup>
 
 </Project>

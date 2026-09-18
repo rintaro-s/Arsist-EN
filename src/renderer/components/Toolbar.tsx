@@ -17,6 +17,7 @@ import {
   Server,
   Zap,
   Radar,
+  ScanEye,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
@@ -86,6 +87,12 @@ export function Toolbar() {
             label={t('toolbar.tabScript')}
             active={currentView === 'script'}
             onClick={() => setCurrentView('script')}
+          />
+          <ViewTab
+            icon={<ScanEye size={15} />}
+            label={t('toolbar.tabVision')}
+            active={currentView === 'vision'}
+            onClick={() => setCurrentView('vision')}
           />
         </div>
       </div>

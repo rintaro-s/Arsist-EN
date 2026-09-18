@@ -165,11 +165,21 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   `Runtime/Perception/RegionRectifier` (geometry) → `Runtime/Perception/Text/` (recognisers) →
   `ArsistPerceptionTaskRunner` → DataStore. Frames are drawn on the photo in
   [RegionEditor.tsx](src/renderer/components/panels/RegionEditor.tsx).
-- **Measuring what the camera sees without a trained model** (colour, coloured blobs, shapes, sky)
-  → `doc/14-classic-vision.md`. Operators in `Runtime/Perception/Vision/Classic/`, entered through
-  `ClassicAnalyzer` from an `analyze` perception task. All of it is UnityEngine-free and covered by
-  `npm run test:perception` — **run it whenever a threshold or a sign changes there**. Demo app:
-  `products/BlueSky` (turns a cloudy sky blue).
+- **Image-recognition apps without a trained model** → `doc/14-classic-vision.md`. The engine only
+  has *general steps* (`VisionOp`); an app is an arrangement of them in a `vision` perception task.
+  **Do not add app-specific features to the engine** (e.g. a "sky" mode) — that was tried and reverted.
+  Steps in `Runtime/Perception/Pipeline/VisionOps.cs` + `Vision/Classic/`; editor in
+  [VisionEditor.tsx](src/renderer/components/viewport/VisionEditor.tsx) with a live preview that runs
+  the real C# via `tools/vision-preview`; the editor/runtime contract is
+  [opCatalog.ts](src/renderer/vision/opCatalog.ts). Adding a step touches VisionOps, opCatalog and a
+  check in `tools/perception-check`. Worked example: `products/BlueSky/README.md`.
+- **Drawing onto the real world** (not a Canvas) → `Overlay/ArsistWorldOverlay.cs`, fed by a pipeline's
+  `world` output. Crop/downscale intrinsics: `Vision/ViewportMapping.cs` (half-pixel convention).
+- **Plain Android phones (no headset)** → `Adapters/Android_Phone/`. Gyro look (3DoF) via
+  `Runtime/Tracking/ArsistGyroCamera.cs`; the maths is in `GyroMath.cs` and numerically checked.
+  The rear camera is opened **once** by `ArsistDeviceCamera` and shared (Android allows one open
+  camera). AR vs VR follows `arSettings.backgroundMode`. Builds need only Gradle
+  (`UnityBuilder.detectGradle`).
 - **Reading a headset's logs without adb** → `doc/13-device-logs.md`; `npm run logs`. Relay component in
   `Runtime/Diagnostics/ArsistLogRelay.cs`, receiver in [scripts/arsist-logs.mjs](scripts/arsist-logs.mjs).
   The builder machine's LAN address is baked in at build time (`UnityBuilder.resolveLogRelay`), so there is

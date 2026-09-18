@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle, Eye, Cloud, Square, MousePointer2, Hand } from 'lucide-react';
-import type { BackgroundMode, InteractionSettings } from '../../../shared/types';
+import type { BackgroundMode, InteractionSettings, PhoneSettings } from '../../../shared/types';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ErrorDialog } from './ErrorDialog';
@@ -22,7 +22,12 @@ interface DeviceOption {
  */
 function supportsBackgroundChoice(deviceId: string): boolean {
   const normalized = deviceId.toLowerCase();
-  return normalized.includes('quest') || normalized.includes('meta');
+  // スマホも背景を選べる: パススルー = 背面カメラの映像 (AR)、それ以外 = 映像なし (VR)
+  return normalized.includes('quest') || normalized.includes('meta') || normalized.includes('phone');
+}
+
+function isPhone(deviceId: string): boolean {
+  return deviceId.toLowerCase().includes('phone');
 }
 
 /**
@@ -39,6 +44,7 @@ const DEFAULT_INTERACTION: InteractionSettings = { controllerRay: true, handTrac
 const devices: DeviceOption[] = [
   { id: 'XREAL_One', name: 'XREAL One (Beam Pro)', available: true },
   { id: 'Meta_Quest', name: 'Meta Quest', available: true },
+  { id: 'Android_Phone', name: 'Android スマホ (ジャイロ)', available: true },
   { id: 'XREAL_Air2', name: 'XREAL Air 2', available: false },
   { id: 'Rokid_Max', name: 'Rokid Max', available: false },
   { id: 'VITURE_One', name: 'VITURE One', available: false },
@@ -60,6 +66,18 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   } = useUIStore();
   
   const [selectedDevice, setSelectedDevice] = useState(project?.targetDevice || 'XREAL_One');
+  // スマホ向けは Gradle さえあればビルドできる。無いと Unity を何分も回した末に落ちるので、
+  // 選んだ時点で見せておく。undefined = 確認中、null = 見つからない。
+  const [gradlePath, setGradlePath] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (selectedDevice !== 'Android_Phone') return;
+    let cancelled = false;
+    setGradlePath(undefined);
+    window.electronAPI.unity.detectGradle?.()
+      .then((found) => { if (!cancelled) setGradlePath(found ?? null); })
+      .catch(() => { if (!cancelled) setGradlePath(null); });
+    return () => { cancelled = true; };
+  }, [selectedDevice]);
   const [outputPath, setOutputPath] = useState('');
   const [developmentBuild, setDevelopmentBuild] = useState(false);
   // 通常は差分ビルド（作業用Unityプロジェクトの Library/ を再利用）。
@@ -85,6 +103,9 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   // 操作方法（コントローラーレイ / ハンドトラッキング）。両方 OFF はビルド時にエラーになるため、
   // ここでも警告を出す（ビルドを押すまで気付けないのは不親切なため）。
   const interaction: InteractionSettings = project?.arSettings?.interaction ?? DEFAULT_INTERACTION;
+  const phone: PhoneSettings = project?.arSettings?.phone ?? {};
+  const updatePhone = (patch: Partial<PhoneSettings>) =>
+    updateARSettings({ phone: { ...phone, ...patch } });
   const toggleInteraction = (patch: Partial<InteractionSettings>) => {
     updateARSettings({ interaction: { ...interaction, ...patch } });
   };
@@ -382,6 +403,15 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                 </button>
               ))}
             </div>
+            {selectedDevice === 'Android_Phone' && (
+              <p className={`text-[11px] mt-2 leading-snug ${gradlePath ? 'text-arsist-muted' : 'text-amber-400'}`}>
+                {gradlePath === undefined
+                  ? t('build.phoneGradleChecking')
+                  : gradlePath
+                    ? t('build.phoneGradleFound', { path: gradlePath })
+                    : t('build.phoneGradleMissing')}
+              </p>
+            )}
           </div>
 
           {/* Background (video see-through devices only) */}
@@ -422,12 +452,66 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                     <code className="text-xs text-arsist-muted">{backgroundColor}</code>
                   </div>
                 )}
-                <p className="text-xs text-arsist-muted mt-2">{t('build.backgroundHint')}</p>
+                <p className="text-xs text-arsist-muted mt-2">
+                  {isPhone(selectedDevice) ? t('build.backgroundHintPhone') : t('build.backgroundHint')}
+                </p>
               </>
             ) : (
               <p className="text-xs text-arsist-muted">{t('build.backgroundOpticalNote')}</p>
             )}
           </div>
+
+          {/* スマホ固有: 見回し方と画角 */}
+          {isPhone(selectedDevice) && (
+            <div className="mb-6 space-y-3">
+              <label className="input-label">{t('build.phone')}</label>
+
+              <div className="flex items-center gap-3">
+                <span className="text-sm w-32 shrink-0">{t('build.phoneOrientation')}</span>
+                <select
+                  className="input text-sm"
+                  value={phone.orientation ?? 'landscape'}
+                  disabled={isBuilding}
+                  onChange={(e) => updatePhone({ orientation: e.target.value as 'landscape' | 'portrait' })}
+                >
+                  <option value="landscape">{t('build.phoneLandscape')}</option>
+                  <option value="portrait">{t('build.phonePortrait')}</option>
+                </select>
+              </div>
+
+              {backgroundMode === 'passthrough' ? (
+                <div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm w-32 shrink-0">{t('build.phoneCameraFov')}</span>
+                    <input
+                      type="number"
+                      className="input text-sm w-24"
+                      min={20}
+                      max={140}
+                      step={1}
+                      value={phone.cameraFov ?? 63}
+                      disabled={isBuilding}
+                      onChange={(e) => updatePhone({ cameraFov: Math.min(140, Math.max(20, Number(e.target.value) || 63)) })}
+                    />
+                    <span className="text-xs text-arsist-muted">&deg;</span>
+                  </div>
+                  <p className="text-xs text-arsist-muted mt-1">{t('build.phoneCameraFovHint')}</p>
+                </div>
+              ) : (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={phone.stereo === true}
+                    disabled={isBuilding}
+                    onChange={(e) => updatePhone({ stereo: e.target.checked })}
+                  />
+                  {t('build.phoneStereo')}
+                </label>
+              )}
+
+              <p className="text-xs text-arsist-muted">{t('build.phoneLimits')}</p>
+            </div>
+          )}
 
           {/* Interaction (controller ray / hand tracking) */}
           <div className="mb-6">

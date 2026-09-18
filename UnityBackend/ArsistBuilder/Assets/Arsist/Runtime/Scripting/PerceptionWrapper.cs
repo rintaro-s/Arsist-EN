@@ -9,6 +9,7 @@
 // HTTP が非同期なのと同じ理由なので、書き味を揃えた方が迷わない。
 // ==============================================
 
+using Arsist.Runtime.DataFlow;
 using Arsist.Runtime.Perception;
 using Arsist.Runtime.Perception.Text;
 using Jint;
@@ -145,6 +146,27 @@ namespace Arsist.Runtime.Scripting
 
         /// <summary>直近の結果（同期）。まだ実行していなければ null。</summary>
         [UnityEngine.Scripting.Preserve]
+        /// <summary>
+        /// パイプラインの結果を名前で引く。
+        ///
+        /// 例: perception.value("sky", "coverage")
+        /// UI に bind するだけなら DataStore 経由で足りるが、スクリプトで条件分岐を
+        /// 書きたいときはこちらの方が読みやすい。
+        /// </summary>
+        public object value(string storeAs, string key)
+        {
+            if (string.IsNullOrEmpty(storeAs)) return null;
+            var path = string.IsNullOrEmpty(key) ? storeAs : storeAs + "." + key;
+            return ArsistDataStore.Instance.TryGetValueByPath(path, out var found) ? found : null;
+        }
+
+        /// <summary>パイプラインの門が閉じたか（＝探していたものが見つからなかったか）。</summary>
+        public bool gated(string storeAs)
+        {
+            var raw = value(storeAs, "gated");
+            return raw is bool flag && flag;
+        }
+
         public PerceptionTaskResult lastResult(string taskId)
         {
             var runner = ArsistPerceptionTaskRunner.Instance;

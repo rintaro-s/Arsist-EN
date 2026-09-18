@@ -224,6 +224,9 @@ function mapTextAlignment(align) {
 function isTaskResolvable(task, targets) {
     if (!task.storeAs)
         return false;
+    // パイプラインの無い vision タスクは、ビルドは通るのに実行時に必ず何もしない。
+    if (task.type === 'vision' && (task.pipeline?.ops?.length ?? 0) === 0)
+        return false;
     const source = task.source;
     if (source.kind === 'viewport')
         return true;
@@ -235,20 +238,6 @@ function isTaskResolvable(task, targets) {
 /**
  * プロジェクト全体をUnityマニフェストに変換
  */
-/**
- * analyze タスクの設定を埋める。
- *
- * display は空の塗り替え先なので、kind === 'sky' のときだけ意味がある。
- * 他の kind にも付けると、Unity 側が見もしないフィールドを読むことになる。
- * 既定は 'world' — AR なので、現実の空を青くするのが本筋で、
- * Canvas に映すのは確認用。
- */
-function resolveAnalysis(analysis) {
-    const resolved = analysis ?? { kind: 'color' };
-    if (resolved.kind !== 'sky')
-        return resolved;
-    return { ...resolved, display: resolved.display ?? 'world' };
-}
 function generateUnityManifest(project) {
     const scriptBundle = {
         version: '1.0',
@@ -329,10 +318,9 @@ function generateUnityManifest(project) {
                     storeAs: task.storeAs,
                     // OCR 以外はエンジンを見ないが、既定を落とすと Unity 側で分岐が増えるので常に入れる
                     engine: task.engine ?? { kind: 'mlkit', script: 'japanese' },
-                    // 古典的な画像処理の設定。未指定なら代表色を測る
-                    analysis: task.type === 'analyze'
-                        ? resolveAnalysis(task.analysis)
-                        : undefined,
+                    // 画像処理パイプライン。中身はプロジェクト側が持つので、
+                    // ここは素通しにする。エンジンは op の並べ方を知らない。
+                    pipeline: task.type === 'vision' ? task.pipeline : undefined,
                 })),
             }
             : undefined,

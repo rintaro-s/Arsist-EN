@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    エディタのライブプレビュー用ハーネス。
+
+    パイプラインの各ステップが何を出したかを、エディタで見せるためのもの。
+    op を TypeScript で書き直すと三重実装になり、必ずどこかで食い違う。
+    実機で動くのと同じ C# をそのまま呼ぶので、プレビューと実機の結果がずれない。
+
+    画像は生の RGBA でやり取りする。PNG の符号化・復号をどちらの側でも
+    書かずに済み、レンダラ側は canvas でそのまま描ける。
+
+      npm run dev から IPC 経由で呼ばれる (src/main/vision/VisionPreview.ts)
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>VisionPreview</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/GrayImage.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ColorImage.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/MaskImage.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ConnectedComponents.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/EdgeDetector.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Contours.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/TemplateMatcher.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/BoundaryScanner.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/MaskAlgebra.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Statistics.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Recolor.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ColorSummary.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Composite.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionValue.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionOps.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionPipelineRunner.cs" />
+  </ItemGroup>
+
+</Project>

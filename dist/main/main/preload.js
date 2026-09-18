@@ -15,9 +15,15 @@ const electronAPI = {
         export: (options) => electron_1.ipcRenderer.invoke('project:export', options),
     },
     // Unity連携
+    vision: {
+        /** パイプラインを1枚の画像に流し、各ステップの結果を返す */
+        preview: (pipeline, image) => electron_1.ipcRenderer.invoke('vision:preview', { pipeline, image }),
+    },
     unity: {
         setPath: (unityPath) => electron_1.ipcRenderer.invoke('unity:set-path', unityPath),
         getPath: () => electron_1.ipcRenderer.invoke('unity:get-path'),
+        /** Android ビルドに使える Gradle のパス。無ければ null */
+        detectGradle: () => electron_1.ipcRenderer.invoke('unity:detect-gradle'),
         build: (config) => electron_1.ipcRenderer.invoke('unity:build', config),
         cancelBuild: () => electron_1.ipcRenderer.invoke('unity:cancel-build'),
         validate: () => electron_1.ipcRenderer.invoke('unity:validate'),

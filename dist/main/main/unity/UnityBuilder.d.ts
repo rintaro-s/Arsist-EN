@@ -239,6 +239,14 @@ export declare class UnityBuilder extends EventEmitter {
      * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
      */
     /**
+     * Android ビルドに使える Gradle を探す。
+     *
+     * Unity は同梱の Gradle (PlaybackEngines/AndroidPlayer/Tools/gradle) を優先して使う。
+     * 無ければシステムの Gradle (GRADLE_HOME / PATH) も候補にする。どれも無ければ null。
+     * 候補の並びは src/main/platform/paths.ts の getGradleCandidates が決める。
+     */
+    detectGradle(): Promise<string | null>;
+    /**
      * targetSdkVersion に対応する platforms/android-N が SDK に入っているか先に見る。
      *
      * 入っていないと Gradle が「licences have not been accepted」で落ちるが、

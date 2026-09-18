@@ -23,7 +23,7 @@ npm run build          # build:main (tsc) + build:renderer (vite)
 npm run build:main     # TypeScript main process only — fast typecheck of src/main
 npm run lint           # eslint src --ext .ts,.tsx
 npm test               # vitest
-npm run test:perception # 画像アンカーの姿勢推定を Unity 無しで数値検証 (dotnet)
+npm run test:perception # 姿勢推定・画像処理パイプライン・ジャイロを Unity 無しで数値検証 (dotnet)
 npm run logs           # 実機アプリのログを LAN で受ける (adb 不要, doc/13-device-logs.md)
 npm run package        # electron-builder (needs sdk/ present)
 npm run xreal:diag     # build + adb install + filtered logcat (needs Unity + device)
@@ -35,9 +35,11 @@ Unity builds and on-device verification require a full Unity install, the `sdk/`
 (`Runtime/Perception/Vision/{LinAlg,Homography,PlanarPoseSolver}.cs`) has no UnityEngine dependency and is
 covered by `npm run test:perception` — **run it whenever that math changes**, because a wrong sign there
 compiles cleanly and only shows up as a misplaced anchor on hardware.
-The same applies to the classical operators in `Runtime/Perception/Vision/Classic/` (thresholding,
-morphology, labelling, contours, sky segmentation): they are deliberately UnityEngine-free so the same
-harness covers them — see `doc/14-classic-vision.md` for the mistakes that harness has already caught.
+The same applies to the image pipeline (`Runtime/Perception/{Vision/Classic,Pipeline}/`) and the phone
+gyro maths (`Runtime/Tracking/{GyroMath,PhoneCameraMath}.cs`): they are deliberately UnityEngine-free so
+the same harness covers them — see `doc/14-classic-vision.md` for the mistakes it has already caught.
+**The engine provides general vision steps only; never add an app-specific mode** (a "sky" feature was
+added once and reverted — users must be able to build such apps themselves in the Vision editor).
 
 ## Conventions
 
@@ -70,3 +72,6 @@ harness covers them — see `doc/14-classic-vision.md` for the mistakes that har
 - Standalone scripts in `scripts/` reconstruct the electron-store config path manually — keep in sync with
   `src/main/platform/`.
 - Keep the Unity version consistent across `ProjectVersion.txt`, detection scripts, and README.
+- Inside any `Arsist.Runtime.*` namespace, a bare `Input` resolves to the sibling namespace
+  `Arsist.Runtime.Input`, **not** `UnityEngine.Input` (C# walks up the namespace chain before it looks
+  at `using` directives). Always write `UnityEngine.Input.gyro` etc. — this broke the build once.

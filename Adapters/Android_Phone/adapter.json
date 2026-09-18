@@ -1,0 +1,62 @@
+{
+  "$schema": "https://arsist.dev/schemas/adapter.v1.json",
+  "id": "android-phone",
+  "name": "Android スマホ (ジャイロ)",
+  "version": "1.0.0",
+  "description": "ヘッドセットの無い普通の Android 端末用。頭の向きの代わりにジャイロで見回す (3DoF)。背面カメラの映像を背景にしたビデオシースルー AR と、映像を出さない VR (段ボールゴーグル対応) を選べる。XR SDK には依存しないので、Unity 同梱の Gradle があればビルドできる。",
+  "author": "Arsist Team",
+  "license": "MIT",
+
+  "device": {
+    "manufacturer": "Any",
+    "models": ["Android 10 以降でジャイロスコープのある端末"],
+    "displayName": "Android スマホ",
+    "category": "handheld"
+  },
+
+  "capabilities": {
+    "sixDofTracking": false,
+    "threeDofTracking": true,
+    "handTracking": false,
+    "spatialMapping": false,
+    "planeDetection": false,
+    "imageTracking": true,
+    "passthrough": true,
+    "mixedReality": false
+  },
+
+  "input": {
+    "touch": { "supported": true },
+    "gyroscope": { "supported": true, "fallback": "touch-drag" }
+  },
+
+  "sdk": {
+    "name": "None (Unity のみ)",
+    "platform": "Android",
+    "note": "XR プラグインを一切使わない。ジャイロは Unity の Input.gyro、映像は WebCamTexture。ARCore のある端末で 6DoF と正確な画角が要るなら AR Foundation を足すこと。"
+  },
+
+  "build": {
+    "platform": "Android",
+    "minApiLevel": 29,
+    "targetApiLevel": 34,
+    "architecture": ["arm64-v8a"],
+    "graphicsApi": ["OpenGLES3", "Vulkan"],
+    "scriptingBackend": "IL2CPP",
+    "requires": ["Unity Android Build Support (Gradle 同梱)"]
+  },
+
+  "manifest": {
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.CAMERA"
+    ],
+    "features": [
+      { "name": "android.hardware.sensor.gyroscope", "required": false },
+      { "name": "android.hardware.camera", "required": false }
+    ]
+  },
+
+  "patches": []
+}

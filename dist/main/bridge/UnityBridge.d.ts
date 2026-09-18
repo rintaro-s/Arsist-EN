@@ -119,6 +119,9 @@ interface UnityUIElement {
     };
     children: UnityUIElement[];
 }
+/**
+ * プロジェクト全体をUnityマニフェストに変換
+ */
 export declare function generateUnityManifest(project: ArsistProject): object;
 export {};
 //# sourceMappingURL=UnityBridge.d.ts.map

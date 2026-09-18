@@ -343,255 +343,7 @@ internal static class ClassicChecks
 
     private static double Clamp(double v) => v < 0 ? 0 : (v > 255 ? 255 : v);
 
-    private static void TestSkySegmentation()
-    {
-        int w = 240, h = 180;
-        double skyRatio = 0.6;
-        var scene = MakeScene(w, h, skyRatio, cloudy: true);
-
-        var sky = SkySegmenter.Segment(scene);
-        Expect("sky found in a cloudy scene", sky.Found, $"coverage {sky.Coverage:F3} grad {sky.MeanGradient:F2}");
-        Near("sky coverage matches the synthetic horizon", sky.Coverage, 1.0 - skyRatio, 0.06);
-
-        // 空の画素が本当に上側にあるか。
-        int horizon = (int)(h * skyRatio);
-        int below = 0;
-        for (int y = 0; y < horizon - 2; y++)
-            for (int x = 0; x < w; x++)
-                if (sky.Mask.Data[y * w + x] == MaskImage.On) below++;
-        Expect("no sky pixels below the horizon", below == 0, $"{below} px below");
-
-        // 地面だけの画像では空を見つけないこと（誤検出のほうが害が大きい）。
-        var ground = new ColorImage(w, h);
-        var rng = new Random(11);
-        for (int i = 0; i < ground.PixelCount; i++)
-        {
-            byte n = (byte)rng.Next(0, 60);
-            ground.Data[i * 3] = (byte)(50 + n);
-            ground.Data[i * 3 + 1] = (byte)(70 + n);
-            ground.Data[i * 3 + 2] = (byte)(40 + n);
-        }
-        var none = SkySegmenter.Segment(ground);
-        Expect("no sky in a ground-only image", !none.Found, $"coverage {none.Coverage:F3} grad {none.MeanGradient:F2}");
-
-        // 全面が空の画像は、ほぼ全部が空になること。
-        var allSky = MakeScene(w, h, 0.0, cloudy: true);
-        var full = SkySegmenter.Segment(allSky);
-        Expect("full-frame sky is nearly all sky", full.Coverage > 0.9, $"coverage {full.Coverage:F3}");
-    }
-
-    /// <summary>
-    /// 薄暗い空。固定のしきい値で切ると、夕方や曇りの濃い日の空がまるごと落ちる。
-    /// 空かどうかを決めるのは絶対的な明るさではなく「地面より明るく、平坦で、上にある」こと。
-    /// </summary>
-    private static void TestDimSky()
-    {
-        int w = 240, h = 180;
-
-        // 明るい昼から、ほとんど夜と言える暗さまで。どこでも同じだけ空が取れること。
-        foreach (var level in new[] { 195, 140, 110, 90, 70, 55, 40, 30 })
-        {
-            var scene = MakeScene(w, h, 0.6, cloudy: true,
-                                  skyLevel: level, groundLevel: Math.Max(10, level - 130));
-            var sky = SkySegmenter.Segment(scene);
-            bool ok = sky.Found && Math.Abs(sky.Coverage - 0.4) <= 0.06;
-            Expect($"dim sky is still found at level {level}", ok,
-                   $"found={sky.Found} coverage={sky.Coverage:F3} threshold={sky.MinBrightnessUsed}");
-        }
-
-        // しきい値が画像に追随していること。昼は従来どおり 90 で頭打ち。
-        var bright = SkySegmenter.Segment(MakeScene(w, h, 0.6, cloudy: true, skyLevel: 195));
-        var dim = SkySegmenter.Segment(MakeScene(w, h, 0.6, cloudy: true, skyLevel: 60, groundLevel: 10));
-        Expect("a bright scene keeps the fixed threshold", bright.MinBrightnessUsed == 90,
-               $"{bright.MinBrightnessUsed}");
-        Expect("a dim scene lowers the threshold", dim.MinBrightnessUsed < 45,
-               $"{dim.MinBrightnessUsed}");
-
-        // 暗い空でも、塗り替えた結果はちゃんと明るい青になること。
-        // shade を空自身の平均輝度で正規化しているので、元の暗さは持ち越さない。
-        foreach (var level in new[] { 195, 90, 40 })
-        {
-            var scene = MakeScene(w, h, 0.6, cloudy: true,
-                                  skyLevel: level, groundLevel: Math.Max(10, level - 130));
-            var sky = SkySegmenter.Segment(scene);
-            var painted = SkySegmenter.Repaint(scene, sky);
-
-            long b = 0; int n = 0;
-            for (int i = 0; i < scene.PixelCount; i++)
-            {
-                if (sky.Mask.Data[i] == MaskImage.Off) continue;
-                b += painted.Data[i * 3 + 2]; n++;
-            }
-            double meanB = n > 0 ? (double)b / n : 0;
-            Expect($"a dim sky is repainted bright at level {level}", meanB > 200, $"meanB {meanB:F0}");
-        }
-
-        // 暗い場面ではセンサーノイズが乗って空でも勾配が上がる。絶対値だけで切ると
-        // 夕方の空が落ちるので、地面よりはっきり平坦なら空と認めること。
-        var noisy = MakeScene(w, h, 0.6, cloudy: true, skyLevel: 60, groundLevel: 12);
-        var noise = new Random(23);
-        for (int y = 0; y < h; y++)
-        {
-            for (int x = 0; x < w; x++)
-            {
-                int i = (y * w + x) * 3;
-                int amount = y > (int)(h * 0.6) ? 40 : 120;   // 空にも強く乗るが、地面はもっと荒い
-                for (int c = 0; c < 3; c++)
-                {
-                    noisy.Data[i + c] = (byte)Clamp(noisy.Data[i + c] + noise.Next(-amount, amount + 1));
-                }
-            }
-        }
-        var noisySky = SkySegmenter.Segment(noisy);
-        Expect("a noisy dim sky is accepted for being flatter than the ground", noisySky.Found,
-               $"sky {noisySky.MeanGradient:F1} vs ground {noisySky.MeanGroundGradient:F1}");
-        Expect("the noisy sky really did exceed the absolute gate",
-               noisySky.MeanGradient > 8.0,
-               $"{noisySky.MeanGradient:F1} — if this drops below 8 the relative rule is no longer under test");
-
-        // 相対の門を足しても、地面しか写っていない画像は空にならないこと。
-        var groundOnly = new ColorImage(w, h);
-        var groundNoise = new Random(29);
-        for (int i = 0; i < groundOnly.PixelCount; i++)
-        {
-            byte n = (byte)groundNoise.Next(0, 60);
-            groundOnly.Data[i * 3] = (byte)(50 + n);
-            groundOnly.Data[i * 3 + 1] = (byte)(70 + n);
-            groundOnly.Data[i * 3 + 2] = (byte)(40 + n);
-        }
-        var noSky = SkySegmenter.Segment(groundOnly);
-        Expect("the relative rule does not let a ground-only image through", !noSky.Found,
-               $"coverage {noSky.Coverage:F3} sky {noSky.MeanGradient:F1} ground {noSky.MeanGroundGradient:F1}");
-
-        // 明るさではなく彩度で曇り／晴れを分けること。
-        // 夕方の青空は暗いが青いままなので、明るさで分けると曇り扱いになってしまう。
-        var duskClear = SkySegmenter.Segment(MakeScene(w, h, 0.6, cloudy: false, skyLevel: 70, groundLevel: 10));
-        var duskCloudy = SkySegmenter.Segment(MakeScene(w, h, 0.6, cloudy: true, skyLevel: 70, groundLevel: 10));
-        Expect("a dim blue sky keeps its saturation", duskClear.MeanSaturation > 100,
-               $"{duskClear.MeanSaturation:F0}");
-        Expect("a dim grey sky has almost none", duskCloudy.MeanSaturation < 60,
-               $"{duskCloudy.MeanSaturation:F0}");
-    }
-
-    private static void TestSkyRepaint()
-    {
-        int w = 240, h = 180;
-        var scene = MakeScene(w, h, 0.6, cloudy: true);
-        var sky = SkySegmenter.Segment(scene);
-        var painted = SkySegmenter.Repaint(scene, sky);
-
-        // 空は青くなる: B > R が成り立つこと。
-        long r = 0, b = 0; int n = 0;
-        for (int i = 0; i < scene.PixelCount; i++)
-        {
-            if (sky.Mask.Data[i] == MaskImage.Off) continue;
-            r += painted.Data[i * 3];
-            b += painted.Data[i * 3 + 2];
-            n++;
-        }
-        Expect("repainted sky is blue", n > 0 && b > r * 1.3, $"meanR={r / Math.Max(1, n)} meanB={b / Math.Max(1, n)}");
-
-        // 空でない画素は 1 バイトも変わらないこと。
-        bool groundUntouched = true;
-        for (int i = 0; i < scene.PixelCount && groundUntouched; i++)
-        {
-            if (sky.Mask.Data[i] == MaskImage.On) continue;
-            for (int c = 0; c < 3; c++)
-                if (painted.Data[i * 3 + c] != scene.Data[i * 3 + c]) { groundUntouched = false; break; }
-        }
-        Expect("repaint leaves non-sky pixels untouched", groundUntouched);
-
-        // 雲の濃淡が残ること: 塗った空にも輝度のばらつきがある。
-        double mean = 0; int count = 0;
-        for (int i = 0; i < scene.PixelCount; i++)
-        {
-            if (sky.Mask.Data[i] == MaskImage.Off) continue;
-            mean += painted.Data[i * 3 + 2]; count++;
-        }
-        mean /= Math.Max(1, count);
-        double variance = 0;
-        for (int i = 0; i < scene.PixelCount; i++)
-        {
-            if (sky.Mask.Data[i] == MaskImage.Off) continue;
-            double d = painted.Data[i * 3 + 2] - mean;
-            variance += d * d;
-        }
-        variance /= Math.Max(1, count);
-        Expect("repaint keeps cloud texture", variance > 4.0, $"variance {variance:F2}");
-
-        // strength=0 は何も変えない。
-        var untouched = SkySegmenter.Repaint(scene, sky, 0.0);
-        Expect("strength 0 is a no-op", untouched.Data.SequenceEqual(scene.Data));
-    }
-
     // --- 解析タスクの窓口 ---
-
-    private static void TestAnalyzer()
-    {
-        // 代表色: 赤が多数派、緑が少数派。平均ではなく多数派の色が返るべき。
-        var swatch = new ColorImage(80, 60);
-        for (int y = 0; y < 60; y++)
-            for (int x = 0; x < 80; x++)
-                swatch.Set(x, y, x < 60 ? (byte)220 : (byte)20, x < 60 ? (byte)30 : (byte)200, (byte)30);
-
-        var color = ClassicAnalyzer.Analyze(swatch, new ClassicAnalysisConfig { Kind = ClassicAnalysisKind.Color });
-        Expect("colour analysis reports the dominant hue, not the mean",
-               color.Ok && (string)color.Values["name"] == "red", $"{color.Values["name"]} {color.Values["hex"]}");
-
-        // 無彩色は名前が gray/white/black になること（色相は当てにならない）。
-        var grayPatch = new ColorImage(40, 40);
-        for (int i = 0; i < grayPatch.PixelCount; i++)
-        { grayPatch.Data[i * 3] = 128; grayPatch.Data[i * 3 + 1] = 128; grayPatch.Data[i * 3 + 2] = 128; }
-        var grayResult = ClassicAnalyzer.Analyze(grayPatch, new ClassicAnalysisConfig { Kind = ClassicAnalysisKind.Color });
-        Expect("achromatic patch is named gray", (string)grayResult.Values["name"] == "gray",
-               (string)grayResult.Values["name"]);
-
-        // 塊: 黒地に赤い四角ふたつ。
-        var scene = new ColorImage(200, 150);
-        for (int y = 20; y < 60; y++) for (int x = 20; x < 70; x++) scene.Set(x, y, 220, 20, 20);
-        for (int y = 90; y < 120; y++) for (int x = 120; x < 160; x++) scene.Set(x, y, 220, 20, 20);
-        var blobs = ClassicAnalyzer.Analyze(scene, new ClassicAnalysisConfig
-        {
-            Kind = ClassicAnalysisKind.Blobs,
-            HueMin = 340, HueMax = 20, SatMin = 80, ValMin = 80,
-            MinArea = 20, MaxWidth = 0,
-        });
-        Expect("blob analysis counts two patches", blobs.Ok && (int)blobs.Values["count"] == 2,
-               $"count {blobs.Values["count"]}");
-        var items = (System.Collections.Generic.List<object>)blobs.Values["items"];
-        var first = (System.Collections.Generic.Dictionary<string, object>)items[0];
-        Near("largest blob centre x is normalised", (double)first["x"], 44.5 / 200, 0.02);
-
-        // 形: 白地の四角と円。
-        var shapes = new ColorImage(220, 180);
-        for (int i = 0; i < shapes.PixelCount; i++)
-        { shapes.Data[i * 3] = 20; shapes.Data[i * 3 + 1] = 20; shapes.Data[i * 3 + 2] = 20; }
-        for (int y = 20; y < 80; y++) for (int x = 20; x < 80; x++) shapes.Set(x, y, 240, 240, 240);
-        for (int y = 90; y < 170; y++)
-            for (int x = 120; x < 200; x++)
-            {
-                int dx = x - 160, dy = y - 130;
-                if (dx * dx + dy * dy <= 38 * 38) shapes.Set(x, y, 240, 240, 240);
-            }
-        var shapeResult = ClassicAnalyzer.Analyze(shapes, new ClassicAnalysisConfig
-        {
-            Kind = ClassicAnalysisKind.Shapes, MinArea = 200, MaxWidth = 0,
-        });
-        Expect("shape analysis finds a square and a circle",
-               shapeResult.Ok && shapeResult.Values.ContainsKey("square") && shapeResult.Values.ContainsKey("circle"),
-               string.Join(",", shapeResult.Values.Keys));
-
-        // 空。
-        var sky = ClassicAnalyzer.Analyze(MakeScene(240, 180, 0.6, cloudy: true),
-                                          new ClassicAnalysisConfig { Kind = ClassicAnalysisKind.Sky, MaxWidth = 0 });
-        Expect("sky analysis reports overcast",
-               sky.Ok && (bool)sky.Values["found"] && (string)sky.Values["condition"] == "overcast",
-               $"{sky.Values["condition"]} coverage {sky.Values["coverage"]}");
-
-        // 画が無いときは素直に失敗すること。
-        Expect("analyzer rejects a missing image",
-               !ClassicAnalyzer.Analyze(null, null).Ok, ClassicAnalyzer.Analyze(null, null).Error);
-    }
 
     // --- DataStore のパス解決 ---
     // 解析結果は「辞書ひとつ」で書く。ここが崩れると、bind した UI が無言で空になる。
@@ -685,23 +437,26 @@ internal static class ClassicChecks
         Check("downscaling does not move the plane (right)", Math.Abs(rf - rh), 1e-9);
     }
 
-    /// <summary>現実に重ねる RGBA。空だけ不透明であること。</summary>
+    /// <summary>現実に重ねる RGBA。マスクの中だけ不透明であること。</summary>
     private static void TestCompose()
     {
-        int w = 240, h = 180;
-        var scene = MakeScene(w, h, 0.6, cloudy: true);
-        var sky = SkySegmenter.Segment(scene);
-        var painted = SkySegmenter.Repaint(scene, sky);
+        int w = 120, h = 90;
+        var image = new ColorImage(w, h);
+        for (int i = 0; i < image.PixelCount; i++)
+        {
+            image.Data[i * 3] = 40; image.Data[i * 3 + 1] = 90; image.Data[i * 3 + 2] = 200;
+        }
+        var mask = new MaskImage(w, h);
+        FillRect(mask, 0, 45, w, 45);    // 上半分
 
-        var rgba = SkySegmenter.Compose(painted, sky.Mask, featherPasses: 3);
+        var rgba = Composite.ToRgba(image, mask, featherPasses: 3);
         Expect("compose returns RGBA for every pixel", rgba != null && rgba.Length == w * h * 4,
                $"{rgba?.Length}");
 
-        // 空の真ん中は不透明、地面の真ん中は透明。
-        int skyIndex = (h - 10) * w + w / 2;
-        int groundIndex = 10 * w + w / 2;
-        Expect("the middle of the sky is opaque", rgba[skyIndex * 4 + 3] > 240, $"{rgba[skyIndex * 4 + 3]}");
-        Expect("the ground is fully transparent", rgba[groundIndex * 4 + 3] == 0, $"{rgba[groundIndex * 4 + 3]}");
+        int inside = (h - 5) * w + w / 2;
+        int outside = 5 * w + w / 2;
+        Expect("inside the mask is opaque", rgba[inside * 4 + 3] > 240, $"{rgba[inside * 4 + 3]}");
+        Expect("outside the mask is fully transparent", rgba[outside * 4 + 3] == 0, $"{rgba[outside * 4 + 3]}");
 
         // ぼかしのおかげで境界に中間の alpha があること（そこが階段状に見えないため）。
         int soft = 0;
@@ -712,8 +467,7 @@ internal static class ClassicChecks
         }
         Expect("the edge is feathered, not a hard cut", soft > w / 2, $"{soft} soft px");
 
-        // ぼかし 0 なら中間値は出ないこと。
-        var hard = SkySegmenter.Compose(painted, sky.Mask, featherPasses: 0);
+        var hard = Composite.ToRgba(image, mask, featherPasses: 0);
         int hardSoft = 0;
         for (int i = 0; i < w * h; i++)
         {
@@ -722,9 +476,12 @@ internal static class ClassicChecks
         }
         Expect("no feathering means no intermediate alpha", hardSoft == 0, $"{hardSoft} soft px");
 
-        // 大きさが合わないものは弾くこと。
+        // マスクが無ければ全面不透明。
+        var full = Composite.ToRgba(image, null, 3);
+        Expect("no mask means draw everything", full[outside * 4 + 3] == 255);
+
         Expect("mismatched sizes are rejected",
-               SkySegmenter.Compose(painted, new MaskImage(10, 10), 1) == null);
+               Composite.ToRgba(image, new MaskImage(10, 10), 1) == null);
     }
 
     public static int Run()
@@ -753,13 +510,7 @@ internal static class ClassicChecks
         Console.WriteLine("\n--- classic: template matching ---");
         TestTemplateMatching();
 
-        Console.WriteLine("\n--- classic: sky segmentation ---");
-        TestSkySegmentation();
-        TestSkyRepaint();
-        TestDimSky();
 
-        Console.WriteLine("\n--- classic: analyzer ---");
-        TestAnalyzer();
 
         Console.WriteLine("\n--- classic: world overlay ---");
         TestViewportMapping();

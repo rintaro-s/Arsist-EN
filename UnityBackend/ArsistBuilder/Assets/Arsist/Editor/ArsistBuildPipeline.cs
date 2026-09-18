@@ -666,7 +666,9 @@ namespace Arsist.Builder
                 );
 
                 // XR Origin を先に作成（デバイスに応じたプレハブを使用）
-                CreateXROrigin();
+                // スマホは XR SDK を使わないので、ジャイロで回るただのカメラを置く。
+                if (IsAndroidPhoneTargetDevice()) CreatePhoneRig();
+                else CreateXROrigin();
 
                 // XREAL_Rigを見つける（XRコンテンツの親として使用）
                 var xrealRig = GameObject.Find("XREAL_Rig");
@@ -2053,39 +2055,40 @@ namespace Arsist.Builder
             }
             Debug.Log($"[Arsist] ArsistPerceptionTaskRunner added for {tasks.Count} task(s).");
 
-            EnsureSkyOverlayInScene(tasks);
+            EnsureWorldOverlayInScene(tasks);
         }
 
         /// <summary>
-        /// 空を現実に重ねて描くタスクがあれば、その描画先をシーンに置く。
+        /// 現実に重ねて描く出力を持つタスクがあれば、その描画先をシーンに置く。
         ///
-        /// AR なので、結果は Canvas ではなくパススルーで見えている空そのものに乗る。
-        /// 'image' 表示（確認用に Canvas へ出す）だけのプロジェクトには要らない。
+        /// AR なので、結果は Canvas ではなくパススルーで見えているものの上に乗る。
+        /// 'image' 出力（確認用に Canvas へ出す）だけのプロジェクトには要らない。
         /// </summary>
-        private static void EnsureSkyOverlayInScene(JArray tasks)
+        private static void EnsureWorldOverlayInScene(JArray tasks)
         {
             bool needsOverlay = false;
             foreach (JObject task in tasks)
             {
-                if ((task["type"]?.ToString() ?? "ocr") != "analyze") continue;
-                var analysis = task["analysis"] as JObject;
-                if (analysis == null) continue;
-                if (analysis["kind"]?.ToString() != "sky") continue;
-                // display 未指定の既定は 'world'。AR で自然なのは現実に重ねる方なので。
-                if (analysis["display"]?.ToString() == "image") continue;
-                needsOverlay = true;
-                break;
+                if ((task["type"]?.ToString() ?? "ocr") != "vision") continue;
+                var outputs = task["pipeline"]?["outputs"] as JArray;
+                if (outputs == null) continue;
+
+                foreach (JObject output in outputs)
+                {
+                    if (output["kind"]?.ToString() == "world") { needsOverlay = true; break; }
+                }
+                if (needsOverlay) break;
             }
             if (!needsOverlay) return;
 
-            var go = new GameObject("[ArsistSkyOverlay]");
-            if (TryAddComponentByTypeName(go, "Arsist.Runtime.Perception.Overlay.ArsistSkyOverlay") == null)
+            var go = new GameObject("[ArsistWorldOverlay]");
+            if (TryAddComponentByTypeName(go, "Arsist.Runtime.Perception.Overlay.ArsistWorldOverlay") == null)
             {
-                Debug.LogError("[Arsist] ArsistSkyOverlay type not found; the sky will not be repainted in the world.");
+                Debug.LogError("[Arsist] ArsistWorldOverlay type not found; nothing will be drawn onto the world.");
                 UnityEngine.Object.DestroyImmediate(go);
                 return;
             }
-            Debug.Log("[Arsist] ArsistSkyOverlay added (sky is repainted onto passthrough, not onto a Canvas).");
+            Debug.Log("[Arsist] ArsistWorldOverlay added (results are drawn onto passthrough, not onto a Canvas).");
         }
 
         /// <summary>
@@ -2420,6 +2423,90 @@ namespace Arsist.Builder
             catch (Exception e)
             {
                 Debug.LogWarning($"[Arsist] Failed to ensure WebSocket server in scene: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// スマホ用のカメラ一式。
+        ///
+        /// ヘッドセットの頭の向きの代わりにジャイロでメインカメラを回す。
+        /// XR SDK には一切触らないので、Unity の Android Build Support だけでビルドできる。
+        /// </summary>
+        private static void CreatePhoneRig()
+        {
+            var phone = _manifest?.SelectToken("arSettings.phone") as JObject;
+            // AR か VR かは背景モードで決まる。スマホではパススルー = 背面カメラの映像。
+            // 設定を二重に持つと食い違うので、phone 側には置いていない。
+            var mode = GetBackgroundMode() == BACKGROUND_PASSTHROUGH ? "ar" : "vr";
+            bool stereo = mode == "vr" && phone?["stereo"]?.Value<bool>() == true;
+            float fov = phone?["cameraFov"]?.Value<float>() ?? 63f;
+            bool landscape = phone?["orientation"]?.ToString() != "portrait";
+
+            var rigRoot = new GameObject("Phone_Rig");
+
+            var cameraGo = new GameObject("Main Camera");
+            cameraGo.tag = "MainCamera";
+            cameraGo.transform.SetParent(rigRoot.transform, false);
+            // 目の高さ。ヘッドセットの XR Origin と同じく床から 1.6m に置いて、
+            // どの端末でも同じシーンが同じ高さから見えるようにする。
+            cameraGo.transform.localPosition = new Vector3(0f, 1.6f, 0f);
+
+            var camera = cameraGo.AddComponent<Camera>();
+            camera.nearClipPlane = 0.05f;
+            camera.farClipPlane = 1000f;
+            cameraGo.AddComponent<AudioListener>();
+
+            var rig = TryAddComponentByTypeName(rigRoot, "Arsist.Runtime.Tracking.ArsistPhoneRig");
+            if (rig != null)
+            {
+                var so = new SerializedObject(rig);
+                var fovProp = so.FindProperty("CameraFovDegrees");
+                if (fovProp != null) fovProp.floatValue = fov;
+                var landscapeProp = so.FindProperty("Landscape");
+                if (landscapeProp != null) landscapeProp.boolValue = landscape;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            TryAddComponentByTypeName(cameraGo, "Arsist.Runtime.Tracking.ArsistGyroCamera");
+
+            // カメラを開くのは AR のときと、画像処理タスクがあるとき。
+            // VR でも画像処理はカメラを見るので、そのときは背景だけ出さずに開く。
+            bool needsCamera = mode == "ar" || ProjectHasPerceptionTasks() || ProjectHasPerceptionTargets();
+            if (needsCamera)
+            {
+                TryAddComponentByTypeName(rigRoot, "Arsist.Runtime.Tracking.ArsistDeviceCamera");
+            }
+
+            if (mode == "ar")
+            {
+                TryAddComponentByTypeName(cameraGo, "Arsist.Runtime.Tracking.ArsistCameraBackground");
+            }
+            else
+            {
+                // VR は現実を隠す。背景モードの設定 (skybox / solidColor) に従う。
+                ApplyBackgroundModeToCamera(camera);
+                if (stereo) TryAddComponentByTypeName(cameraGo, "Arsist.Runtime.Tracking.ArsistPhoneStereo");
+            }
+
+            Debug.Log($"[Arsist] Phone rig created (mode={mode}, stereo={stereo}, fov={fov}, " +
+                      $"orientation={(landscape ? "landscape" : "portrait")}, camera={(needsCamera ? "on" : "off")})");
+        }
+
+        /// <summary>VR モードの背景。既存の背景モード設定をそのまま使う。</summary>
+        private static void ApplyBackgroundModeToCamera(Camera camera)
+        {
+            switch (GetBackgroundMode())
+            {
+                case BACKGROUND_SKYBOX:
+                    camera.clearFlags = CameraClearFlags.Skybox;
+                    break;
+                default:
+                    camera.clearFlags = CameraClearFlags.SolidColor;
+                    var hex = _manifest?.SelectToken("arSettings.backgroundColor")?.ToString();
+                    camera.backgroundColor = ColorUtility.TryParseHtmlString(hex ?? "#000000", out var color)
+                        ? color
+                        : Color.black;
+                    break;
             }
         }
 
@@ -4400,9 +4487,126 @@ ScriptedImporter:
                 EnsureQuestXRLoaderConfigured();
             }
 
+            if (IsAndroidPhoneTargetDevice())
+            {
+                ApplyPhoneBuildSettings();
+            }
+
             ApplyDeviceScriptingDefines(BuildTargetGroup.Android, isXreal, isQuest);
 
             Debug.Log("[Arsist] Build settings applied");
+        }
+
+        /// <summary>
+        /// スマホ向けの Player 設定。
+        ///
+        /// 一番大事なのは XR ローダーを全部外すこと。テンプレートのプロジェクトに OpenXR が
+        /// 残っていると、XR ヘッドセットの無い端末で起動時に初期化を試みて、
+        /// 真っ黒な画面のまま止まる (あるいは落ちる)。
+        /// </summary>
+        private static void ApplyPhoneBuildSettings()
+        {
+            var phone = _manifest?.SelectToken("arSettings.phone") as JObject;
+            bool landscape = phone?["orientation"]?.ToString() != "portrait";
+            PlayerSettings.defaultInterfaceOrientation = landscape ? UIOrientation.LandscapeLeft : UIOrientation.Portrait;
+
+            // スマホは Quest ほど新しい OS を要求しないが、ビルド前検証 (ValidateBuildReadiness)
+            // が全 Android ターゲットに minSdk 29 以上を課しているので、それに合わせる。
+            // Android 10 以降なら、いまジャイロのある端末はほぼ全部入る。
+            if ((int)PlayerSettings.Android.minSdkVersion < 29)
+            {
+                PlayerSettings.Android.minSdkVersion = (AndroidSdkVersions)29;
+            }
+
+            // WebCamTexture を背景に貼るので、GLES3 を先に置く。Vulkan だけの端末に備えて残す。
+            PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
+            PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[]
+            {
+                UnityEngine.Rendering.GraphicsDeviceType.OpenGLES3,
+                UnityEngine.Rendering.GraphicsDeviceType.Vulkan,
+            });
+
+            DisableAndroidXRLoaders();
+            SetManifestOrientation(landscape);
+            Debug.Log($"[Arsist] Phone build settings applied (orientation={(landscape ? "landscape" : "portrait")}, no XR)");
+        }
+
+        /// <summary>
+        /// マニフェストの画面の向きを、ビルド設定に合わせて書き換える。
+        ///
+        /// アダプタのマニフェスト (Adapters/Android_Phone/AndroidManifest.xml) は向きを持っている。
+        /// 書き換えないと、Player 設定で縦を選んでもマニフェストの横が勝ち、縦持ちにならない。
+        /// </summary>
+        private static void SetManifestOrientation(bool landscape)
+        {
+            var manifestPath = Path.Combine(Application.dataPath, "Plugins", "Android", "AndroidManifest.xml");
+            if (!File.Exists(manifestPath))
+            {
+                Debug.LogWarning("[Arsist] Phone manifest not found; orientation follows Player settings only.");
+                return;
+            }
+
+            try
+            {
+                const string ns = "http://schemas.android.com/apk/res/android";
+                var doc = new System.Xml.XmlDocument();
+                doc.Load(manifestPath);
+
+                int changed = 0;
+                foreach (System.Xml.XmlElement activity in doc.GetElementsByTagName("activity"))
+                {
+                    // ランチャーから起動される Unity の Activity だけを触る。
+                    // 他のライブラリが足した Activity (権限ダイアログ等) の向きまで固定しないため。
+                    var name = activity.GetAttribute("name", ns);
+                    if (!name.Contains("UnityPlayer")) continue;
+
+                    activity.SetAttribute("screenOrientation", ns, landscape ? "landscape" : "portrait");
+                    changed++;
+                }
+
+                if (changed == 0)
+                {
+                    Debug.LogWarning("[Arsist] No Unity activity in the phone manifest; orientation not patched.");
+                    return;
+                }
+
+                doc.Save(manifestPath);
+                Debug.Log($"[Arsist] Phone manifest orientation set to {(landscape ? "landscape" : "portrait")}");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Could not patch the phone manifest orientation: {e.Message}");
+            }
+        }
+
+        /// <summary>Android の XR ローダーを全部外し、起動時に XR を初期化しないようにする。</summary>
+        private static void DisableAndroidXRLoaders()
+        {
+            var generalSettings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+            if (generalSettings == null) return;   // XR Management 自体が無いなら、そもそも初期化されない
+
+            generalSettings.InitManagerOnStart = false;
+            EditorUtility.SetDirty(generalSettings);
+
+            var manager = generalSettings.Manager;
+            if (manager == null) return;
+
+            foreach (var loader in manager.activeLoaders.Where(l => l != null).ToList())
+            {
+                RemoveXRLoaderByType(manager, loader.GetType().FullName);
+            }
+
+            EditorUtility.SetDirty(manager);
+            AssetDatabase.SaveAssets();
+
+            int left = manager.activeLoaders.Count(l => l != null);
+            if (left > 0)
+            {
+                // ローダーが残っても InitManagerOnStart=false なので自動では起動しない。
+                // ただしスクリプトから手で起動すれば XR を試みるので、警告だけ出しておく。
+                Debug.LogWarning($"[Arsist] {left} XR loader(s) could not be removed for the phone build; " +
+                                 "XR will not start automatically, but a script calling InitializeLoader would try.");
+            }
         }
 
         private static void ApplyDeviceScriptingDefines(BuildTargetGroup group, bool isXreal, bool isQuest)
@@ -5453,6 +5657,22 @@ ScriptedImporter:
         {
             var normalizedTarget = (_targetDevice ?? string.Empty).Trim().ToLowerInvariant();
             return normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta");
+        }
+
+        /// <summary>
+        /// ヘッドセットの無い普通の Android 端末か。
+        /// "phone" / "android_phone" などを受ける。Quest も Android だが、そちらは
+        /// IsQuestTargetDevice で先に拾われるので、ここでは quest/meta/xreal を含まないものだけ。
+        /// </summary>
+        private static bool IsAndroidPhoneTargetDevice()
+        {
+            var normalizedTarget = (_targetDevice ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalizedTarget.Contains("quest") || normalizedTarget.Contains("meta")
+                || normalizedTarget.Contains("xreal"))
+            {
+                return false;
+            }
+            return normalizedTarget.Contains("phone") || normalizedTarget.Contains("android");
         }
 
         /// <summary>ターゲットデバイスが XREAL 系かどうか（散在していた判定の共通化）。</summary>

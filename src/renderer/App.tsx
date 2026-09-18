@@ -22,9 +22,33 @@ declare global {
         save: (data: any) => Promise<any>;
         export: (options: any) => Promise<any>;
       };
+      vision: {
+        preview: (
+          pipeline: unknown,
+          image: { width: number; height: number; rgba: Uint8Array },
+        ) => Promise<{
+          ok: boolean;
+          error?: string;
+          gated?: boolean;
+          gateReason?: string;
+          unavailable?: string;
+          steps: {
+            name: string;
+            kind: string;
+            width?: number;
+            height?: number;
+            rgba?: Uint8Array;
+            record?: Record<string, unknown>;
+            items?: unknown[];
+            count?: number;
+            boundary?: number[];
+          }[];
+        }>;
+      };
       unity: {
         setPath: (path: string) => Promise<any>;
         getPath: () => Promise<string>;
+        detectGradle?: () => Promise<string | null>;
         build: (config: any) => Promise<any>;
         cancelBuild: () => Promise<{ success: boolean; error?: string }>;
         validate: () => Promise<any>;

@@ -556,7 +556,19 @@ namespace Arsist.Runtime.Perception
             var arf = new ArsistARFoundationCameraSource();
             if (arf.IsSupported) return arf;
 
+            // スマホ (Android_Phone) では ArsistDeviceCamera が背面カメラを開いているので、それを借りる。
+            // 以前はここ全体が #if UNITY_EDITOR || UNITY_STANDALONE の中にあり、Android では
+            // 候補から丸ごと消えていた。スマホで画像処理が一度も動かなかった原因。
+            //
+            // ヘッドセット (Quest / XREAL) では ArsistDeviceCamera を置かないので、ここには来ない。
+            // XREAL の Beam Pro が勝手に手元の端末のカメラを開く、ということは起きない。
+            if (Tracking.ArsistDeviceCamera.Instance != null)
+            {
+                return new ArsistWebcamCameraSource();
+            }
+
 #if UNITY_EDITOR || UNITY_STANDALONE
+            // エディタとデスクトップでは、手元のウェブカメラで確認できるようにしておく。
             var webcam = new ArsistWebcamCameraSource();
             if (webcam.IsSupported) return webcam;
 #endif

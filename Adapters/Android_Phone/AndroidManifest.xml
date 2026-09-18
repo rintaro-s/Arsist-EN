@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        普通の Android 端末 (スマホ・タブレット) 向け。
+
+        ヘッドセット用のアダプタと違い、VR 用の intent category や XR のメタデータは一切書かない。
+        書くとランチャーに出なかったり、Daydream/Cardboard の起動画面に吸い込まれたりする。
+
+        テーマ:
+        Unity 6 のエントリは GameActivity で、これは AppCompatActivity を継承している。
+        Theme.AppCompat 派生でないテーマを当てると、起動直後に
+          IllegalStateException: You need to use a Theme.AppCompat theme (or descendant)
+        で落ちる (Meta_Quest アダプタで実際に踏んだ)。activity には Unity 同梱の
+        BaseUnityGameActivityTheme を明示する。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 背面カメラの映像を背景にする (AR モード) / 画像処理タスク -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- 無い端末でもインストールはできるように required=false。無ければなぞって見回す -->
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic">
+
+        <activity
+            android:name="com.unity3d.player.UnityPlayerGameActivity"
+            android:theme="@style/BaseUnityGameActivityTheme"
+            android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|mnc|mcc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|touchscreen"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape">
+            <!-- ↑ 既定値。ビルド設定 (arSettings.phone.orientation) で縦を選ぶと、
+                 ArsistBuildPipeline.SetManifestOrientation が portrait に書き換える。 -->
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>

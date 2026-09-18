@@ -710,12 +710,25 @@ ipcMain.handle('project:export', async (_, options) => {
 });
 
 // Unity連携
+// 画像処理パイプラインのライブプレビュー。実機と同じ C# を呼ぶ。
+ipcMain.handle('vision:preview', async (_, payload) => {
+  const { runVisionPreview } = await import('./vision/VisionPreview');
+  return await runVisionPreview(payload.pipeline, payload.image);
+});
+
 ipcMain.handle('unity:set-path', async (_, unityPath: string) => {
   store.set('unityPath', unityPath);
   if (unityBuilder) {
     unityBuilder.setUnityPath(unityPath);
   }
   return { success: true };
+});
+
+// Android ビルドに使える Gradle。スマホ向けはこれさえあればビルドできる。
+ipcMain.handle('unity:detect-gradle', async () => {
+  const unityPath = (store.get('unityPath') as string | undefined) ?? '';
+  const builder = new UnityBuilder(unityPath);
+  return await builder.detectGradle();
 });
 
 ipcMain.handle('unity:get-path', async () => {

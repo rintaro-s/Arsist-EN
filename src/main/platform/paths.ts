@@ -173,3 +173,37 @@ function dedupe(items: string[]): string[] {
   }
   return out;
 }
+
+// ------------------------------------------------------------------
+// Gradle candidates for Android builds.
+//
+// Unity's Android build runs Gradle. Unity ships its own copy under
+// PlaybackEngines/AndroidPlayer/Tools/gradle, and that is what it prefers, so it
+// comes first. A system Gradle (GRADLE_HOME / PATH) is listed after it: Unity can
+// be pointed at it, and its presence tells the user the machine can build Android.
+//
+// Returned in priority order. Pure: existence is checked by the caller.
+// ------------------------------------------------------------------
+export function getGradleCandidates(ctx: PlatformContext, unityEditorPath: string | null): string[] {
+  const { platform, env } = ctx;
+  const out: string[] = [];
+  const exe = platform === 'win32' ? 'gradle.bat' : 'gradle';
+
+  if (unityEditorPath) {
+    // Windows / Linux: <Editor>/Data/PlaybackEngines/...  macOS: <Unity.app>/../PlaybackEngines/...
+    const editorDir = path.dirname(unityEditorPath);
+    out.push(path.join(editorDir, 'Data', 'PlaybackEngines', 'AndroidPlayer', 'Tools', 'gradle'));
+    if (platform === 'darwin') {
+      out.push(path.join(editorDir, '..', '..', '..', 'PlaybackEngines', 'AndroidPlayer', 'Tools', 'gradle'));
+    }
+  }
+
+  if (env.GRADLE_HOME) out.push(path.join(env.GRADLE_HOME, 'bin', exe));
+
+  const separator = platform === 'win32' ? ';' : ':';
+  for (const dir of (env.PATH || '').split(separator)) {
+    if (dir.trim()) out.push(path.join(dir.trim(), exe));
+  }
+
+  return dedupe(out);
+}

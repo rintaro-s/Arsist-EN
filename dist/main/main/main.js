@@ -723,12 +723,23 @@ electron_1.ipcMain.handle('project:export', async (_, options) => {
     return await projectManager.exportProject(options);
 });
 // Unity連携
+// 画像処理パイプラインのライブプレビュー。実機と同じ C# を呼ぶ。
+electron_1.ipcMain.handle('vision:preview', async (_, payload) => {
+    const { runVisionPreview } = await Promise.resolve().then(() => __importStar(require('./vision/VisionPreview')));
+    return await runVisionPreview(payload.pipeline, payload.image);
+});
 electron_1.ipcMain.handle('unity:set-path', async (_, unityPath) => {
     store.set('unityPath', unityPath);
     if (unityBuilder) {
         unityBuilder.setUnityPath(unityPath);
     }
     return { success: true };
+});
+// Android ビルドに使える Gradle。スマホ向けはこれさえあればビルドできる。
+electron_1.ipcMain.handle('unity:detect-gradle', async () => {
+    const unityPath = store.get('unityPath') ?? '';
+    const builder = new UnityBuilder_1.UnityBuilder(unityPath);
+    return await builder.detectGradle();
 });
 electron_1.ipcMain.handle('unity:get-path', async () => {
     return store.get('unityPath');

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   getConfigStorePath,
+  getGradleCandidates,
   getUnitySearchRoots,
   getUnityLicenseCandidates,
   getAndroidSdkDefault,
@@ -95,5 +96,41 @@ describe('isWaylandSession', () => {
   });
   it('false when nothing set', () => {
     expect(isWaylandSession({})).toBe(false);
+  });
+});
+
+describe('getGradleCandidates', () => {
+  const linux = { platform: 'linux' as const, homedir: '/home/u', env: { PATH: '/usr/bin:/opt/bin' } };
+
+  it('puts Unity\'s bundled Gradle first, since that is what the Android build uses', () => {
+    const candidates = getGradleCandidates(linux, '/home/u/Unity/Hub/Editor/6000.0.81f1/Editor/Unity');
+    expect(candidates[0]).toBe(
+      '/home/u/Unity/Hub/Editor/6000.0.81f1/Editor/Data/PlaybackEngines/AndroidPlayer/Tools/gradle',
+    );
+  });
+
+  it('falls back to GRADLE_HOME and then PATH', () => {
+    const ctx = { ...linux, env: { ...linux.env, GRADLE_HOME: '/usr/share/java/gradle' } };
+    const candidates = getGradleCandidates(ctx, null);
+    expect(candidates[0]).toBe('/usr/share/java/gradle/bin/gradle');
+    expect(candidates).toContain('/usr/bin/gradle');
+    expect(candidates).toContain('/opt/bin/gradle');
+  });
+
+  it('uses gradle.bat and ; separators on Windows', () => {
+    const windows = {
+      platform: 'win32' as const,
+      homedir: 'C:\\Users\\u',
+      env: { PATH: 'C:\\gradle\\bin;C:\\tools' },
+    };
+    const candidates = getGradleCandidates(windows, null);
+    expect(candidates.some((c) => c.endsWith('gradle.bat'))).toBe(true);
+    expect(candidates.some((c) => c.endsWith('/gradle') && !c.endsWith('.bat'))).toBe(false);
+  });
+
+  it('does not list the same place twice', () => {
+    const ctx = { ...linux, env: { PATH: '/usr/bin:/usr/bin' } };
+    const candidates = getGradleCandidates(ctx, null);
+    expect(candidates.filter((c) => c === '/usr/bin/gradle')).toHaveLength(1);
   });
 });

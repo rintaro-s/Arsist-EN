@@ -16,12 +16,15 @@
 
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using Arsist.Runtime.DataFlow;
 using Arsist.Runtime.Perception.Text;
 using Arsist.Runtime.Perception.Vision;
 using Arsist.Runtime.Perception.Overlay;
+using Arsist.Runtime.Perception.Pipeline;
 using Arsist.Runtime.Perception.Vision.Classic;
 using Arsist.Runtime.Scripting;
 using UnityEngine.UI;
@@ -55,27 +58,33 @@ namespace Arsist.Runtime.Perception
             public string EngineKind = "mlkit";
             public string Script = "japanese";
             public string MockText;
-            /// <summary>type == "analyze" のときの設定。</summary>
-            public ClassicAnalysisConfig Analysis;
-            /// <summary>空の塗り替え結果を出す Image 要素の bindingId ('image' 表示のとき)。</summary>
-            public string PreviewBindingId;
-            /// <summary>'world' = パススルーの上に直接重ねる。'image' = Canvas に出す。</summary>
-            public string Display = "world";
-            public double RepaintStrength = 1.0;
+            /// <summary>type == "vision" のときに流すパイプライン。</summary>
+            public VisionPipelineSpec Pipeline;
+            /// <summary>
+            /// テンプレート画像。Texture2D の読み込みはメインスレッドでしかできないので、
+            /// ワーカーに渡す前にここへ読んでおく (一度読めば使い回す)。
+            /// </summary>
+            public Dictionary<string, GrayImage> Templates;
 
-            /// <summary>色つきの静止画が要るか。古典的な処理は色を見る。</summary>
-            public bool NeedsColor => Type == "analyze";
+            /// <summary>色つきの静止画が要るか。画像処理は色を見る。</summary>
+            public bool NeedsColor => Type == "vision";
 
             public bool Running;
             public float NextRunTime;
             public TextResult LastResult;
-            public ClassicAnalysisResult LastAnalysis;
+            public VisionPipelineResult LastPipelineResult;
             public Texture2D PreviewTexture;
             public Sprite PreviewSprite;
             public Action EventHandler;
         }
 
         private readonly Dictionary<string, TaskDefinition> _tasks = new Dictionary<string, TaskDefinition>();
+
+        /// <summary>
+        /// ワーカーで終わった仕事の後始末 (テクスチャの更新、DataStore、イベント) を
+        /// メインスレッドで行うためのキュー。Unity の API はメインスレッドからしか触れない。
+        /// </summary>
+        private readonly ConcurrentQueue<Action> _mainThreadWork = new ConcurrentQueue<Action>();
         private readonly Dictionary<string, IArsistTextRecognizer> _recognizers =
             new Dictionary<string, IArsistTextRecognizer>();
         private bool _ready;
@@ -179,22 +188,19 @@ namespace Arsist.Runtime.Perception
                     task.TriggerValue = value.ToString();
                     if (task.TriggerType == "interval")
                     {
-                        // ミリ秒指定。連射すると発熱するので下限を設ける。
-                        task.IntervalSeconds = Mathf.Max(0.5f, value.Value<float>() / 1000f);
+                        // ミリ秒指定。下限は 0.1 秒。
+                        // 以前は 0.5 秒だったが、それは画像処理がメインスレッドで回っていた頃の
+                        // 発熱と引っかかり対策。今はワーカーで回し、前の回が終わるまで次は起動しない
+                        // (Running) ので、短くしても溜まらない。現実に重ねる用途では、
+                        // 0.5 秒の遅れは「首を振っても追いつかない」として見えてしまう。
+                        task.IntervalSeconds = Mathf.Max(0.1f, value.Value<float>() / 1000f);
                     }
                 }
             }
 
-            if (entry["analysis"] is JObject analysis)
+            if (entry["pipeline"] is JObject pipeline)
             {
-                task.Analysis = ParseAnalysis(analysis);
-                task.PreviewBindingId = analysis["previewBindingId"]?.ToString();
-                task.Display = analysis["display"]?.ToString() == "image" ? "image" : "world";
-                task.RepaintStrength = analysis["repaintStrength"]?.Value<double>() ?? 1.0;
-            }
-            else if (task.Type == "analyze")
-            {
-                task.Analysis = new ClassicAnalysisConfig();
+                task.Pipeline = ParsePipeline(pipeline);
             }
 
             if (entry["engine"] is JObject engine)
@@ -207,39 +213,82 @@ namespace Arsist.Runtime.Perception
             return task;
         }
 
-        /// <summary>解析タスクの設定を読む。範囲は省略可で、既定は ClassicAnalysisConfig 側に置く。</summary>
-        private static ClassicAnalysisConfig ParseAnalysis(JObject analysis)
+        /// <summary>
+        /// パイプラインを読む。中身の検証は VisionPipelineRunner.Validate に任せる
+        /// (ビルド時にも同じものが走るので、実機に来る前に大半は落ちている)。
+        /// </summary>
+        private static VisionPipelineSpec ParsePipeline(JObject json)
         {
-            var config = new ClassicAnalysisConfig();
+            var pipeline = new VisionPipelineSpec
+            {
+                Id = json["id"]?.ToString(),
+                Name = json["name"]?.ToString(),
+                MaxWidth = json["maxWidth"]?.Value<int>() ?? 480,
+            };
 
-            switch (analysis["kind"]?.ToString())
+            if (json["ops"] is JArray ops)
             {
-                case "blobs": config.Kind = ClassicAnalysisKind.Blobs; break;
-                case "shapes": config.Kind = ClassicAnalysisKind.Shapes; break;
-                case "sky": config.Kind = ClassicAnalysisKind.Sky; break;
-                default: config.Kind = ClassicAnalysisKind.Color; break;
+                foreach (JObject entry in ops)
+                {
+                    var op = new VisionOpSpec
+                    {
+                        Id = entry["id"]?.ToString(),
+                        Op = entry["op"]?.ToString(),
+                        Out = entry["out"]?.ToString(),
+                    };
+
+                    if (entry["in"] is JArray inputs)
+                    {
+                        var names = new List<string>();
+                        foreach (var name in inputs)
+                        {
+                            var text = name?.ToString();
+                            if (!string.IsNullOrEmpty(text)) names.Add(text);
+                        }
+                        op.In = names.ToArray();
+                    }
+
+                    if (entry["params"] is JObject parameters)
+                    {
+                        foreach (var property in parameters.Properties())
+                        {
+                            op.Params[property.Name] = ToPlain(property.Value);
+                        }
+                    }
+                    pipeline.Ops.Add(op);
+                }
             }
 
-            if (analysis["hue"] is JObject hue)
+            if (json["outputs"] is JArray outputs)
             {
-                config.HueMin = hue["min"]?.Value<int>() ?? config.HueMin;
-                config.HueMax = hue["max"]?.Value<int>() ?? config.HueMax;
-            }
-            if (analysis["saturation"] is JObject saturation)
-            {
-                config.SatMin = saturation["min"]?.Value<int>() ?? config.SatMin;
-                config.SatMax = saturation["max"]?.Value<int>() ?? config.SatMax;
-            }
-            if (analysis["value"] is JObject value)
-            {
-                config.ValMin = value["min"]?.Value<int>() ?? config.ValMin;
-                config.ValMax = value["max"]?.Value<int>() ?? config.ValMax;
+                foreach (JObject entry in outputs)
+                {
+                    pipeline.Outputs.Add(new VisionOutputSpec
+                    {
+                        Kind = entry["kind"]?.ToString() ?? "store",
+                        Value = entry["value"]?.ToString(),
+                        Alpha = entry["alpha"]?.ToString(),
+                        StoreAs = entry["storeAs"]?.ToString(),
+                        BindingId = entry["bindingId"]?.ToString(),
+                    });
+                }
             }
 
-            config.MinArea = analysis["minArea"]?.Value<int>() ?? config.MinArea;
-            config.MaxItems = analysis["maxItems"]?.Value<int>() ?? config.MaxItems;
-            config.MaxWidth = analysis["maxWidth"]?.Value<int>() ?? config.MaxWidth;
-            return config;
+            return pipeline;
+        }
+
+        /// <summary>JToken を素の値にする。op のパラメータは数・真偽・文字列しか取らない。</summary>
+        private static object ToPlain(JToken token)
+        {
+            if (token == null) return null;
+            switch (token.Type)
+            {
+                case JTokenType.Integer: return token.Value<long>();
+                case JTokenType.Float: return token.Value<double>();
+                case JTokenType.Boolean: return token.Value<bool>();
+                case JTokenType.Null: return null;
+                default: return token.ToString();
+            }
         }
 
         private void RegisterTrigger(TaskDefinition task)
@@ -266,6 +315,12 @@ namespace Arsist.Runtime.Perception
 
         private void Update()
         {
+            while (_mainThreadWork.TryDequeue(out var work))
+            {
+                try { work(); }
+                catch (Exception e) { Debug.LogError($"[Arsist] Perception completion failed: {e}"); }
+            }
+
             if (!_ready) return;
             foreach (var task in _tasks.Values)
             {
@@ -328,9 +383,9 @@ namespace Arsist.Runtime.Perception
                 return;
             }
 
-            if (task.Type == "analyze")
+            if (task.Type == "vision")
             {
-                RunAnalysis(task, still, callback);
+                RunPipeline(task, still, callback);
                 return;
             }
 
@@ -360,11 +415,18 @@ namespace Arsist.Runtime.Perception
         }
 
         /// <summary>
-        /// 古典的な画像処理を掛ける。OCR と違って端末側の実装に頼らないので、
-        /// 対応端末かどうかを気にせず動く。
+        /// パイプラインを流す。
+        ///
+        /// エンジンはここで「何を探しているか」を一切知らない。op を順に適用して、
+        /// 宣言された出力先に配るだけ。何が出来上がるかはプロジェクト側の組み方で決まる。
         /// </summary>
-        private void RunAnalysis(TaskDefinition task, in PerceptionStill still, Action<TextResult> callback)
+        private void RunPipeline(TaskDefinition task, in PerceptionStill still, Action<TextResult> callback)
         {
+            if (task.Pipeline == null)
+            {
+                Finish(task, TextResult.Failure("noPipeline"), callback);
+                return;
+            }
             if (still.Color == null)
             {
                 // 色の変換は要求されたフレームでしか行わない。撮り直せば次は入る。
@@ -378,62 +440,124 @@ namespace Arsist.Runtime.Perception
                 return;
             }
 
+            // パイプラインはワーカーで回す。
+            //
+            // 以前はここで同期的に回していて、1 回 100〜160ms (実機のログ) メインスレッドが止まり、
+            // 更新のたびに画面がカクついた。VisionPipelineRunner は UnityEngine に触れないように
+            // 作ってあるので、そのままスレッドに出せる。Unity に触る後始末だけメインに戻す。
+            var templates = EnsureTemplates(task);
+            var pipeline = task.Pipeline;
+            var capturedStill = still;   // in 引数はラムダに持ち込めないので写す
             var started = DateTime.UtcNow;
-            ClassicAnalysisResult analysis;
-            try
+
+            ThreadPool.QueueUserWorkItem(_ =>
             {
-                analysis = ClassicAnalyzer.Analyze(crop, task.Analysis);
+                VisionPipelineResult result = null;
+                Exception failure = null;
+                try
+                {
+                    result = VisionPipelineRunner.Run(pipeline, crop,
+                        name => name != null && templates.TryGetValue(name, out var t) ? t : null);
+                }
+                catch (Exception e)
+                {
+                    failure = e;
+                }
+
+                int elapsedMs = (int)(DateTime.UtcNow - started).TotalMilliseconds;
+                _mainThreadWork.Enqueue(() =>
+                    CompletePipeline(task, capturedStill, crop, cropX, cropY, result, failure, elapsedMs, callback));
+            });
+        }
+
+        /// <summary>ワーカーで回したパイプラインの後始末。メインスレッドで呼ばれる。</summary>
+        private void CompletePipeline(
+            TaskDefinition task, PerceptionStill still, ColorImage crop, int cropX, int cropY,
+            VisionPipelineResult result, Exception failure, int elapsedMs, Action<TextResult> callback)
+        {
+            if (failure != null)
+            {
+                Debug.LogError($"[Arsist] Pipeline '{task.Id}' threw: {failure}");
+                Finish(task, TextResult.Failure("pipelineFailed"), callback);
+                return;
             }
-            catch (Exception e)
+            if (result == null || !result.Ok)
             {
-                Debug.LogError($"[Arsist] Analysis '{task.Id}' threw: {e}");
-                Finish(task, TextResult.Failure("analysisFailed"), callback);
+                Finish(task, TextResult.Failure(result?.Error ?? "pipelineFailed"), callback);
                 return;
             }
 
-            int elapsedMs = (int)(DateTime.UtcNow - started).TotalMilliseconds;
-            if (!analysis.Ok)
-            {
-                Finish(task, TextResult.Failure(analysis.Error), callback);
-                return;
-            }
+            task.LastPipelineResult = result;
+            DrawOutputs(task, result, still, crop, cropX, cropY);
 
-            if (task.Display == "image")
-            {
-                ShowPreview(task, analysis);
-            }
-            else
-            {
-                ShowOverlay(task, analysis, still, crop, cropX, cropY);
-            }
-
-            // 数値は辞書で、要約は text で返す。UI からはどちらでも bind できる。
-            task.LastAnalysis = analysis;
-            var summary = Summarise(task, analysis);
-            var result = TextResult.Success(summary, elapsedMs);
-            Finish(task, result, callback);
+            // 門が閉じた（「見つからなかった」）のは失敗ではない。測った値は返す。
+            var summary = result.Gated ? $"gated: {result.GateReason}" : Summarise(result);
+            Finish(task, TextResult.Success(summary, elapsedMs), callback);
         }
 
         /// <summary>
-        /// 塗り替えた空を、パススルーで見えている空そのものの上に重ねる。
-        ///
-        /// 解析に渡した画は「静止画 → 矩形で切り出し → 縮小」と二段階で変形しているので、
-        /// 内部パラメータもそのぶん換算しないと、青空が空からずれた場所に貼り付く。
+        /// パイプラインが使うテンプレート画像を、メインスレッドで先に読んでおく。
+        /// ワーカーから Texture2D を触ると落ちるため。
         /// </summary>
-        private static void ShowOverlay(
-            TaskDefinition task, ClassicAnalysisResult analysis, in PerceptionStill still,
+        private static Dictionary<string, GrayImage> EnsureTemplates(TaskDefinition task)
+        {
+            if (task.Templates != null) return task.Templates;
+
+            var templates = new Dictionary<string, GrayImage>();
+            foreach (var op in task.Pipeline.Ops)
+            {
+                if (!string.Equals(op.Op, "templateMatch", StringComparison.OrdinalIgnoreCase)) continue;
+                var name = op.Text("template", null);
+                if (string.IsNullOrEmpty(name) || templates.ContainsKey(name)) continue;
+
+                var image = LoadTemplate(name);
+                if (image != null) templates[name] = image;
+            }
+            task.Templates = templates;
+            return templates;
+        }
+
+        /// <summary>パイプラインの出力を、宣言された先へ配る。</summary>
+        private static void DrawOutputs(
+            TaskDefinition task, VisionPipelineResult result, in PerceptionStill still,
             ColorImage crop, int cropX, int cropY)
         {
-            var overlay = ArsistSkyOverlay.Instance;
+            for (int i = 0; i < task.Pipeline.Outputs.Count; i++)
+            {
+                var output = task.Pipeline.Outputs[i];
+                result.PreparedRgba.TryGetValue(i, out var rgba);
+                if (output.Kind == "world")
+                {
+                    DrawInWorld(task, result, still, crop, cropX, cropY, output, rgba);
+                }
+                else if (output.Kind == "image")
+                {
+                    DrawInCanvas(task, result, output, rgba);
+                }
+                // "store" は SetStatus がまとめて DataStore に入れる。
+            }
+        }
+
+        /// <summary>
+        /// 加工した画を、パススルーで見えているものの上に重ねる。
+        ///
+        /// パイプラインに渡した画は「静止画 → 矩形で切り出し → 縮小」と二段階で
+        /// 変形しているので、内部パラメータもそのぶん換算しないと現実からずれる。
+        /// </summary>
+        private static void DrawInWorld(
+            TaskDefinition task, VisionPipelineResult result, in PerceptionStill still,
+            ColorImage crop, int cropX, int cropY, VisionOutputSpec output, byte[] preparedRgba)
+        {
+            var overlay = ArsistWorldOverlay.Instance;
             if (overlay == null)
             {
-                Debug.LogWarning($"[Arsist] No ArsistSkyOverlay in the scene; task '{task.Id}' has nothing to draw into.");
+                Debug.LogWarning($"[Arsist] No ArsistWorldOverlay in the scene; task '{task.Id}' has nothing to draw into.");
                 return;
             }
 
-            if (analysis.Sky == null || analysis.Processed == null || !analysis.Sky.Found)
+            if (result.Gated || !result.Named.TryGetValue(output.Value, out var painted) || painted.Color == null)
             {
-                // 空が見つからないときに前の絵を残すと、明後日の方向に青が貼り付いたままになる。
+                // 何も見つからなかったのに前の絵を残すと、明後日の方向に貼り付いたままになる。
                 overlay.Hide();
                 return;
             }
@@ -442,45 +566,68 @@ namespace Arsist.Runtime.Perception
             {
                 // 領域ソースは正対化で幾何が変わるので、そのままでは現実に戻せない。
                 Debug.LogWarning($"[Arsist] Task '{task.Id}' draws into the world but its source is a region; " +
-                                 "use a viewport source for world overlays.");
+                                 "use a viewport source for world output.");
                 overlay.Hide();
                 return;
             }
 
-            double scale = (double)analysis.Processed.Width / Math.Max(1, crop.Width);
+            MaskImage alpha = null;
+            if (!string.IsNullOrEmpty(output.Alpha)
+                && result.Named.TryGetValue(output.Alpha, out var alphaValue))
+            {
+                alpha = alphaValue.Mask;
+            }
+
+            double scale = (double)painted.Color.Width / Math.Max(1, crop.Width);
             var intrinsics = ViewportMapping.ForCrop(still.Intrinsics, cropX, cropY, scale);
 
-            var painted = SkySegmenter.Repaint(analysis.Processed, analysis.Sky, task.RepaintStrength);
-            overlay.Show(painted, analysis.Sky.Mask, intrinsics, still.CameraPose);
+            // ワーカーで作り済みならそれを使う (メインスレッドは転送だけ)。
+            if (preparedRgba != null)
+            {
+                overlay.ShowRgba(preparedRgba, painted.Color.Width, painted.Color.Height, intrinsics, still.CameraPose);
+            }
+            else
+            {
+                overlay.Show(painted.Color, alpha, intrinsics, still.CameraPose);
+            }
         }
 
-        /// <summary>空の塗り替え結果を Image 要素に出す（確認用）。</summary>
-        private static void ShowPreview(TaskDefinition task, ClassicAnalysisResult analysis)
+        /// <summary>加工した画を Canvas の Image 要素に出す（確認用）。</summary>
+        private static void DrawInCanvas(
+            TaskDefinition task, VisionPipelineResult result, VisionOutputSpec output, byte[] preparedRgba)
         {
-            if (string.IsNullOrEmpty(task.PreviewBindingId)) return;
-            if (analysis.Sky == null || analysis.Processed == null) return;
+            if (string.IsNullOrEmpty(output.BindingId)) return;
+            if (!result.Named.TryGetValue(output.Value, out var value) || value.Color == null) return;
 
-            var target = UiBindingLookup.Find(task.PreviewBindingId);
+            var target = UiBindingLookup.Find(output.BindingId);
             if (target == null)
             {
-                Debug.LogWarning($"[Arsist] Preview target '{task.PreviewBindingId}' not found for task '{task.Id}'");
+                Debug.LogWarning($"[Arsist] Preview target '{output.BindingId}' not found for task '{task.Id}'");
                 return;
             }
 
-            var painted = SkySegmenter.Repaint(analysis.Processed, analysis.Sky, task.RepaintStrength);
+            MaskImage alpha = null;
+            if (!string.IsNullOrEmpty(output.Alpha)
+                && result.Named.TryGetValue(output.Alpha, out var alphaValue))
+            {
+                alpha = alphaValue.Mask;
+            }
 
-            // 毎回 Texture2D を作ると溜まるので、大きさが同じなら使い回す。
+            var rgba = preparedRgba ?? Composite.ToRgba(value.Color, alpha, 3);
+            if (rgba == null) return;
+
             var raw = target.GetComponent<RawImage>();
             var image = raw == null ? target.GetComponent<Image>() : null;
 
+            // 毎回 Texture2D を作ると溜まるので、大きさが同じなら使い回す。
             var texture = task.PreviewTexture;
-            if (texture == null || texture.width != painted.Width || texture.height != painted.Height)
+            if (texture == null || texture.width != value.Color.Width || texture.height != value.Color.Height)
             {
                 if (texture != null) Destroy(texture);
-                texture = new Texture2D(painted.Width, painted.Height, TextureFormat.RGBA32, false);
+                texture = new Texture2D(value.Color.Width, value.Color.Height, TextureFormat.RGBA32, false);
                 task.PreviewTexture = texture;
             }
-            ColorImageUnity.WriteTo(painted, texture);
+            texture.LoadRawTextureData(rgba);
             texture.Apply(false);
 
             if (raw != null)
@@ -490,8 +637,6 @@ namespace Arsist.Runtime.Perception
             }
             else if (image != null)
             {
-                // Image は Sprite しか受けない。Sprite も作り直しになるが、
-                // 表示は毎フレームではないので実害はない。
                 if (task.PreviewSprite != null) Destroy(task.PreviewSprite);
                 task.PreviewSprite = Sprite.Create(
                     texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
@@ -500,25 +645,59 @@ namespace Arsist.Runtime.Perception
             }
             else
             {
-                Debug.LogWarning($"[Arsist] '{task.PreviewBindingId}' has no Image/RawImage to draw into");
+                Debug.LogWarning($"[Arsist] '{output.BindingId}' has no Image/RawImage to draw into");
             }
         }
 
         /// <summary>ログと text バインドのための一行要約。</summary>
-        private static string Summarise(TaskDefinition task, ClassicAnalysisResult analysis)
+        private static string Summarise(VisionPipelineResult result)
         {
-            switch (task.Analysis.Kind)
+            if (result.Values.Count == 0) return "ok";
+
+            var parts = new List<string>();
+            foreach (var pair in result.Values)
             {
-                case ClassicAnalysisKind.Color:
-                    return $"{analysis.Values["name"]} {analysis.Values["hex"]}";
-                case ClassicAnalysisKind.Blobs:
-                    return $"{analysis.Values["count"]} blob(s)";
-                case ClassicAnalysisKind.Shapes:
-                    return $"{analysis.Values["count"]} shape(s)";
-                case ClassicAnalysisKind.Sky:
-                    return $"{analysis.Values["condition"]} ({analysis.Values["coverage"]})";
-                default:
-                    return string.Empty;
+                if (pair.Value is Dictionary<string, object> record)
+                {
+                    // よく見る値をひとつだけ拾う。全部出すとログが読めなくなる。
+                    foreach (var key in new[] { "name", "count", "coverage", "found", "pass" })
+                    {
+                        if (record.TryGetValue(key, out var value))
+                        {
+                            parts.Add($"{pair.Key}.{key}={value}");
+                            break;
+                        }
+                    }
+                }
+                else if (pair.Value is List<object> items)
+                {
+                    parts.Add($"{pair.Key}={items.Count}");
+                }
+            }
+            return parts.Count > 0 ? string.Join(" ", parts) : "ok";
+        }
+
+        /// <summary>テンプレート画像を StreamingAssets から読む。</summary>
+        private static GrayImage LoadTemplate(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+
+            // 参照画像と同じ置き場 (ArsistBuildPipeline.CopyPerceptionAssetsToStreamingAssets)。
+            var path = Path.Combine(Application.streamingAssetsPath, "Perception", name);
+            try
+            {
+                if (!File.Exists(path)) return null;
+                var bytes = File.ReadAllBytes(path);
+                var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!texture.LoadImage(bytes)) return null;
+                var gray = GrayImageUnity.FromColor32(texture.GetPixels32(), texture.width, texture.height);
+                Destroy(texture);
+                return gray;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Could not load template '{name}': {e.Message}");
+                return null;
             }
         }
 
@@ -662,9 +841,9 @@ namespace Arsist.Runtime.Perception
         {
             task.Running = false;
             task.LastResult = result;
-            if (!result.Ok) task.LastAnalysis = null;
+            if (!result.Ok) task.LastPipelineResult = null;
 
-            SetStatus(task, result.Ok ? "ok" : "error", result, task.LastAnalysis);
+            SetStatus(task, result.Ok ? "ok" : "error", result, task.LastPipelineResult);
 
             ArsistScriptEvent.Fire(
                 result.Ok ? $"perception.task.done:{task.Id}" : $"perception.task.failed:{task.Id}",
@@ -689,7 +868,7 @@ namespace Arsist.Runtime.Perception
         /// </summary>
         private static void SetStatus(
             TaskDefinition task, string status, TextResult result,
-            ClassicAnalysisResult analysis = null)
+            VisionPipelineResult pipeline = null)
         {
             var payload = new Dictionary<string, object>
             {
@@ -701,11 +880,14 @@ namespace Arsist.Runtime.Perception
                 ["at"] = DateTime.UtcNow.ToString("o"),
             };
 
-            // 解析結果は同じ辞書に並べて入れる。<storeAs>.coverage のように
+            // パイプラインの出力は同じ辞書に並べて入れる。<storeAs>.<key> のように
             // status/text と同じ書き方で bind できるようにするため。
-            if (analysis != null && analysis.Ok && status == "ok")
+            if (pipeline != null && pipeline.Ok && status == "ok")
             {
-                foreach (var pair in analysis.Values)
+                payload["gated"] = pipeline.Gated;
+                if (pipeline.Gated) payload["gateReason"] = pipeline.GateReason;
+
+                foreach (var pair in pipeline.Values)
                 {
                     if (payload.ContainsKey(pair.Key)) continue;
                     payload[pair.Key] = pair.Value;

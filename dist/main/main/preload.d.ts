@@ -5,9 +5,19 @@ declare const electronAPI: {
         save: (data: any) => Promise<any>;
         export: (options: any) => Promise<any>;
     };
+    vision: {
+        /** パイプラインを1枚の画像に流し、各ステップの結果を返す */
+        preview: (pipeline: unknown, image: {
+            width: number;
+            height: number;
+            rgba: Uint8Array;
+        }) => Promise<any>;
+    };
     unity: {
         setPath: (unityPath: string) => Promise<any>;
         getPath: () => Promise<any>;
+        /** Android ビルドに使える Gradle のパス。無ければ null */
+        detectGradle: () => Promise<any>;
         build: (config: any) => Promise<any>;
         cancelBuild: () => Promise<any>;
         validate: () => Promise<any>;

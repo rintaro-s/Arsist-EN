@@ -1,19 +1,22 @@
 // ==============================================
 // Arsist Engine - Perception / Overlay
-// 現実の空の上に、直接それを描く
+// 加工した画を、現実の上に直接描く
 //
-// AR なので Canvas に小さく映しても意味がない。パススルーで見えている空そのものが
-// 青くならないといけない。
+// AR なので Canvas に小さく映しても意味がない。パススルーで見えているもの自体が
+// 変わらないといけない。
 //
 // やり方:
-//   1. パススルーカメラの静止画から空を抽出し、青く塗り替える
-//   2. 空でない画素を透明にした RGBA テクスチャを作る
+//   1. パイプラインが出した色の画とマスクを受け取る
+//   2. マスクの外を透明にした RGBA テクスチャを作る
 //   3. 撮影時のカメラ姿勢と内部パラメータから、その画がちょうど収まる板を
 //      遠くにワールド固定で置き、テクスチャを貼る
 //
-// 空は十分遠いので、頭を動かしても視差はほぼ出ない。板をワールドに固定しておけば、
-// 次に撮り直すまでの間、首を振っても空に貼り付いたままになる。
-// 建物や木はマスクで透明になっているので、そのまま透けて見える。
+// 「空を青くする」に限らない。壁の色を変える、看板を差し替える、
+// 見つけた領域を光らせる — マスクと色の画を渡せば何でも同じように乗る。
+//
+// 遠くにワールド固定するので、対象が十分遠ければ頭を振っても貼り付いたままになる。
+// 近くのものに使うと視差でずれる: そのときは板ではなく、姿勢推定した
+// 3D オブジェクト (ImageAnchor) を使うのが筋。
 // ==============================================
 
 using Arsist.Runtime.Perception.Vision;
@@ -23,12 +26,12 @@ using UnityEngine;
 namespace Arsist.Runtime.Perception.Overlay
 {
     [UnityEngine.Scripting.Preserve]
-    public sealed class ArsistSkyOverlay : MonoBehaviour
+    public sealed class ArsistWorldOverlay : MonoBehaviour
     {
-        public static ArsistSkyOverlay Instance { get; private set; }
+        public static ArsistWorldOverlay Instance { get; private set; }
 
         /// <summary>
-        /// 板を置く距離 (m)。空は事実上無限遠なので、頭の移動による視差が
+        /// 板を置く距離 (m)。遠いものに重ねる前提なので、頭の移動による視差が
         /// 気にならない程度に遠ければよい。遠くしすぎるとカメラの far clip に当たる。
         /// </summary>
         private const float PlaneDistance = 60f;
@@ -56,11 +59,11 @@ namespace Arsist.Runtime.Perception.Overlay
 
         private void BuildPlane()
         {
-            var go = new GameObject("SkyPlane");
+            var go = new GameObject("OverlayPlane");
             go.transform.SetParent(transform, false);
             _plane = go.transform;
 
-            _mesh = new Mesh { name = "ArsistSkyPlane" };
+            _mesh = new Mesh { name = "ArsistOverlayPlane" };
             _filter = go.AddComponent<MeshFilter>();
             _filter.sharedMesh = _mesh;
 
@@ -75,10 +78,10 @@ namespace Arsist.Runtime.Perception.Overlay
             var shader = Shader.Find("Unlit/Transparent");
             if (shader == null)
             {
-                Debug.LogError("[Arsist] Unlit/Transparent not found; the sky overlay will not draw.");
+                Debug.LogError("[Arsist] Unlit/Transparent not found; the world overlay will not draw.");
                 return;
             }
-            _material = new Material(shader) { name = "ArsistSkyOverlay" };
+            _material = new Material(shader) { name = "ArsistWorldOverlay" };
             _renderer.sharedMaterial = _material;
 
             Hide();
@@ -90,22 +93,34 @@ namespace Arsist.Runtime.Perception.Overlay
         }
 
         /// <summary>
-        /// 空を現実に重ねる。
+        /// 加工した画を現実に重ねる。
         /// </summary>
-        /// <param name="painted">塗り替え済みの画 (解析に使ったのと同じ大きさ)。</param>
-        /// <param name="mask">空のマスク。painted と同じ大きさ。</param>
+        /// <param name="painted">パイプラインが出した色の画。</param>
+        /// <param name="mask">描く範囲。null なら全面。painted と同じ大きさであること。</param>
         /// <param name="intrinsics">painted の画素系に換算済みの内部パラメータ。</param>
         /// <param name="cameraPose">撮影した瞬間のカメラのワールド姿勢。</param>
         public void Show(ColorImage painted, MaskImage mask, CameraIntrinsics intrinsics, Pose cameraPose)
         {
             if (_renderer == null || _material == null) return;
-            if (painted == null || mask == null) { Hide(); return; }
+            if (painted == null) { Hide(); return; }
 
-            var rgba = SkySegmenter.Compose(painted, mask, FeatherPasses);
+            var rgba = Composite.ToRgba(painted, mask, FeatherPasses);
             if (rgba == null) { Hide(); return; }
 
-            UploadTexture(rgba, painted.Width, painted.Height);
-            ShapePlane(intrinsics, painted.Width, painted.Height);
+            ShowRgba(rgba, painted.Width, painted.Height, intrinsics, cameraPose);
+        }
+
+        /// <summary>
+        /// 作り済みの RGBA (アルファ付き) を現実に重ねる。
+        /// 画像処理のワーカーで RGBA まで作っておけば、メインスレッドはテクスチャの転送だけで済む。
+        /// </summary>
+        public void ShowRgba(byte[] rgba, int width, int height, CameraIntrinsics intrinsics, Pose cameraPose)
+        {
+            if (_renderer == null || _material == null) return;
+            if (rgba == null || rgba.Length != width * height * 4) { Hide(); return; }
+
+            UploadTexture(rgba, width, height);
+            ShapePlane(intrinsics, width, height);
 
             // 撮った瞬間の姿勢でワールドに固定する。今のカメラ姿勢を使うと、
             // 解析している間に首を振ったぶんだけ空からずれる。

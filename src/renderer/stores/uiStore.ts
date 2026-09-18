@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 
-export type ViewType = 'scene' | 'ui' | 'dataflow' | 'script';
+export type ViewType = 'scene' | 'ui' | 'dataflow' | 'script' | 'vision';
 
 /**
  * アプリ全体のモード。

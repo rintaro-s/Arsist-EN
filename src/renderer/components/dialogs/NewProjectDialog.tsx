@@ -40,6 +40,7 @@ const templates: TemplateOption[] = [
 const devices = [
   { id: 'XREAL_One', name: 'XREAL One', available: true },
   { id: 'Meta_Quest', name: 'Meta Quest', available: true },
+  { id: 'Android_Phone', name: 'Android スマホ', available: true },
   { id: 'XREAL_Air2', name: 'XREAL Air 2', available: false },
   { id: 'Rokid_Max', name: 'Rokid Max', available: false },
   { id: 'VITURE_One', name: 'VITURE One', available: false },
@@ -259,7 +260,9 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
                 <p className="text-xs text-arsist-muted">
                   {selectedDevice === 'Meta_Quest'
                     ? t('newProject.sdkInfoQuest')
-                    : t('newProject.sdkInfoXreal')}
+                    : selectedDevice === 'Android_Phone'
+                      ? t('newProject.sdkInfoPhone')
+                      : t('newProject.sdkInfoXreal')}
                 </p>
               </div>
             </div>

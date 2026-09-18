@@ -1925,6 +1925,26 @@ class UnityBuilder extends events_1.EventEmitter {
      * 優先順位: ANDROID_HOME → ANDROID_SDK_ROOT → %LOCALAPPDATA%\Android\Sdk
      */
     /**
+     * Android ビルドに使える Gradle を探す。
+     *
+     * Unity は同梱の Gradle (PlaybackEngines/AndroidPlayer/Tools/gradle) を優先して使う。
+     * 無ければシステムの Gradle (GRADLE_HOME / PATH) も候補にする。どれも無ければ null。
+     * 候補の並びは src/main/platform/paths.ts の getGradleCandidates が決める。
+     */
+    async detectGradle() {
+        const candidates = (0, paths_1.getGradleCandidates)((0, paths_1.liveContext)(os.homedir()), this.unityPath || null);
+        for (const candidate of candidates) {
+            try {
+                if (await fs.pathExists(candidate))
+                    return candidate;
+            }
+            catch {
+                // 読めない場所は飛ばす
+            }
+        }
+        return null;
+    }
+    /**
      * targetSdkVersion に対応する platforms/android-N が SDK に入っているか先に見る。
      *
      * 入っていないと Gradle が「licences have not been accepted」で落ちるが、
@@ -2235,6 +2255,20 @@ class UnityBuilder extends events_1.EventEmitter {
         }
         else {
             this.emit('log', '[Arsist] WARNING: Android SDK not detected. Set ANDROID_HOME or install Android Studio.');
+        }
+        if (config.buildTarget === 'Android') {
+            const gradle = await this.detectGradle();
+            if (gradle) {
+                this.emit('log', `[Arsist] Gradle detected: ${gradle}`);
+            }
+            else {
+                // Gradle が無ければ Android の APK は絶対に作れない。IL2CPP を何分も回した末に
+                // Gradle の段で落ちるより、ここで理由を言って止める方がいい。
+                const message = '[Arsist] Gradle not found. Android builds need Unity\'s Android Build Support ' +
+                    '(which bundles Gradle) or a system Gradle on PATH / GRADLE_HOME.';
+                this.emit('log', message);
+                return { success: false, error: message };
+            }
         }
         return new Promise((resolve) => {
             const timeoutMinutes = config.buildTimeoutMinutes ?? 60;

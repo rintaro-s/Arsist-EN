@@ -177,48 +177,50 @@ describe('generateUnityManifest — a project with tasks but no image targets', 
   });
 });
 
-describe('generateUnityManifest — 古典的な画像処理タスク', () => {
-  // analyze は端末内で完結するので、OCR と違って ML Kit も追跡対象も要らない。
-  // ここを落とすと、エディタで設定できるのに APK では何も起きない、という
-  // 一番気付きにくい壊れ方をする。
-  const skyTask = {
+describe('generateUnityManifest — 画像処理パイプライン', () => {
+  // エンジンは op の並べ方を知らない。ブリッジはパイプラインを素通しにするだけで、
+  // 「空」のような個別の意味を足してはいけない。
+  const pipeline = {
+    id: 'sky',
+    name: 'Blue sky',
+    maxWidth: 640,
+    ops: [
+      { id: 'gray', op: 'grayscale' as const, out: 'gray', in: ['source'], params: {} },
+      { id: 'paint', op: 'recolor' as const, out: 'painted', in: ['source', 'gray'], params: {} },
+    ],
+    outputs: [{ kind: 'world' as const, value: 'painted' }],
+  };
+  const visionTask = {
     id: 'sky',
     name: 'Look at the sky',
-    type: 'analyze' as const,
-    source: { kind: 'viewport' as const, rect: { x: 0, y: 0.35, width: 1, height: 0.65 } },
+    type: 'vision' as const,
+    source: { kind: 'viewport' as const, rect: { x: 0, y: 0.3, width: 1, height: 0.7 } },
     trigger: { type: 'interval' as const, value: 2000 },
     storeAs: 'sky',
-    analysis: { kind: 'sky' as const, previewBindingId: 'skyView', repaintStrength: 1 },
+    pipeline,
   };
 
-  it('carries the analysis config through', () => {
-    const manifest = generateUnityManifest(project({ targets: [], tasks: [skyTask] })) as any;
+  it('passes the pipeline through untouched', () => {
+    const manifest = generateUnityManifest(project({ targets: [], tasks: [visionTask] })) as any;
     expect(manifest.perception.tasks).toHaveLength(1);
-    expect(manifest.perception.tasks[0].analysis).toEqual({
-      kind: 'sky',
-      // 既定は現実に重ねる。AR なので Canvas に映すのは確認用の方。
-      display: 'world',
-      previewBindingId: 'skyView',
-      repaintStrength: 1,
-    });
+    expect(manifest.perception.tasks[0].pipeline).toEqual(pipeline);
   });
 
-  it('defaults an analyze task with no config to the dominant colour', () => {
-    const { analysis, ...withoutAnalysis } = skyTask;
-    const manifest = generateUnityManifest(project({ targets: [], tasks: [withoutAnalysis] })) as any;
-    // display は空の塗り替え先なので、他の kind には付けない。
-    expect(manifest.perception.tasks[0].analysis).toEqual({ kind: 'color' });
+  it('drops a vision task with no steps, which could never do anything', () => {
+    const empty = { ...visionTask, pipeline: { ...pipeline, ops: [] } };
+    const manifest = generateUnityManifest(project({ targets: [], tasks: [empty] })) as any;
+    expect(manifest.perception.tasks).toEqual([]);
   });
 
-  it('keeps an explicit display choice', () => {
-    const inCanvas = { ...skyTask, analysis: { ...skyTask.analysis, display: 'image' as const } };
-    const manifest = generateUnityManifest(project({ targets: [], tasks: [inCanvas] })) as any;
-    expect(manifest.perception.tasks[0].analysis.display).toBe('image');
+  it('drops a vision task with no pipeline at all', () => {
+    const { pipeline: _unused, ...withoutPipeline } = visionTask;
+    const manifest = generateUnityManifest(project({ targets: [], tasks: [withoutPipeline] })) as any;
+    expect(manifest.perception.tasks).toEqual([]);
   });
 
-  it('leaves analysis off for OCR tasks so the runtime does not branch on it', () => {
-    const ocr = { ...skyTask, id: 'ocr', type: 'ocr' as const };
+  it('leaves pipeline off for OCR tasks so the runtime does not branch on it', () => {
+    const ocr = { ...visionTask, id: 'ocr', type: 'ocr' as const };
     const manifest = generateUnityManifest(project({ targets: [], tasks: [ocr] })) as any;
-    expect(manifest.perception.tasks[0].analysis).toBeUndefined();
+    expect(manifest.perception.tasks[0].pipeline).toBeUndefined();
   });
 });
