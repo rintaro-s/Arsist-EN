@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 
-export type ViewType = 'scene' | 'ui' | 'dataflow' | 'script' | 'vision';
+export type ViewType = 'scene' | 'ui' | 'dataflow' | 'script' | 'vision' | 'models';
 
 /**
  * アプリ全体のモード。
@@ -26,6 +26,13 @@ interface UIState {
 
   currentView: ViewType;
   setCurrentView: (view: ViewType) => void;
+  /**
+   * 画像処理タブを出すか。既定は false。
+   * 汎用の画像処理だけでアプリを組むのは難しく、普段は邪魔になるので設定で出す。
+   * プロジェクトの画像処理タスクは、タブを出していなくてもそのままビルドされる。
+   */
+  showVisionTab: boolean;
+  setShowVisionTab: (show: boolean) => void;
 
   // Dialogs
   showNewProjectDialog: boolean;
@@ -94,6 +101,12 @@ export const useUIStore = create<UIState>((set) => ({
 
   currentView: 'scene',
   setCurrentView: (view) => set({ currentView: view === 'dataflow' ? 'ui' : view }),
+  showVisionTab: false,
+  setShowVisionTab: (showVisionTab) => set((state) => ({
+    showVisionTab,
+    // 隠すときに画像処理を開いていたら、モデルタブに移す
+    currentView: !showVisionTab && state.currentView === 'vision' ? 'models' : state.currentView,
+  })),
 
   showNewProjectDialog: false,
   showBuildDialog: false,

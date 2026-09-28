@@ -230,6 +230,23 @@ export function UIEditor() {
             padding: { top: 6, right: 10, bottom: 6, left: 10 },
           },
         },
+        Keyboard: {
+          // アプリの中に出すキーボード。押せる大きさが要るので、置いた時点で広めに取る。
+          content: '1234567890|qwertyuiop|asdfghjkl|zxcvbnm',
+          bindingId: 'keyboard',
+          bind: { key: 'input.text' },
+          style: {
+            position: 'absolute',
+            top: 100,
+            left: 100,
+            width: 640,
+            height: 220,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            color: '#ffffff',
+            fontSize: 14,
+            borderRadius: 12,
+          },
+        },
         Slider: {
           style: {
             position: 'absolute',

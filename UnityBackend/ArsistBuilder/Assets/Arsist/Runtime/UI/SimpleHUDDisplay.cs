@@ -103,8 +103,8 @@ namespace Arsist.Runtime.UI
             canvasGO.layer = camera.gameObject.layer;
 
             // Create background panel
-            var panelGO = new GameObject("Panel");
-            panelGO.transform.SetParent(canvasGO.transform, false);
+            // レイヤーは親から継がれない。合わせないとカメラの描画対象から外れる (ArsistUiLayers を参照)。
+            var panelGO = ArsistUiLayers.CreateChild("Panel", canvasGO.transform);
             var panelImage = panelGO.AddComponent<Image>();
             panelImage.color = new Color(0.1f, 0.1f, 0.1f, 0.8f);
             var panelRect = panelGO.GetComponent<RectTransform>();
@@ -114,8 +114,7 @@ namespace Arsist.Runtime.UI
             panelRect.offsetMax = Vector2.zero;
 
             // Create text
-            var textGO = new GameObject("HUDText");
-            textGO.transform.SetParent(panelGO.transform, false);
+            var textGO = ArsistUiLayers.CreateChild("HUDText", panelGO.transform);
             var text = textGO.AddComponent<Text>();
             text.text = "Arsist AR Engine\n\nCanvas Initialized\nText Rendering\nReady for Content";
             

@@ -23,7 +23,16 @@ import type {
   PerceptionTarget,
   PerceptionRegion,
   PerceptionTask,
+  ModelDefinition,
 } from '../../shared/types';
+
+/** 古い版の IR を開いたときの提案 (main の PendingUpgrade と同じ形)。 */
+export interface IrUpgradeOffer {
+  from: number;
+  to: number;
+  applied: string[];
+  changes: string[];
+}
 
 /** Surface a project error to the console panel instead of failing silently. */
 function notifyProjectError(action: string, detail?: string) {
@@ -46,6 +55,15 @@ interface ProjectState {
   project: ArsistProject | null;
   projectPath: string | null;
   isDirty: boolean;
+  /**
+   * 古い版の IR を、アップグレードを承諾しないまま開いている。
+   * 編集はできるが保存は断られる (Unity と同じく、承諾するまでファイルを書き換えない)。
+   */
+  readOnly: boolean;
+  /** 開いたときのアップグレードの提案。読み取り専用の間は持ち続ける */
+  irUpgrade: IrUpgradeOffer | null;
+  /** 提案のダイアログを出しているか。見送っても、保存しようとしたらもう一度出る */
+  showIrUpgrade: boolean;
 
   // Scene
   currentSceneId: string | null;
@@ -72,6 +90,15 @@ interface ProjectState {
   loadProject: (path: string) => Promise<void>;
   saveProject: () => Promise<void>;
   closeProject: () => void;
+  /** 提案されたアップグレードを承諾して書き戻す (元のファイルは Backups/ に残る) */
+  upgradeProject: () => Promise<boolean>;
+  /** 提案を見送り、読み取り専用のまま開いておく */
+  declineUpgrade: () => void;
+
+  // --- Models (ONNX) ---
+  addModel: (model: ModelDefinition) => void;
+  updateModel: (id: string, updates: Partial<ModelDefinition>) => void;
+  removeModel: (id: string) => void;
 
   // --- Scene ---
   addScene: (name: string) => void;
@@ -151,6 +178,9 @@ export const useProjectStore = create<ProjectState>()(
     project: null,
     projectPath: null,
     isDirty: false,
+    readOnly: false,
+    irUpgrade: null,
+    showIrUpgrade: false,
     currentSceneId: null,
     selectedObjectIds: [],
     selectedPerceptionTargetId: null,
@@ -198,12 +228,20 @@ export const useProjectStore = create<ProjectState>()(
             s.project = result.project;
             s.projectPath = path;
             s.isDirty = false;
+            s.readOnly = Boolean(result.upgrade);
+            s.irUpgrade = result.upgrade ?? null;
+            s.showIrUpgrade = Boolean(result.upgrade);
             s.currentSceneId = result.project.scenes[0]?.id ?? null;
             s.currentUILayoutId = result.project.uiLayouts[0]?.id ?? null;
             s.selectedDataSourceId = null;
             s.selectedTransformId = null;
             s.currentScriptId = result.project.scripts?.[0]?.id ?? null;
           });
+        } else if (result.error === 'irTooNew') {
+          notifyProjectError(
+            'This project was saved by a newer Arsist',
+            `project irVersion ${result.irVersion?.found} > supported ${result.irVersion?.supported}`,
+          );
         } else {
           notifyProjectError('Failed to open project', result.error);
         }
@@ -213,8 +251,14 @@ export const useProjectStore = create<ProjectState>()(
     },
 
     saveProject: async () => {
-      const { project, projectPath } = get();
+      const { project, projectPath, readOnly } = get();
       if (!project || !projectPath || !window.electronAPI) return;
+      if (readOnly) {
+        // 承諾されるまで書き換えない。黙って失敗せず、提案をもう一度出す。
+        set((s) => { s.showIrUpgrade = true; });
+        notifyProjectError('Project is read-only until its format is upgraded', 'readOnly');
+        return;
+      }
       try {
         const result = await window.electronAPI.project.save(project);
         if (result.success) {
@@ -229,11 +273,75 @@ export const useProjectStore = create<ProjectState>()(
       }
     },
 
+    upgradeProject: async () => {
+      const { project, irUpgrade } = get();
+      if (!project || !window.electronAPI) return false;
+      try {
+        // main 側が元の project.json を Backups/ に写してから、今の版で書き戻す
+        const result = await window.electronAPI.project.upgrade();
+        if (!result.success) {
+          notifyProjectError('Failed to upgrade project', result.error);
+          return false;
+        }
+        set((s) => {
+          s.readOnly = false;
+          s.irUpgrade = null;
+          s.showIrUpgrade = false;
+          if (s.project && irUpgrade) s.project.irVersion = irUpgrade.to;
+        });
+        // 承諾後は今の編集内容もそのまま保存しておく
+        await get().saveProject();
+        return true;
+      } catch (e) {
+        notifyProjectError('Failed to upgrade project', String((e as Error)?.message ?? e));
+        return false;
+      }
+    },
+
+    declineUpgrade: () => {
+      set((s) => { s.showIrUpgrade = false; });
+    },
+
+    // ========================================
+    // Models (ONNX)
+    // ========================================
+
+    addModel: (model) => {
+      set((s) => {
+        if (!s.project) return;
+        if (!s.project.models) s.project.models = [];
+        s.project.models.push(model);
+        s.isDirty = true;
+      });
+    },
+
+    updateModel: (id, updates) => {
+      set((s) => {
+        const models = s.project?.models;
+        if (!models) return;
+        const idx = models.findIndex((m) => m.id === id);
+        if (idx === -1) return;
+        models[idx] = { ...models[idx], ...updates, id };
+        s.isDirty = true;
+      });
+    },
+
+    removeModel: (id) => {
+      set((s) => {
+        if (!s.project?.models) return;
+        s.project.models = s.project.models.filter((m) => m.id !== id);
+        s.isDirty = true;
+      });
+    },
+
     closeProject: () => {
       set((s) => {
         s.project = null;
         s.projectPath = null;
         s.isDirty = false;
+        s.readOnly = false;
+        s.irUpgrade = null;
+        s.showIrUpgrade = false;
         s.currentSceneId = null;
         s.selectedObjectIds = [];
         s.currentUILayoutId = null;
@@ -440,12 +548,38 @@ export const useProjectStore = create<ProjectState>()(
         const layout = s.project.uiLayouts.find((l) => l.id === s.currentUILayoutId);
         if (!layout) return;
 
+        const type = element.type || 'Panel';
+        // キーボードは「幅いっぱい・高さ 320」くらいでないと押せる大きさにならないので、
+        // 置いた時点で使える値を入れておく (打った文字の行き先と、確定のイベント名も)。
+        const keyboardDefaults: Partial<UIElement> = type === 'Keyboard'
+          ? {
+              content: '1234567890|qwertyuiop|asdfghjkl|zxcvbnm',
+              bindingId: 'keyboard',
+              bind: { key: 'input.text' },
+              style: { width: '100%', height: 320, backgroundColor: '#00000088', borderRadius: 12, fontSize: 36, ...(element.style ?? {}) },
+            }
+          : {};
+
+        // 入力欄も同じで、置いた時点で「押したら打てる」状態にしておく
+        // (打った文字の行き先と、確定のイベント名、押せる大きさ)。
+        const inputDefaults: Partial<UIElement> = type === 'Input'
+          ? {
+              bindingId: 'input',
+              bind: { key: 'input.text' },
+              style: { width: '100%', height: 90, backgroundColor: '#FFFFFF14', borderRadius: 12, fontSize: 34, ...(element.style ?? {}) },
+            }
+          : {};
+
         const newEl: UIElement = {
           id: uuidv4(),
-          type: element.type || 'Panel',
+          type,
           style: element.style || {},
           children: [],
+          ...keyboardDefaults,
+          ...inputDefaults,
           ...element,
+          ...(type === 'Keyboard' ? { style: keyboardDefaults.style! } : {}),
+          ...(type === 'Input' ? { style: inputDefaults.style! } : {}),
         };
 
         const addToParent = (el: UIElement): boolean => {

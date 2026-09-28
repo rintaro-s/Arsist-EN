@@ -325,3 +325,54 @@ internal static class FramePacingChecks
         return failures;
     }
 }
+
+// GPU から読み出す大きさの決め方の検証 (FrameBudget)。
+internal static class FrameBudgetChecks
+{
+    private static int _failures;
+
+    private static void Expect(string label, bool ok, string detail = null)
+    {
+        Console.WriteLine($"{(ok ? "PASS" : "FAIL")}  {label}{(detail != null ? $": {detail}" : "")}");
+        if (!ok) _failures++;
+    }
+
+    public static int Run()
+    {
+        _failures = 0;
+        Console.WriteLine("\n--- frame budget: how much of the camera frame is read back ---");
+
+        Expect("nobody waiting → full resolution", Arsist.Runtime.Perception.FrameBudget.TargetWidth(1280, new int[0]) == 0);
+        Expect("one consumer at 640 → 640", Arsist.Runtime.Perception.FrameBudget.TargetWidth(1280, new[] { 640 }) == 640);
+        Expect("largest request wins", Arsist.Runtime.Perception.FrameBudget.TargetWidth(1280, new[] { 480, 640, 320 }) == 640);
+        Expect("a full-resolution request (0) overrides the rest", Arsist.Runtime.Perception.FrameBudget.TargetWidth(1280, new[] { 640, 0 }) == 0);
+        Expect("never upscale", Arsist.Runtime.Perception.FrameBudget.TargetWidth(640, new[] { 1280 }) == 0);
+        Expect("never below the minimum", Arsist.Runtime.Perception.FrameBudget.TargetWidth(1280, new[] { 40 }) == Arsist.Runtime.Perception.FrameBudget.MinWidth);
+
+        Expect("a viewport crop of 70% width for a 640 pipeline needs 915", Arsist.Runtime.Perception.FrameBudget.WidthForViewport(640, 0.7) == 915);
+        Expect("a full-width crop needs exactly the pipeline width", Arsist.Runtime.Perception.FrameBudget.WidthForViewport(480, 1.0) == 480);
+        Expect("a pipeline that does not shrink wants full resolution", Arsist.Runtime.Perception.FrameBudget.WidthForViewport(0, 0.5) == 0);
+
+        Arsist.Runtime.Perception.FrameBudget.ScaledSize(1280, 720, 640, out int w, out int h);
+        Expect("scaled size keeps the aspect ratio", w == 640 && h == 360, $"{w}x{h}");
+        Arsist.Runtime.Perception.FrameBudget.ScaledSize(1280, 960, 915, out w, out h);
+        Expect("scaled size is even", w % 2 == 0 && h % 2 == 0 && Math.Abs((double)w / h - 1280.0 / 960) < 0.01, $"{w}x{h}");
+        Arsist.Runtime.Perception.FrameBudget.ScaledSize(1280, 720, 0, out w, out h);
+        Expect("target 0 keeps the native size", w == 1280 && h == 720);
+
+        var k = new Arsist.Runtime.Perception.Vision.CameraIntrinsics { Fx = 1000, Fy = 1000, Cx = 639.5, Cy = 359.5 };
+        var s = Arsist.Runtime.Perception.FrameBudget.ScaleIntrinsics(k, 1280, 720, 640, 360);
+        Expect("intrinsics scale with the readback (focal)", Math.Abs(s.Fx - 500) < 1e-9 && Math.Abs(s.Fy - 500) < 1e-9);
+        Expect("intrinsics scale with the readback (principal point, half-pixel rule)",
+               Math.Abs(s.Cx - 319.5) < 1e-9 && Math.Abs(s.Cy - 179.5) < 1e-9, $"cx={s.Cx} cy={s.Cy}");
+
+        Arsist.Runtime.Perception.PerceptionStats.SetPath("test", 1280, 720, 640, 360);
+        Arsist.Runtime.Perception.PerceptionStats.Readback(3.5);
+        Arsist.Runtime.Perception.PerceptionStats.Convert(2.0);
+        var line = Arsist.Runtime.Perception.PerceptionStats.Flush(5);
+        Expect("stats summarise the path and sizes", line != null && line.Contains("1280x720->640x360") && line.Contains("1 readback"), line);
+        Expect("stats reset after flushing", Arsist.Runtime.Perception.PerceptionStats.Flush(5) == null);
+
+        return _failures;
+    }
+}

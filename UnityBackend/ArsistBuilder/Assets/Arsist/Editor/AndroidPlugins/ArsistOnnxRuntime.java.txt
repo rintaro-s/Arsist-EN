@@ -1,0 +1,353 @@
+package com.arsist.ort;
+
+import android.util.Log;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
+import java.nio.LongBuffer;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import ai.onnxruntime.OnnxJavaType;
+import ai.onnxruntime.OnnxTensor;
+import ai.onnxruntime.OnnxValue;
+import ai.onnxruntime.OrtEnvironment;
+import ai.onnxruntime.OrtSession;
+import ai.onnxruntime.TensorInfo;
+
+/**
+ * ONNX Runtime (Android) のブリッジ。
+ *
+ * Unity の Inference Engine は、最近の言語モデルの書き出しが使う演算子 (GroupQueryAttention /
+ * LinearAttention / MatMulNBits / If など) を取り込めない。そこで、そういうモデルは
+ * Unity のエンジンを通さず、APK に同梱したこの ONNX Runtime で動かす。
+ * どちらで動かすかはモデルごとに決まる (IR の runtime、既定は自動)。
+ *
+ * このファイルは Assets/Arsist/Editor/AndroidPlugins/ArsistOnnxRuntime.java.txt が原本で、
+ * ONNX Runtime で動かすモデルがあるビルドでだけ Assets/Plugins/Android/ へコピーされる
+ * (ArsistBuildPipeline.ConfigureAndroidPlugins)。常設しないのは、依存の無いプロジェクトで
+ * Java のコンパイルが通らず、33MB のネイティブライブラリを使わない APK に積むことになるため。
+ *
+ * 値の運び方:
+ *   入力  C# から float[] / long[] で渡す。または「前の一歩の出力」を番号で渡す
+ *   出力  番号 (ハンドル) で返し、中身は ONNX Runtime 側に置いたまま
+ * LLM の KV キャッシュは 1 歩ごとに数 MB あるので、毎回 JNI をまたいで運ぶと、そこで時間が溶ける。
+ * 出力をそのまま次の入力に渡せるようにしてあるので、運ぶのは本当に読む値 (logits) だけで済む。
+ */
+public final class ArsistOnnxRuntime {
+
+    private static final String TAG = "ArsistOnnx";
+
+    private static OrtEnvironment sEnvironment;
+    private static final Map<Integer, Session> sSessions = new HashMap<>();
+    private static final Map<Integer, OnnxTensor> sTensors = new HashMap<>();
+    private static int sNextId = 1;
+    private static String sLastError = "";
+
+    private ArsistOnnxRuntime() {}
+
+    private static final class Session {
+        OrtSession session;
+        /** 前の一歩の出力。次の一歩が終わってから閉じる (入力として使われているため)。 */
+        OrtSession.Result previous;
+        /** その出力に配った番号。閉じるときに表からも外す (番号が溜まり続けないように)。 */
+        List<Integer> previousHandles = new ArrayList<>();
+    }
+
+    public static String lastError() {
+        return sLastError;
+    }
+
+    /** 失敗の理由を必ず残す。getMessage() が null の例外があるので、種類も書く。 */
+    private static void fail(String what, Throwable e) {
+        String message = e.getMessage();
+        sLastError = what + ": " + e.getClass().getSimpleName() + (message == null ? "" : " " + message);
+        Log.e(TAG, sLastError, e);
+    }
+
+    private static void fail(String reason) {
+        sLastError = reason;
+        Log.e(TAG, reason);
+    }
+
+    /** 形から必要な要素数を出す。合わないまま渡すと、向こうで分かりにくい例外になる。 */
+    private static long countOf(long[] shape) {
+        long total = 1;
+        for (long d : shape) total *= Math.max(0, d);
+        return total;
+    }
+
+    private static boolean ready(String what, long[] shape, int given) {
+        if (sEnvironment == null) {
+            fail(what + ": no ONNX Runtime environment yet (open a model first)");
+            return false;
+        }
+        long expected = countOf(shape);
+        if (expected != given) {
+            fail(what + ": the shape needs " + expected + " value(s) but " + given + " were given");
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * モデルを開く。path は端末上の実ファイル (StreamingAssets から写したもの)。
+     * 戻り値はセッションの番号。0 なら失敗 (lastError に理由)。
+     */
+    public static synchronized int open(String path, int threads) {
+        try {
+            if (sEnvironment == null) sEnvironment = OrtEnvironment.getEnvironment();
+            OrtSession.SessionOptions options = new OrtSession.SessionOptions();
+            if (threads > 0) {
+                options.setIntraOpNumThreads(threads);
+            }
+            options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+            Session holder = new Session();
+            holder.session = sEnvironment.createSession(path, options);
+            int id = sNextId++;
+            sSessions.put(id, holder);
+            Log.i(TAG, "opened " + path + " as session " + id);
+            return id;
+        } catch (Throwable e) {
+            fail("open " + path, e);
+            return 0;
+        }
+    }
+
+    /** 入出力の名前・型・形を JSON で返す。形の -1 は実行時に決まる軸。 */
+    public static synchronized String describe(int sessionId) {
+        Session holder = sSessions.get(sessionId);
+        if (holder == null) return "";
+        try {
+            StringBuilder json = new StringBuilder("{\"inputs\":[");
+            describeInto(json, holder.session.getInputInfo());
+            json.append("],\"outputs\":[");
+            describeInto(json, holder.session.getOutputInfo());
+            json.append("]}");
+            return json.toString();
+        } catch (Throwable e) {
+            fail("describe", e);
+            return "";
+        }
+    }
+
+    private static void describeInto(StringBuilder json, Map<String, ai.onnxruntime.NodeInfo> nodes) {
+        boolean first = true;
+        for (Map.Entry<String, ai.onnxruntime.NodeInfo> entry : nodes.entrySet()) {
+            if (!first) json.append(',');
+            first = false;
+            json.append("{\"name\":\"").append(entry.getKey()).append("\",\"type\":\"");
+            String type = "float";
+            String shape = "[]";
+            if (entry.getValue().getInfo() instanceof TensorInfo) {
+                TensorInfo info = (TensorInfo) entry.getValue().getInfo();
+                type = typeName(info.type);
+                StringBuilder dims = new StringBuilder("[");
+                long[] values = info.getShape();
+                for (int i = 0; i < values.length; i++) {
+                    if (i > 0) dims.append(',');
+                    dims.append(values[i] < 0 ? -1 : values[i]);
+                }
+                shape = dims.append(']').toString();
+            }
+            json.append(type).append("\",\"shape\":").append(shape).append('}');
+        }
+    }
+
+    private static String typeName(OnnxJavaType type) {
+        switch (type) {
+            case INT64: return "int64";
+            case INT32: return "int32";
+            case BOOL: return "bool";
+            default: return "float";
+        }
+    }
+
+    // ---- 入力を作る ----
+
+    public static synchronized int createFloat(long[] shape, float[] data) {
+        if (!ready("createFloat", shape, data == null ? 0 : data.length)) return 0;
+        try {
+            FloatBuffer buffer = ByteBuffer.allocateDirect(data.length * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+            buffer.put(data);
+            buffer.rewind();
+            return keep(OnnxTensor.createTensor(sEnvironment, buffer, shape));
+        } catch (Throwable e) {
+            fail("createTensor", e);
+            return 0;
+        }
+    }
+
+    public static synchronized int createLong(long[] shape, long[] data) {
+        if (!ready("createLong", shape, data == null ? 0 : data.length)) return 0;
+        try {
+            LongBuffer buffer = ByteBuffer.allocateDirect(data.length * 8).order(ByteOrder.nativeOrder()).asLongBuffer();
+            buffer.put(data);
+            buffer.rewind();
+            return keep(OnnxTensor.createTensor(sEnvironment, buffer, shape));
+        } catch (Throwable e) {
+            fail("createTensor", e);
+            return 0;
+        }
+    }
+
+    /** int32 を取るモデル用。 */
+    public static synchronized int createInt(long[] shape, int[] data) {
+        if (!ready("createInt", shape, data == null ? 0 : data.length)) return 0;
+        try {
+            java.nio.IntBuffer buffer = ByteBuffer.allocateDirect(data.length * 4).order(ByteOrder.nativeOrder()).asIntBuffer();
+            buffer.put(data);
+            buffer.rewind();
+            return keep(OnnxTensor.createTensor(sEnvironment, buffer, shape));
+        } catch (Throwable e) {
+            fail("createTensor", e);
+            return 0;
+        }
+    }
+
+    public static synchronized int createBool(long[] shape, boolean value) {
+        if (!ready("createBool", shape, 1)) return 0;
+        try {
+            // 真偽値の入力 (use_cache_branch など) は 1 バイトずつ。boolean[] を取る口は無い。
+            ByteBuffer buffer = ByteBuffer.allocateDirect(1).order(ByteOrder.nativeOrder());
+            buffer.put((byte) (value ? 1 : 0));
+            buffer.rewind();
+            return keep(OnnxTensor.createTensor(sEnvironment, buffer, shape, OnnxJavaType.BOOL));
+        } catch (Throwable e) {
+            fail("createTensor", e);
+            return 0;
+        }
+    }
+
+    private static int keep(OnnxTensor tensor) {
+        int id = sNextId++;
+        sTensors.put(id, tensor);
+        return id;
+    }
+
+    // ---- 動かす ----
+
+    /**
+     * 名前つきの入力 (番号で渡す) でモデルを動かす。
+     * 戻り値は出力の JSON: [{name, type, shape, handle}]。中身は持ったままなので、
+     * そのまま次の一歩の入力に渡せる。失敗したら空文字 (lastError に理由)。
+     */
+    public static synchronized String run(int sessionId, String[] names, int[] handles) {
+        Session holder = sSessions.get(sessionId);
+        if (holder == null) {
+            fail("run: no session " + sessionId);
+            return "";
+        }
+        try {
+            Map<String, OnnxTensor> inputs = new LinkedHashMap<>();
+            for (int i = 0; i < names.length; i++) {
+                OnnxTensor tensor = sTensors.get(handles[i]);
+                if (tensor == null) {
+                    fail("run: no value #" + handles[i] + " for input '" + names[i] + "' (already released?)");
+                    return "";
+                }
+                inputs.put(names[i], tensor);
+            }
+
+            OrtSession.Result result = holder.session.run(inputs);
+
+            // 前の一歩の出力は、この一歩の入力として使い終わったのでここで閉じる
+            if (holder.previous != null) {
+                holder.previous.close();
+                holder.previous = null;
+                for (Integer handle : holder.previousHandles) sTensors.remove(handle);
+                holder.previousHandles.clear();
+            }
+
+            StringBuilder json = new StringBuilder("[");
+            final List<Integer> produced = new ArrayList<>();
+            boolean first = true;
+            for (Map.Entry<String, OnnxValue> entry : result) {
+                if (!(entry.getValue() instanceof OnnxTensor)) continue;
+                OnnxTensor tensor = (OnnxTensor) entry.getValue();
+                int id = keep(tensor);
+                produced.add(id);
+                TensorInfo info = tensor.getInfo();
+                if (!first) json.append(',');
+                first = false;
+                json.append("{\"name\":\"").append(entry.getKey()).append("\",\"type\":\"")
+                    .append(typeName(info.type)).append("\",\"handle\":").append(id).append(",\"shape\":[");
+                long[] shape = info.getShape();
+                for (int i = 0; i < shape.length; i++) {
+                    if (i > 0) json.append(',');
+                    json.append(shape[i]);
+                }
+                json.append("]}");
+            }
+            json.append(']');
+
+            holder.previous = result;
+            holder.previousHandles = produced;
+            return json.toString();
+        } catch (Throwable e) {
+            fail("run", e);
+            return "";
+        }
+    }
+
+    /** 値を C# 側に運ぶ (logits など、本当に読むものだけ)。offset と count は要素数。 */
+    public static synchronized float[] readFloats(int handle, int offset, int count) {
+        OnnxTensor tensor = sTensors.get(handle);
+        if (tensor == null) return new float[0];
+        try {
+            FloatBuffer buffer = tensor.getFloatBuffer();
+            if (buffer == null) return new float[0];
+            int available = buffer.capacity();
+            if (offset < 0) offset = 0;
+            if (count <= 0 || offset + count > available) count = Math.max(0, available - offset);
+            float[] values = new float[count];
+            buffer.position(offset);
+            buffer.get(values);
+            return values;
+        } catch (Throwable e) {
+            fail("readFloats", e);
+            return new float[0];
+        }
+    }
+
+    public static synchronized long[] readLongs(int handle) {
+        OnnxTensor tensor = sTensors.get(handle);
+        if (tensor == null) return new long[0];
+        try {
+            LongBuffer buffer = tensor.getLongBuffer();
+            if (buffer == null) return new long[0];
+            long[] values = new long[buffer.capacity()];
+            buffer.rewind();
+            buffer.get(values);
+            return values;
+        } catch (Throwable e) {
+            fail("readLongs", e);
+            return new long[0];
+        }
+    }
+
+    /**
+     * もう使わないテンソルを離す。
+     * 出力 (run が返した番号) は ONNX Runtime 側が Result ごと閉じるので、表から外すだけ。
+     */
+    public static synchronized void release(int handle, boolean ownedByResult) {
+        OnnxTensor tensor = sTensors.remove(handle);
+        if (tensor != null && !ownedByResult) {
+            try { tensor.close(); } catch (Throwable ignored) { }
+        }
+    }
+
+    public static synchronized void closeSession(int sessionId) {
+        Session holder = sSessions.remove(sessionId);
+        if (holder == null) return;
+        try {
+            if (holder.previous != null) holder.previous.close();
+            for (Integer handle : holder.previousHandles) sTensors.remove(handle);
+            holder.session.close();
+        } catch (Throwable ignored) { }
+    }
+}

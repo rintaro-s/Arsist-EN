@@ -94,6 +94,8 @@ export declare class UnityBuilder extends EventEmitter {
      * ビルドキャンセル
      */
     cancel(): void;
+    /** ビルド中か (終了時に「やめていいか」を聞くために使う)。 */
+    isBuilding(): boolean;
     private getUnityVersion;
     private isUnityVersionCompatible;
     private normalizeUnityVersion;
@@ -147,6 +149,28 @@ export declare class UnityBuilder extends EventEmitter {
      * 旧 com.unity.textmeshpro を要求すると解決に失敗する。
      */
     private ensureUnityUiPackages;
+    /**
+     * Unity Inference Engine (旧 Sentis)。ONNX を実機で動かすためのパッケージ。
+     * 2.2.0〜2.6.x はすべて Unity 6000.0 以降で動く (レジストリの unity フィールド)。
+     * 2.6 で ONNX opset 25 まで対応。
+     */
+    static readonly INFERENCE_PACKAGE = "com.unity.ai.inference";
+    static readonly INFERENCE_PACKAGE_VERSION = "2.6.1";
+    /**
+     * モデル (`infer` op) を使うプロジェクトでだけ Inference Engine を入れる。
+     * 常に入れると、使わないプロジェクトの APK までコンピュートシェーダー分 (数 MB) 太る。
+     * 外したプロジェクトからは抜く。ArsistBuildPipeline はパッケージの有無で
+     * ARSIST_INFERENCE define を立て、無いのにモデルがあれば落とす。
+     */
+    private ensureInferencePackage;
+    /**
+     * ProjectSettings.asset の scriptingDefineSymbols に ARSIST_INFERENCE を入れる / 抜く (純粋な文字列処理)。
+     * 形は
+     *   scriptingDefineSymbols:
+     *     Android: GLTFAST;ARSIST_INFERENCE
+     * で、空のときは `scriptingDefineSymbols: {}`。Android の行だけを見る (ビルド対象は Android だけ)。
+     */
+    static syncInferenceDefine(assetText: string, wanted: boolean): string;
     /** 検出済み Unity バージョンのメジャー番号（例 6000 / 2022）。不明なら 0。 */
     private getUnityMajorVersion;
     /** uGUI / TextMeshPro の依存をUnityバージョンに応じて設定する。 */

@@ -143,6 +143,50 @@ namespace Arsist.Runtime.Perception.Vision.Classic
             return new ColorImage((byte[])Data.Clone(), Width, Height);
         }
 
+        /// <summary>
+        /// 指定の大きさにする (拡大も縮小も)。学習済みモデルの入力を作るときに使う。
+        /// 双一次補間。縮小率が大きいときは画素を飛ばすことになるが、モデルの入力
+        /// (224〜640px) に対しては十分。同じ大きさなら自分を返す。
+        /// </summary>
+        public ColorImage ScaledTo(int width, int height)
+        {
+            if (width <= 0 || height <= 0) throw new ArgumentException("invalid size");
+            if (width == Width && height == Height) return this;
+
+            var dst = new ColorImage(width, height);
+            double sx = (double)Width / width;
+            double sy = (double)Height / height;
+
+            for (int y = 0; y < height; y++)
+            {
+                double fy = (y + 0.5) * sy - 0.5;
+                int y0 = (int)Math.Floor(fy);
+                double wy = fy - y0;
+                int y1 = Math.Min(Height - 1, Math.Max(0, y0 + 1));
+                y0 = Math.Min(Height - 1, Math.Max(0, y0));
+
+                for (int x = 0; x < width; x++)
+                {
+                    double fx = (x + 0.5) * sx - 0.5;
+                    int x0 = (int)Math.Floor(fx);
+                    double wx = fx - x0;
+                    int x1 = Math.Min(Width - 1, Math.Max(0, x0 + 1));
+                    x0 = Math.Min(Width - 1, Math.Max(0, x0));
+
+                    int p00 = (y0 * Width + x0) * 3, p01 = (y0 * Width + x1) * 3;
+                    int p10 = (y1 * Width + x0) * 3, p11 = (y1 * Width + x1) * 3;
+                    int d = (y * width + x) * 3;
+                    for (int c = 0; c < 3; c++)
+                    {
+                        double top = Data[p00 + c] * (1 - wx) + Data[p01 + c] * wx;
+                        double bottom = Data[p10 + c] * (1 - wx) + Data[p11 + c] * wx;
+                        dst.Data[d + c] = (byte)Math.Round(top * (1 - wy) + bottom * wy);
+                    }
+                }
+            }
+            return dst;
+        }
+
         /// <summary>最大幅に収まるよう縮小する（超えていなければ自分を返す）。</summary>
         public ColorImage ScaledToWidth(int maxWidth)
         {

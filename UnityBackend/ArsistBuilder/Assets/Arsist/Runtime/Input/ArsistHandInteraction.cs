@@ -36,8 +36,6 @@ namespace Arsist.Runtime.Input
         [Header("Ray")]
         [Tooltip("指先からのレイの最大検出距離(m)")]
         [SerializeField] private float _maxDistance = 5f;
-        [Tooltip("検出対象のレイヤーマスク")]
-        [SerializeField] private LayerMask _raycastMask = -1;
 
         [Header("Pinch")]
         [Tooltip("親指と人差し指の指先の距離がこれ以下でピンチ開始とみなす(m)")]
@@ -144,11 +142,13 @@ namespace Arsist.Runtime.Input
             var endPos = origin + direction * _maxDistance;
             GameObject hitTarget = null;
             Vector3 hitPoint = default;
-            if (Physics.Raycast(origin, direction, out var hit, _maxDistance, _raycastMask))
+            // 3D の物と UI の両方を見る (視線・コントローラーレイと同じ判定。
+            // UI をコライダー任せにすると、大きさが後から決まる要素を素通りする)。
+            if (UI.ArsistUiPointer.RaycastScene(new Ray(origin, direction), _maxDistance, out var hit, out var point))
             {
-                endPos = hit.point;
-                hitPoint = hit.point;
-                hitTarget = hit.collider.gameObject;
+                endPos = point;
+                hitPoint = point;
+                hitTarget = hit;
             }
 
             if (_showRay && state.Ray != null)

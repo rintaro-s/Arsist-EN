@@ -250,3 +250,21 @@ On Windows, searches for `powershell.exe` in PATH and common install locations (
 2. Invokes Unity with `-version` flag.
 3. Compares the reported version against `expectedVersion` (if provided).
 4. Returns `{ valid: boolean, version?: string, error?: string }`.
+
+## 端末に入れる (adb)
+
+ビルド画面の下に、つながっている端末が並ぶ (`adb devices -l`、`src/main/device/Adb.ts`)。
+「ビルドしてインストール」はビルドの後そのまま入れ、「インストール」は今ビルドした APK を入れ直す。
+
+- adb は **Unity が同梱している Android SDK のもの**を優先して使う (別途入れなくてよい)。
+  次に `ANDROID_HOME` / `ANDROID_SDK_ROOT`、最後に PATH (`getAdbCandidates`)。
+- 端末が複数あれば選ぶ。`unauthorized` (端末側で許可待ち) や `offline` は選べず、理由をその場に出す。
+- 入れるのは `adb -s <端末> install -r -d <apk>`。**必ず `-s` で端末を指定する** (1 台のときも)。
+  指定を省くと、別の端末が繋がっていたときに、そちらへ入ってしまう。
+- ここでするのは「並べる」と「このプロジェクトの APK を入れる」だけで、端末の他の状態には触らない。
+
+## ダイアログの高さ
+
+`.modal` は画面の高さ (`100vh - 3rem`) を超えない。頭と足は残り、中身だけが送られる
+(`src/renderer/styles/globals.css`)。縦の狭いモニターだと、ビルド画面のように中身の長い
+ダイアログが画面からはみ出し、下のボタンに手が届かなくなるため。

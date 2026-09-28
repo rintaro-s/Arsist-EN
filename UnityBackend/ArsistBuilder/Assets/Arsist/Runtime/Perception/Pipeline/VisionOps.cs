@@ -13,6 +13,7 @@
 
 using System;
 using System.Collections.Generic;
+using Arsist.Runtime.Perception.Models;
 using Arsist.Runtime.Perception.Vision;
 using Arsist.Runtime.Perception.Vision.Classic;
 
@@ -26,6 +27,8 @@ namespace Arsist.Runtime.Perception.Pipeline
         public string[] In = Array.Empty<string>();
         public string Out;
         public Dictionary<string, object> Params = new Dictionary<string, object>();
+        /// <summary>一時的に外す (素通し)。入力と出力の型が同じ op でだけ効く。</summary>
+        public bool Disabled;
 
         public double Number(string key, double fallback)
         {
@@ -87,7 +90,57 @@ namespace Arsist.Runtime.Perception.Pipeline
                 ["recolor"] = new VisionOpSignature(VisionValueKind.Color, VisionValueKind.Color, VisionValueKind.Mask),
                 ["dominantColor"] = new VisionOpSignature(VisionValueKind.Record, VisionValueKind.Color),
                 ["templateMatch"] = new VisionOpSignature(VisionValueKind.Record, VisionValueKind.Gray),
+                // 出力の型はモデルの task で決まる (OutputKindOf)。ここに書くのは仮の値。
+                ["infer"] = new VisionOpSignature(VisionValueKind.Record, VisionValueKind.Color),
+
+                // ---- 見つけた物を扱う ----
+                ["select"] = new VisionOpSignature(VisionValueKind.Blobs, VisionValueKind.Blobs),
+                ["countItems"] = new VisionOpSignature(VisionValueKind.Record, VisionValueKind.Blobs),
+                ["track"] = new VisionOpSignature(VisionValueKind.Blobs, VisionValueKind.Blobs),
+                ["annotate"] = new VisionOpSignature(VisionValueKind.Color, VisionValueKind.Color, VisionValueKind.Blobs),
+                ["boxMask"] = new VisionOpSignature(VisionValueKind.Mask, VisionValueKind.Blobs),
+
+                // ---- 時間 ----
+                ["stabilize"] = new VisionOpSignature(VisionValueKind.Record, VisionValueKind.Record),
+                ["motion"] = new VisionOpSignature(VisionValueKind.Mask, VisionValueKind.Gray),
+                ["event"] = new VisionOpSignature(VisionValueKind.Record, VisionValueKind.Record),
+
+                // ---- 幾何 ----
+                ["quads"] = new VisionOpSignature(VisionValueKind.Quads, VisionValueKind.Mask),
+                ["rectify"] = new VisionOpSignature(VisionValueKind.Color, VisionValueKind.Color, VisionValueKind.Quads),
             };
+
+        /// <summary>
+        /// op の出力の型。ほとんどの op は Signatures のとおりだが、`infer` だけは
+        /// 参照しているモデルの task で変わる: classify/raw → Record, detect → Blobs, segment → Mask。
+        /// モデルが見つからなければ仮の Record を返す (見つからないこと自体は Validate が指摘する)。
+        /// </summary>
+        public static VisionValueKind OutputKindOf(VisionOpSpec spec, IReadOnlyDictionary<string, ModelSpec> models)
+        {
+            if (!Signatures.TryGetValue(spec.Op ?? "", out var signature)) return VisionValueKind.Record;
+            if (!string.Equals(spec.Op, "infer", StringComparison.OrdinalIgnoreCase)) return signature.Output;
+
+            var id = spec.Text("model", null);
+            if (id == null || models == null || !models.TryGetValue(id, out var model)) return VisionValueKind.Record;
+            return KindForTask(model.Task);
+        }
+
+        /// <summary>外せる op か (最初の入力と出力の型が同じ)。エディタの canBypass と同じ判定。</summary>
+        public static bool CanBypass(VisionOpSpec spec, IReadOnlyDictionary<string, ModelSpec> models)
+        {
+            if (!Signatures.TryGetValue(spec.Op ?? "", out var signature) || signature.Inputs.Length == 0) return false;
+            return signature.Inputs[0] == OutputKindOf(spec, models);
+        }
+
+        public static VisionValueKind KindForTask(ModelTask task)
+        {
+            switch (task)
+            {
+                case ModelTask.Detect: return VisionValueKind.Blobs;
+                case ModelTask.Segment: return VisionValueKind.Mask;
+                default: return VisionValueKind.Record;
+            }
+        }
 
         /// <summary>
         /// 一手を適用する。
@@ -208,9 +261,306 @@ namespace Arsist.Runtime.Perception.Pipeline
                     });
                 }
 
+                case "infer": return ApplyInfer(spec, inputs[0].Color, context);
+
+                case "select": return VisionValue.OfBlobs(ApplySelect(spec, inputs[0].Items));
+                case "countitems": return VisionValue.OfRecord(CountItems(inputs[0].Items));
+                case "track": return VisionValue.OfBlobs(ApplyTrack(spec, inputs[0].Items, context));
+
+                case "annotate":
+                {
+                    var drawn = Annotate.Boxes(inputs[0].Color, inputs[1].Items,
+                        spec.Text("color", "#4A9BD1"), spec.Int("thickness", 2), out _);
+                    return VisionValue.OfColor(drawn);
+                }
+
+                case "boxmask":
+                {
+                    // 枠 (または塗り潰し) のマスク。world 出力の alpha にすると、枠だけを現実に重ねられる。
+                    var blank = new ColorImage(context.Width, context.Height);
+                    bool fill = spec.Bool("fill", false);
+                    Annotate.Boxes(blank, inputs[0].Items, "#FFFFFF", fill ? 100000 : spec.Int("thickness", 2), out var mask);
+                    return VisionValue.OfMask(mask);
+                }
+
+                case "stabilize": return VisionValue.OfRecord(ApplyStabilize(spec, inputs[0].Record, context));
+                case "motion": return VisionValue.OfMask(ApplyMotion(spec, inputs[0].Gray, context));
+                case "event": return VisionValue.OfRecord(ApplyEvent(spec, inputs[0].Record, context));
+
+                case "quads":
+                    return VisionValue.OfQuads(Quads.Find(
+                        inputs[0].Mask, spec.Number("epsilonRatio", 0.04), spec.Int("minArea", 400), spec.Int("maxItems", 4)));
+
+                case "rectify": return ApplyRectify(spec, inputs[0].Color, inputs[1].Items, context);
+
                 default:
                     throw new VisionPipelineException($"unknown op '{spec.Op}'");
             }
+        }
+
+        // ---- 見つけた物を扱う ----
+
+        private static double ItemNumber(Dictionary<string, object> item, string key) => Tracker.Number(item, key);
+
+        /// <summary>ラベル・スコア・大きさで絞り、並べ替え、数を絞る。</summary>
+        private static List<object> ApplySelect(VisionOpSpec spec, List<object> items)
+        {
+            var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in (spec.Text("label", "") ?? "").Split(','))
+            {
+                var trimmed = part.Trim();
+                if (trimmed.Length > 0) wanted.Add(trimmed);
+            }
+            double minScore = spec.Number("minScore", 0);
+            double minWidth = spec.Number("minWidth", 0);
+            double minHeight = spec.Number("minHeight", 0);
+            bool stableOnly = spec.Bool("stableOnly", false);
+
+            var kept = new List<Dictionary<string, object>>();
+            foreach (var raw in items ?? new List<object>())
+            {
+                if (!(raw is Dictionary<string, object> item)) continue;
+                if (wanted.Count > 0 && !wanted.Contains(Tracker.Text(item, "label") ?? "")) continue;
+                if (item.ContainsKey("score") && ItemNumber(item, "score") < minScore) continue;
+                if (ItemNumber(item, "width") < minWidth || ItemNumber(item, "height") < minHeight) continue;
+                if (stableOnly && item.TryGetValue("stable", out var stable) && stable is bool b && !b) continue;
+                if (spec.Bool("presentOnly", true) && item.TryGetValue("missing", out var missing) && missing is bool m && m) continue;
+                kept.Add(item);
+            }
+
+            switch (spec.Text("sortBy", "score").ToLowerInvariant())
+            {
+                case "size": kept.Sort((a, b) => (ItemNumber(b, "width") * ItemNumber(b, "height")).CompareTo(ItemNumber(a, "width") * ItemNumber(a, "height"))); break;
+                case "x": kept.Sort((a, b) => ItemNumber(a, "x").CompareTo(ItemNumber(b, "x"))); break;
+                case "y": kept.Sort((a, b) => ItemNumber(b, "y").CompareTo(ItemNumber(a, "y"))); break;
+                case "none": break;
+                default: kept.Sort((a, b) => ItemNumber(b, "score").CompareTo(ItemNumber(a, "score"))); break;
+            }
+
+            int maxItems = spec.Int("maxItems", 0);
+            if (maxItems > 0 && kept.Count > maxItems) kept.RemoveRange(maxItems, kept.Count - maxItems);
+
+            var result = new List<object>(kept.Count);
+            foreach (var item in kept) result.Add(item);
+            return result;
+        }
+
+        /// <summary>件数、ラベルごとの数、一番確かな物。UI に bind したりイベントの条件にしたりする。</summary>
+        private static Dictionary<string, object> CountItems(List<object> items)
+        {
+            var labels = new Dictionary<string, object>();
+            string bestLabel = "";
+            double bestScore = double.NegativeInfinity, sum = 0;
+            int count = 0;
+            foreach (var raw in items ?? new List<object>())
+            {
+                if (!(raw is Dictionary<string, object> item)) continue;
+                count++;
+                var label = Tracker.Text(item, "label") ?? "";
+                if (label.Length > 0) labels[label] = (labels.TryGetValue(label, out var n) ? Convert.ToInt32(n) : 0) + 1;
+                double score = ItemNumber(item, "score");
+                sum += score;
+                if (score > bestScore) { bestScore = score; bestLabel = label; }
+            }
+            return new Dictionary<string, object>
+            {
+                ["count"] = count,
+                ["labels"] = labels,
+                ["best"] = bestLabel,
+                ["bestScore"] = count > 0 ? Math.Round(bestScore, 4) : 0.0,
+                ["meanScore"] = count > 0 ? Math.Round(sum / count, 4) : 0.0,
+            };
+        }
+
+        private static List<object> ApplyTrack(VisionOpSpec spec, List<object> items, VisionContext context)
+        {
+            var key = "track:" + (spec.Id ?? spec.Out);
+            var state = context.State.Get<TrackerState>(key);
+            if (state == null) { state = new TrackerState(); context.State.Set(key, state); }
+            return Tracker.Update(state, items, context.TimeSeconds,
+                spec.Number("maxDistance", 0.15), spec.Int("maxAge", 5), spec.Number("smooth", 0.5),
+                spec.Int("minHits", 2), spec.Bool("matchLabel", true));
+        }
+
+        // ---- 時間 ----
+
+        private sealed class StabilizeState
+        {
+            public readonly Dictionary<string, double> Numbers = new Dictionary<string, double>();
+            public readonly Dictionary<string, List<string>> Texts = new Dictionary<string, List<string>>();
+        }
+
+        /// <summary>数値は指数平滑、文字と真偽は直近 N 回の多数決。ちらつく値を落ち着かせる。</summary>
+        private static Dictionary<string, object> ApplyStabilize(VisionOpSpec spec, Dictionary<string, object> record, VisionContext context)
+        {
+            var key = "stabilize:" + (spec.Id ?? spec.Out);
+            var state = context.State.Get<StabilizeState>(key);
+            if (state == null) { state = new StabilizeState(); context.State.Set(key, state); }
+
+            double alpha = Math.Max(0.01, Math.Min(1, spec.Number("alpha", 0.4)));
+            int window = Math.Max(1, spec.Int("window", 5));
+            var output = new Dictionary<string, object>(record);
+
+            foreach (var pair in record)
+            {
+                if (pair.Value is bool || pair.Value is string)
+                {
+                    var text = pair.Value.ToString();
+                    if (!state.Texts.TryGetValue(pair.Key, out var history)) { history = new List<string>(); state.Texts[pair.Key] = history; }
+                    history.Add(text);
+                    if (history.Count > window) history.RemoveAt(0);
+                    var counts = new Dictionary<string, int>();
+                    string best = text; int bestCount = 0;
+                    foreach (var h in history)
+                    {
+                        counts[h] = (counts.TryGetValue(h, out var c) ? c : 0) + 1;
+                        if (counts[h] > bestCount) { bestCount = counts[h]; best = h; }
+                    }
+                    output[pair.Key] = pair.Value is bool ? (object)(best == "True") : best;
+                }
+                else if (pair.Value is int || pair.Value is long || pair.Value is double || pair.Value is float)
+                {
+                    double v = Convert.ToDouble(pair.Value);
+                    if (state.Numbers.TryGetValue(pair.Key, out var previous)) v = previous + (v - previous) * alpha;
+                    state.Numbers[pair.Key] = v;
+                    output[pair.Key] = Math.Round(v, 4);
+                }
+            }
+            return output;
+        }
+
+        /// <summary>前のフレームとの差。動いた所だけのマスク。最初のフレームは空。</summary>
+        private static MaskImage ApplyMotion(VisionOpSpec spec, GrayImage gray, VisionContext context)
+        {
+            var key = "motion:" + (spec.Id ?? spec.Out);
+            var previous = context.State.Get<GrayImage>(key);
+            context.State.Set(key, gray);
+
+            var mask = new MaskImage(gray.Width, gray.Height);
+            if (previous == null || previous.Width != gray.Width || previous.Height != gray.Height) return mask;
+
+            int threshold = spec.Int("threshold", 25);
+            for (int i = 0; i < mask.Data.Length; i++)
+            {
+                if (Math.Abs(gray.Data[i] - previous.Data[i]) >= threshold) mask.Data[i] = MaskImage.On;
+            }
+            return mask;
+        }
+
+        private sealed class EventState
+        {
+            public bool WasTrue;
+            public double LastFired = double.NegativeInfinity;
+        }
+
+        /// <summary>
+        /// 条件を満たしたらイベントを発火する。gate と違い、パイプラインは止めない。
+        /// mode = onChange なら「満たさない → 満たす」に変わった瞬間だけ、always なら満たしている間ずっと。
+        /// </summary>
+        private static Dictionary<string, object> ApplyEvent(VisionOpSpec spec, Dictionary<string, object> record, VisionContext context)
+        {
+            var key = "event:" + (spec.Id ?? spec.Out);
+            var state = context.State.Get<EventState>(key);
+            if (state == null) { state = new EventState(); context.State.Set(key, state); }
+
+            bool condition = Compare(record, spec.Text("value", "count"), spec.Text("op", "gte"), spec.Number("compare", 1));
+            bool fire = condition;
+            if (string.Equals(spec.Text("mode", "onChange"), "onChange", StringComparison.OrdinalIgnoreCase) && state.WasTrue) fire = false;
+            double cooldown = spec.Number("cooldown", 0);
+            if (fire && context.TimeSeconds - state.LastFired < cooldown) fire = false;
+
+            if (fire)
+            {
+                context.Emit(spec.Text("name", "vision.event"));
+                state.LastFired = context.TimeSeconds;
+            }
+            state.WasTrue = condition;
+
+            return new Dictionary<string, object>(record)
+            {
+                ["condition"] = condition,
+                ["fired"] = fire,
+            };
+        }
+
+        private static bool Compare(Dictionary<string, object> record, string field, string comparison, double compare)
+        {
+            double actual = 0;
+            if (record.TryGetValue(field, out var raw) && raw != null)
+            {
+                if (raw is bool b) actual = b ? 1 : 0;
+                else { try { actual = Convert.ToDouble(raw); } catch { actual = 0; } }
+            }
+            switch ((comparison ?? "gte").ToLowerInvariant())
+            {
+                case "lt": return actual < compare;
+                case "lte": return actual <= compare;
+                case "gt": return actual > compare;
+                case "eq": return Math.Abs(actual - compare) < 1e-9;
+                case "neq": return Math.Abs(actual - compare) >= 1e-9;
+                default: return actual >= compare;
+            }
+        }
+
+        // ---- 幾何 ----
+
+        /// <summary>四角形の中を正対した長方形の画に起こす。看板や画面を読む前段。</summary>
+        private static VisionValue ApplyRectify(VisionOpSpec spec, ColorImage image, List<object> quads, VisionContext context)
+        {
+            int index = spec.Int("index", 0);
+            if (quads == null || quads.Count <= index || !(quads[index] is Dictionary<string, object> quad)
+                || !quad.TryGetValue("px", out var pxRaw) || !(pxRaw is List<object> px) || px.Count < 8)
+            {
+                context.Stop(spec.Text("reason", "noQuad"));
+                return VisionValue.OfColor(image);
+            }
+
+            var corners = new double[8];
+            for (int i = 0; i < 8; i++) corners[i] = Convert.ToDouble(px[i]);
+
+            int width = Math.Max(16, spec.Int("width", 320));
+            int height = spec.Int("height", 0);
+            if (height <= 0) height = Math.Max(16, (int)Math.Round(width * Quads.AspectOf(corners)));
+
+            var channels = new GrayImage[3];
+            for (int c = 0; c < 3; c++)
+            {
+                var status = RegionRectifier.TryRectify(image.Channel(c), corners, width, height, out channels[c]);
+                if (status != RectifyStatus.Ok)
+                {
+                    context.Stop(status == RectifyStatus.OutOfView ? "outOfView"
+                        : status == RectifyStatus.TooOblique ? "tooOblique" : "degenerate");
+                    return VisionValue.OfColor(image);
+                }
+            }
+            return VisionValue.OfColor(ColorImage.Combine(channels[0], channels[1], channels[2]));
+        }
+
+        // ---- 学習済みモデル ----
+
+        /// <summary>
+        /// ONNX モデルを流す。前処理と後処理はここ (UnityEngine 非依存) で行い、
+        /// 推論だけを IVisionModelRunner (実機: Inference Engine、エディタ: ONNX Runtime) に頼む。
+        /// </summary>
+        private static VisionValue ApplyInfer(VisionOpSpec spec, ColorImage image, VisionContext context)
+        {
+            var id = spec.Text("model", null);
+            if (id == null) throw new VisionPipelineException("modelNotSet");
+            if (context.Models == null || !context.Models.TryGetValue(id, out var model))
+                throw new VisionPipelineException($"modelMissing:{id}");
+            if (context.ModelRunner == null)
+                throw new VisionPipelineException("modelRunnerUnavailable");
+
+            var started = DateTime.UtcNow;
+            var prepared = ModelPreprocess.Prepare(image, model);
+            if (!context.ModelRunner.TryRun(model, prepared.Tensor, out var outputs, out var runError))
+                throw new VisionPipelineException($"inferFailed:{runError}");
+
+            var value = ModelPostprocess.Interpret(model, prepared, outputs, out var readError);
+            if (value == null) throw new VisionPipelineException($"inferOutput:{readError}");
+
+            context.Note(spec.Out + ".inferMs", (int)(DateTime.UtcNow - started).TotalMilliseconds);
+            return value;
         }
 
         // ---- しきい値 ----

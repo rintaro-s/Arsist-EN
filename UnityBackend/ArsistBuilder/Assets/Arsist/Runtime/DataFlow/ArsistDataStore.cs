@@ -50,7 +50,16 @@ namespace Arsist.Runtime.DataFlow
             value = null;
             if (string.IsNullOrWhiteSpace(path)) return false;
 
+            // まず「そのままの名前」で引く。
+            // SetValue("chat.input", ...) は "chat.input" という 1 つの名前で入れるので、
+            // ドットを入れ子とみなして辿ると**必ず外れる**。読み書きで食い違うと、
+            // 「打った文字が消える」「スクリプトが値を受け取れない」という形で出る
+            // (2026-09 に踏んだ: キーボードで打っても入力欄に出ず、確定しても応答が無い)。
+            if (_values.TryGetValue(path, out value)) return true;
+
+            // 入れ子 (認識タスクが辞書ごと書いたもの) を辿る。
             // "items[0]" を "items.0" に均してから分解する。
+            value = null;
             var parts = path.Replace("[", ".").Replace("]", string.Empty).Split('.');
             object current = _values;
             for (var i = 0; i < parts.Length; i++)
@@ -83,6 +92,23 @@ namespace Arsist.Runtime.DataFlow
 
             value = current;
             return true;
+        }
+
+        /// <summary>名前を 1 つ消す。bind している UI にも知らせる。</summary>
+        public void RemoveValue(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key)) return;
+            if (!_values.Remove(key)) return;
+            OnValueChanged?.Invoke(key, null);
+        }
+
+        /// <summary>全部消す。bind している UI にも知らせる。</summary>
+        public void Clear()
+        {
+            if (_values.Count == 0) return;
+            var keys = new List<string>(_values.Keys);
+            _values.Clear();
+            foreach (var key in keys) OnValueChanged?.Invoke(key, null);
         }
 
         public Dictionary<string, object> GetSnapshot()

@@ -41,6 +41,12 @@ namespace Arsist.Runtime
         [Header("Interaction")]
         [SerializeField] private bool _enableGazeInteraction = true;
         [SerializeField] private bool _enableRayInteraction = true;
+        /// <summary>
+        /// 見つめ続けたら押す、までの秒数。0 なら使わない。
+        /// コントローラーが手元に無い / 電池切れ / つながっていないときの逃げ道。
+        /// コントローラーが見えている間は、そちらが優先で、こちらは働かない。
+        /// </summary>
+        [SerializeField] private float _gazeDwellSeconds;
         [SerializeField] private float _gazeActivationTime = 1.5f;
         
         [Header("Visual Feedback")]
@@ -55,6 +61,13 @@ namespace Arsist.Runtime
         // コントローラーレイの選択状態（Enter/Exit と トリガー立ち上がりでの決定を検出するため）
         private GameObject _rayCurrentTarget;
         private bool _rayTriggerWasPressed;
+        private float _lastRayReportAt;
+        private bool _rayReported;
+        private bool _controllerSeen;
+        private string _activeControllerName;
+        private GameObject _gazeTarget;
+        private float _gazeDwellTimer;
+        private bool _devicesReported;
 
         [Header("Performance")]
         [Tooltip("ARグラス側のリフレッシュレートに合わせた目標フレームレート。0以下で未設定。")]
@@ -282,6 +295,8 @@ namespace Arsist.Runtime
                 _rayLine.startWidth = 0.005f;
                 _rayLine.endWidth = 0.005f;
                 _rayLine.positionCount = 2;
+                // 線はワールド座標で置く (親が動いても二重に動かさない)
+                _rayLine.useWorldSpace = true;
                 
                 var rayShader = FindSafeShader(new[] { "Unlit/Color", "Universal Render Pipeline/Unlit", "Sprites/Default" });
                 if (rayShader != null)
@@ -355,8 +370,33 @@ namespace Arsist.Runtime
             }
         }
 
+        /// <summary>
+        /// 実機で「レイが出ない」ときに、何が繋がって見えているのかを 1 度だけ書き出す。
+        /// OpenXR はインタラクションプロファイルが無効だとコントローラーを一切見せないので、
+        /// ここが空かどうかで原因が切り分けられる。
+        /// </summary>
+        private void ReportXrDevicesOnce()
+        {
+            if (_devicesReported) return;
+            _devicesReported = true;
+
+            var all = new List<InputDevice>();
+            InputDevices.GetDevices(all);
+            if (all.Count == 0)
+            {
+                Debug.Log("[Arsist] XR input: no devices at all (the headset is not reporting input yet).");
+                return;
+            }
+            foreach (var device in all)
+            {
+                Debug.Log($"[Arsist] XR input: '{device.name}' [{device.characteristics}] valid={device.isValid}");
+            }
+        }
+
         private void UpdateInteraction()
         {
+            if (Time.frameCount > 120) ReportXrDevicesOnce();   // 起動直後は揃っていないので少し待つ
+
             if (_enableGazeInteraction && _gazeCursor != null)
             {
                 UpdateGazeInteraction();
@@ -368,24 +408,82 @@ namespace Arsist.Runtime
             }
         }
 
+        /// <summary>
+        /// レイの当たり先。3D の物 (Physics) と UI (長方形そのもの) の両方を見て、近い方を採る。
+        /// UI をコライダー任せにしないのは、大きさが後から決まる要素で当たり判定だけ 0 のまま
+        /// 残り、実機で「レイが UI を素通りする」ことがあるため (ArsistUiPointer の説明を参照)。
+        /// </summary>
+        private static bool RaycastAll(Ray ray, float maxDistance, out GameObject target, out Vector3 point)
+        {
+            // 中身は ArsistUiPointer に置いてある。視線・コントローラー・手が同じ判定を使うため。
+            return UI.ArsistUiPointer.RaycastScene(ray, maxDistance, out target, out point);
+        }
+
         private void UpdateGazeInteraction()
         {
             // 視線レイキャスト
             var ray = new Ray(_mainCamera.transform.position, _mainCamera.transform.forward);
-            
-            if (Physics.Raycast(ray, out RaycastHit hit, 10f))
-            {
-                _gazeCursor.SetActive(true);
-                _gazeCursor.transform.position = hit.point;
-                _gazeCursor.transform.rotation = Quaternion.LookRotation(hit.normal);
 
-                // 視線ヒット時の視覚的フィードバック
-                _gazeCursor.transform.localScale = Vector3.one * 1.2f;
-            }
-            else
+            // コントローラーが見えているときは、視線の輪を出さない。
+            // 出していると、コントローラーで狙っている板の上に常に丸が乗ったままになり、
+            // 「線が当たって丸ができて邪魔」という見え方になる。押すのもコントローラーに任せる。
+            if (_controllerSeen)
             {
                 _gazeCursor.SetActive(false);
+                ReleaseGazeTarget();
+                return;
             }
+
+            if (!RaycastAll(ray, 10f, out var gazeHit, out var gazePoint))
+            {
+                _gazeCursor.SetActive(false);
+                ReleaseGazeTarget();
+                return;
+            }
+
+            _gazeCursor.SetActive(true);
+            _gazeCursor.transform.position = gazePoint;
+            // カーソルは平たい円盤 (Cylinder を潰したもの) で、平らな面は Y 軸に垂直。
+            // Z を視線に向けると円盤が真横を向き、**細い線にしか見えない** (実機で「目線の先に線が出る」
+            // と言われたのはこれ)。Y をこちらに向けて、面がカメラを向くようにする。
+            _gazeCursor.transform.rotation =
+                Quaternion.LookRotation(_mainCamera.transform.forward) * Quaternion.Euler(90f, 0f, 0f);
+            _gazeCursor.transform.localScale = Vector3.one * 1.2f;
+
+            // 「見つめて押す」
+            if (_gazeDwellSeconds <= 0f)
+            {
+                ReleaseGazeTarget();
+                return;
+            }
+
+            if (gazeHit != _gazeTarget)
+            {
+                if (_gazeTarget != null) _gazeTarget.SendMessage("OnGazeExit", SendMessageOptions.DontRequireReceiver);
+                _gazeTarget = gazeHit;
+                _gazeDwellTimer = 0f;
+                if (_gazeTarget != null) _gazeTarget.SendMessage("OnGazeEnter", gazePoint, SendMessageOptions.DontRequireReceiver);
+                return;
+            }
+            if (_gazeTarget == null) return;
+
+            _gazeDwellTimer += Time.deltaTime;
+            // 溜まり具合をカーソルの大きさで見せる (押される直前が一番大きい)
+            _gazeCursor.transform.localScale = Vector3.one * (1.2f + 0.8f * Mathf.Clamp01(_gazeDwellTimer / _gazeDwellSeconds));
+
+            if (_gazeDwellTimer >= _gazeDwellSeconds)
+            {
+                _gazeDwellTimer = 0f;
+                _gazeTarget.SendMessage("OnGazeDwellSelect", gazePoint, SendMessageOptions.DontRequireReceiver);
+            }
+        }
+
+        private void ReleaseGazeTarget()
+        {
+            if (_gazeTarget == null) return;
+            _gazeTarget.SendMessage("OnGazeExit", SendMessageOptions.DontRequireReceiver);
+            _gazeTarget = null;
+            _gazeDwellTimer = 0f;
         }
 
         private void UpdateRayInteraction()
@@ -396,34 +494,87 @@ namespace Arsist.Runtime
 
             if (inputDevices.Count == 0)
             {
+                // 実機で「線が出ない」ときに、コントローラーが見えていないのか、
+                // 別の理由なのかを切り分けられるようにする (5 秒に 1 回だけ)。
+                if (Time.realtimeSinceStartup - _lastRayReportAt > 5f)
+                {
+                    _lastRayReportAt = Time.realtimeSinceStartup;
+                    Debug.Log("[Arsist] Controller ray: no controller is being tracked yet." +
+                              (_gazeDwellSeconds > 0f ? " Falling back to gaze." : ""));
+                }
+                _controllerSeen = false;
                 _rayLine.enabled = false;
                 ReleaseRayTarget();
                 return;
             }
 
-            var controller = inputDevices[0];
+            _controllerSeen = true;
 
-            if (!controller.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 pos) ||
-                !controller.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion rot))
+            // どのコントローラーを使うかを決め打ちにしない。
+            // inputDevices[0] だけを見ていると、それが左手だったときに右手のトリガーが
+            // 一生見えない (実機では「トリガーを弾いても一切入力を受け付けない」になる)。
+            // 押しているコントローラーがあればそれを、無ければ前に使っていたもの、
+            // それも無ければ右手 → 最初に姿勢が取れたもの、の順で選ぶ。
+            // 候補を全部見てから選ぶ。
+            var candidates = new List<(InputDevice device, Vector3 pos, Quaternion rot, bool pressed)>();
+            bool triggerPressed = false;
+            foreach (var device in inputDevices)
+            {
+                if (!device.isValid) continue;
+                if (!device.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 devicePos) ||
+                    !device.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion deviceRot))
+                {
+                    continue;
+                }
+                bool thisPressed = IsSelectPressed(device);
+                if (thisPressed) triggerPressed = true;
+                candidates.Add((device, devicePos, deviceRot, thisPressed));
+            }
+
+            // いま引いているもの → 前に使っていたもの → 右手 → 最初の 1 つ、の順で線の元を決める。
+            int chosen = -1;
+            for (int i = 0; i < candidates.Count && chosen < 0; i++) if (candidates[i].pressed) chosen = i;
+            for (int i = 0; i < candidates.Count && chosen < 0; i++) if (candidates[i].device.name == _activeControllerName) chosen = i;
+            for (int i = 0; i < candidates.Count && chosen < 0; i++)
+                if ((candidates[i].device.characteristics & InputDeviceCharacteristics.Right) != 0) chosen = i;
+            if (chosen < 0 && candidates.Count > 0) chosen = 0;
+
+            bool haveActive = chosen >= 0;
+            var active = haveActive ? candidates[chosen].device : default;
+            var pos = haveActive ? candidates[chosen].pos : default;
+            var rot = haveActive ? candidates[chosen].rot : Quaternion.identity;
+
+            if (!haveActive)
             {
                 _rayLine.enabled = false;
                 ReleaseRayTarget();
                 return;
+            }
+
+            if (!_rayReported || active.name != _activeControllerName)
+            {
+                _rayReported = true;
+                _activeControllerName = active.name;
+                Debug.Log($"[Arsist] Controller ray: using '{active.name}' ({inputDevices.Count} controller(s) tracked).");
             }
 
             _rayLine.enabled = true;
 
-            var startPos = pos;
-            var direction = rot * Vector3.forward;
+            // コントローラーの姿勢は「トラッキング空間」(カメラを吊っている Camera Offset の中) で来る。
+            // ワールド座標だと思って使うと、線も当たり判定も床のあたりに出てしまい、
+            // 実機では「レイが出ない」ように見える。カメラと同じ空間に直してから使う。
+            var trackingSpace = _cameraOffset != null ? _cameraOffset : transform;
+            var startPos = trackingSpace.TransformPoint(pos);
+            var direction = (trackingSpace.rotation * rot) * Vector3.forward;
             var endPos = startPos + direction * 10f;
 
             GameObject hitTarget = null;
             Vector3 hitPoint = default;
-            if (Physics.Raycast(startPos, direction, out RaycastHit hit, 10f))
+            if (RaycastAll(new Ray(startPos, direction), 10f, out var rayHit, out var rayPoint))
             {
-                endPos = hit.point;
-                hitPoint = hit.point;
-                hitTarget = hit.collider.gameObject;
+                endPos = rayPoint;
+                hitPoint = rayPoint;
+                hitTarget = rayHit;
             }
 
             _rayLine.SetPosition(0, startPos);
@@ -445,10 +596,17 @@ namespace Arsist.Runtime
             }
 
             // トリガーの立ち上がりだけを「決定」として送る（押しっぱなしで連打しない）
-            var triggerPressed = controller.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigger) && trigger;
-            if (triggerPressed && !_rayTriggerWasPressed && _rayCurrentTarget != null)
+            if (triggerPressed && !_rayTriggerWasPressed)
             {
-                _rayCurrentTarget.SendMessage("OnGazeDwellSelect", hitPoint, SendMessageOptions.DontRequireReceiver);
+                // 実機で「押したのに何も起きない」ときに、押せていないのか、
+                // 当たっていないのかを切り分けられるようにする (npm run logs で見える)。
+                Debug.Log(_rayCurrentTarget != null
+                    ? $"[Arsist] Select: '{_rayCurrentTarget.name}'"
+                    : "[Arsist] Select: pressed, but the ray was not on anything.");
+                if (_rayCurrentTarget != null)
+                {
+                    _rayCurrentTarget.SendMessage("OnGazeDwellSelect", hitPoint, SendMessageOptions.DontRequireReceiver);
+                }
             }
             // 押し続けている間は毎フレーム送る（Slider を掴んでドラッグする用途。
             // Button 等 OnGazeDrag を実装しないターゲットには何も起きない）
@@ -457,6 +615,20 @@ namespace Arsist.Runtime
                 _rayCurrentTarget.SendMessage("OnGazeDrag", hitPoint, SendMessageOptions.DontRequireReceiver);
             }
             _rayTriggerWasPressed = triggerPressed;
+        }
+
+        /// <summary>
+        /// 「決定」として扱う押し方。端末によってトリガーの伝わり方が違うので、まとめて見る。
+        ///   triggerButton   … 押した/離したとして来る場合 (OpenXR の多く)
+        ///   trigger (0..1)  … 引き具合としてだけ来る場合。半分引いたら押したとみなす
+        ///   primaryButton   … A / X。トリガーの割り当てが無い端末でも押せるように
+        /// </summary>
+        private static bool IsSelectPressed(InputDevice device)
+        {
+            if (device.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigger) && trigger) return true;
+            if (device.TryGetFeatureValue(CommonUsages.trigger, out float amount) && amount > 0.55f) return true;
+            if (device.TryGetFeatureValue(CommonUsages.primaryButton, out bool primary) && primary) return true;
+            return false;
         }
 
         private void ReleaseRayTarget()

@@ -61,6 +61,22 @@ export interface InteractionSettings {
      * XREAL One 系にはハンドトラッキング用カメラが無いため、有効にしても効果が無い。
      */
     handTracking: boolean;
+    /**
+     * 見つめ続けたら押す、までの秒数 (default: 0 = 使わない)。
+     * コントローラーが手元に無い / つながっていないときの逃げ道。
+     * コントローラーが見えている間は、そちらが優先でこちらは働かない。
+     */
+    gazeDwellSeconds?: number;
+    /**
+     * 文字入力 (Input 要素) で、どのキーボードを出すか (default: 'auto')。
+     *   'auto'   端末のキーボードを試し、出なければアプリの中のキーボードに落とす
+     *   'device' 端末のキーボードだけを使う (日本語・音声入力・予測変換が使える)
+     *   'inApp'  アプリの中のキーボードだけを使う (英数字。どの端末でも同じ見た目・同じ操作)
+     * 端末のキーボードが「どこに出るか」はエンジンからは分からない。たとえば XREAL では
+     * Android の入力方式が**手元のスマホ側に出る**ため、グラス内では何も起きないように見える。
+     * そういう端末では 'inApp' を選べるようにしてある。
+     */
+    textInput?: 'auto' | 'device' | 'inApp';
 }
 export interface ARSettings {
     trackingMode: TrackingMode;
@@ -265,7 +281,32 @@ export type VisionOpType =
 /** 色+マスク → 色の情報。代表色 */
  | 'dominantColor'
 /** 輝度 → 一致位置。テンプレートマッチング */
- | 'templateMatch';
+ | 'templateMatch'
+/**
+ * 色 → (モデル次第) 数値 / 塊 / マスク。学習済みモデル (ONNX) を流す。
+ * 出力の型はモデル定義の task で決まる: classify → 数値, detect → 塊, segment → マスク。
+ */
+ | 'infer'
+/** 塊 → 塊。ラベル・スコア・大きさで絞り、並べ替える */
+ | 'select'
+/** 塊 → 数値。件数、ラベルごとの数、一番確かな物 */
+ | 'countItems'
+/** 塊 → 塊。フレームをまたいで同じ物に ID を付け、位置を均し、速度を出す */
+ | 'track'
+/** 色+塊 → 色。枠を描く */
+ | 'annotate'
+/** 塊 → マスク。枠 (または塗り潰し) のマスク。world 出力の alpha に */
+ | 'boxMask'
+/** 数値 → 数値。数は指数平滑、文字と真偽は多数決。ちらつきを落ち着かせる */
+ | 'stabilize'
+/** 輝度 → マスク。前のフレームと違う所 */
+ | 'motion'
+/** 数値 → 数値。条件を満たしたらイベントを発火する (止めない) */
+ | 'event'
+/** マスク → 四角形の一覧 (看板・画面・紙) */
+ | 'quads'
+/** 色+四角形 → 色。四角形の中を正対した長方形に起こす */
+ | 'rectify';
 export interface VisionOp {
     id: string;
     op: VisionOpType;
@@ -277,6 +318,12 @@ export interface VisionOp {
     /** 出力の値名。後ろの op や outputs から参照する */
     out: string;
     params?: Record<string, unknown>;
+    /**
+     * 一時的に外す (素通し)。入力と出力の型が同じ op でだけ使える
+     * (blur / morphology / select / track / stabilize / annotate …)。
+     * 型が変わる op は外せない: 後ろの一手が受け取るものが無くなるため。
+     */
+    disabled?: boolean;
 }
 /** パイプラインの結果をどこに出すか。 */
 export type VisionOutput = 
@@ -302,6 +349,21 @@ export type VisionOutput =
     value: string;
     alpha?: string;
     bindingId: string;
+}
+/**
+ * 見つけた物の位置に置く。value は塊 (blobs) か四角形 (quads)。
+ * 画素 → 光線 → 指定の距離 (m) で、撮影時のカメラ姿勢からワールドに置く。
+ * label は札に出す項目 ('label' / 'score' / 'labelScore' / 'id' / 'none')。
+ * objectId を指定すると、最初の項目の位置へそのシーンオブジェクト (assetId) を動かす。
+ * ビューポートソースのタスクでのみ使える。
+ */
+ | {
+    kind: 'anchor';
+    value: string;
+    distance?: number;
+    label?: string;
+    objectId?: string;
+    maxItems?: number;
 };
 export interface VisionPipeline {
     id: string;
@@ -370,6 +432,192 @@ export interface PerceptionSettings {
     /** 画像認識タスク (省略可) */
     tasks?: PerceptionTask[];
 }
+/** モデルを何に使うか。 */
+export type ModelUse = 'image' | 'text' | 'tensor';
+/**
+ * モデルが解く問題。`infer` op の出力の型をこれで決める。
+ *   classify → 数値 (label / score / top)
+ *   detect   → 塊の一覧 (label / score / x / y / width / height)
+ *   segment  → マスク
+ *   raw      → 数値 (出力テンソルの生の値。デバッグやスクリプト用)
+ */
+export type ModelTask = 'classify' | 'detect' | 'segment' | 'raw';
+/** 入力テンソルの作り方。 */
+export interface ModelInputSpec {
+    /** ONNX の入力名。省略時は最初の入力 */
+    name?: string;
+    width: number;
+    height: number;
+    /** 'NCHW' (PyTorch 系) か 'NHWC' (TensorFlow 系) */
+    layout: 'NCHW' | 'NHWC';
+    /** 3 = 色, 1 = 輝度 */
+    channels: 1 | 3;
+    colorOrder: 'RGB' | 'BGR';
+    /** 画素値に掛ける係数。0..1 にするなら 1/255 */
+    scale: number;
+    /** (画素 * scale - mean) / std。チャンネルごと。ImageNet 系なら [0.485,0.456,0.406] / [0.229,0.224,0.225] */
+    mean: number[];
+    std: number[];
+    /**
+     * 'stretch'   = 入力の大きさに引き伸ばす
+     * 'letterbox' = 比率を保って縮め、余白を padColor で埋める (YOLO 系はこちら)
+     */
+    resize: 'stretch' | 'letterbox';
+    /** letterbox の余白 (0..255)。既定 114 */
+    padValue?: number;
+}
+/** 出力テンソルの読み方。task ごとに使う項目が違う。 */
+export interface ModelOutputSpec {
+    /** 主出力の名前。省略時は最初の出力 */
+    name?: string;
+    /** 出力がロジットなら softmax を掛ける */
+    softmax?: boolean;
+    /** 上位いくつを top に入れるか (既定 5) */
+    topK?: number;
+    /**
+     * 'yolo'      = [1, 4+C, N] か [1, N, 4+C] (YOLOv8/11)。cx,cy,w,h + クラス確率
+     * 'yolo5'     = [1, N, 5+C] (YOLOv5)。cx,cy,w,h,objectness + クラス確率
+     * 'xyxyScoreClass' = [N, 6] か [1, N, 6]。x1,y1,x2,y2,score,class (NMS 済みの出力)
+     * 'separate'  = boxes / scores / classes が別々の出力
+     */
+    boxLayout?: 'yolo' | 'yolo5' | 'xyxyScoreClass' | 'separate';
+    /** separate のときの出力名 */
+    boxesName?: string;
+    scoresName?: string;
+    classesName?: string;
+    /** 箱の座標が 0..1 なら true、入力画素なら false */
+    boxesNormalized?: boolean;
+    /** 箱の形式。yolo 系は cxcywh、それ以外は大抵 xyxy */
+    boxFormat?: 'xyxy' | 'cxcywh' | 'xywh';
+    scoreThreshold?: number;
+    iouThreshold?: number;
+    maxItems?: number;
+    /**
+     * 'argmax'  = [1, C, H, W] / [1, H, W, C]。一番強いクラスが classIndex ならマスク
+     * 'sigmoid' = [1, 1, H, W] / [1, H, W]。値が maskThreshold を超えたらマスク
+     */
+    maskMode?: 'argmax' | 'sigmoid';
+    /** argmax のとき、マスクにするクラス番号 (複数可) */
+    classIndices?: number[];
+    maskThreshold?: number;
+    /** 出力にロジットが入っていて sigmoid が要るなら true */
+    applySigmoid?: boolean;
+    /** 生の値を先頭からいくつ store に入れるか (既定 16) */
+    rawLimit?: number;
+}
+/** どの計算機で動かすか。'auto' はコンピュートシェーダーが使えれば GPU */
+export type ModelBackend = 'auto' | 'gpu' | 'cpu';
+/**
+ * 実機で何に動かしてもらうか。
+ *   'unity'       Unity の Inference Engine。GPU で動く。標準の ONNX 演算子だけのモデル向け
+ *   'onnxruntime' APK に同梱する ONNX Runtime。CPU だが、最近の言語モデルの書き出し
+ *                 (GroupQueryAttention / MatMulNBits / If など) も動く。33MB 大きくなる
+ *   'auto'        取り込み時に調べた演算子で決める (Unity が読めないものがあれば onnxruntime)
+ */
+export type ModelRuntime = 'auto' | 'unity' | 'onnxruntime';
+/** ONNX を読んで分かったこと。エディタが埋め、以後は参考情報 */
+export interface ModelInspection {
+    irVersion?: number;
+    opset?: number;
+    producer?: string;
+    inputs: Array<{
+        name: string;
+        dims: Array<number | string>;
+        elemType?: string;
+    }>;
+    outputs: Array<{
+        name: string;
+        dims: Array<number | string>;
+        elemType?: string;
+    }>;
+    /** 使われている演算子の種類 */
+    opTypes?: string[];
+    /** 標準 ONNX 以外のドメイン (com.microsoft など)。Unity では動かない */
+    customDomains?: string[];
+    /** 重みを別ファイルに持つモデルが参照しているファイル名。ビルド時に一緒にコピーされる */
+    externalData?: string[];
+    fileSize?: number;
+}
+/** 文章のモデルが何をするか。 */
+export type TextModelTask = 'generate' | 'embed' | 'classify';
+/**
+ * 会話をモデルが学習した書式にする方法。指示に従う LLM は学習時と同じ書式でないとまともに答えない。
+ *   chatml (Qwen / SmolLM …) / llama3 / phi3 / gemma / mistral (Llama 2 も) / none (補完用) / custom
+ */
+export type ChatFormatName = 'chatml' | 'llama3' | 'phi3' | 'gemma' | 'mistral' | 'none' | 'custom';
+/** 文章のモデル (use: 'text') の設定。Runtime/Inference/Text/TextModelSpec.cs が読む。 */
+export interface TextModelSpec {
+    task: TextModelTask;
+    /** HuggingFace の tokenizer.json (プロジェクト相対、Assets/Models/ 以下)。BPE / WordPiece に対応 */
+    tokenizer: string;
+    chatFormat?: ChatFormatName;
+    /** chatFormat が custom のときの型。{system} と {prompt} を埋める */
+    promptTemplate?: string;
+    /** 既定の system の指示。スクリプトの options.system で上書きできる */
+    systemPrompt?: string;
+    /** 1 回に書かせる長さの上限 (トークン)。既定 128 */
+    maxNewTokens?: number;
+    /** 0 = 毎回同じ答え。高いほどばらつく。既定 0.7 */
+    temperature?: number;
+    topK?: number;
+    topP?: number;
+    /** 同じ言葉の繰り返しを抑える。1 = 抑えない。既定 1.1 */
+    repetitionPenalty?: number;
+    /** この文字列が出たら止める */
+    stop?: string[];
+    /** 生成を止めるトークン (<|im_end|> など)。取り込み時に tokenizer_config / generation_config から埋める */
+    eosTokens?: string[];
+    /** プロンプト + 生成の長さの上限 (トークン)。既定 2048 */
+    maxContext?: number;
+    /**
+     * 考えている途中 (<think> … </think>) を答えから外す。既定 true。
+     * Qwen3 系など、答えの前に考えを書くモデル向け。
+     */
+    hideThinking?: boolean;
+    /** 'mean' (平均) / 'cls' (先頭) / 'last' (最後)。出力が既に [1, D] ならそのまま */
+    pooling?: 'mean' | 'cls' | 'last';
+    /** ベクトルを長さ 1 にする (似ている度合いを測るならそのままで良い)。既定 true */
+    normalize?: boolean;
+    /** 使う出力の名前。省略時は sentence_embedding / last_hidden_state / logits の順に探す */
+    outputName?: string;
+    /** 入力の長さの上限 (トークン)。既定 256 */
+    maxLength?: number;
+    /** classify のクラス番号 → 名前 */
+    labels?: string[];
+}
+export interface ModelDefinition {
+    id: string;
+    name: string;
+    /** ONNX ファイル (プロジェクト相対、Assets/Models/ 以下) */
+    file: string;
+    format: 'onnx';
+    /** 何に使うか (IR v3)。これで下のどの項目を読むかが決まる */
+    use: ModelUse;
+    task?: ModelTask;
+    input?: ModelInputSpec;
+    output?: ModelOutputSpec;
+    /** クラス番号 → 名前。無ければ番号がそのまま名前になる */
+    labels?: string[];
+    text?: TextModelSpec;
+    backend?: ModelBackend;
+    /** 実機でどちらの推論器に動かしてもらうか。既定は 'auto' */
+    runtime?: ModelRuntime;
+    inspection?: ModelInspection;
+    /**
+     * APK に積むか。既定は true。
+     * エディタの「試す」では動くが実機では動かないモデル (量子化された LLM など) を、
+     * 手元で使いながらビルドからは外すための項目。
+     */
+    includeInBuild?: boolean;
+}
+/** 画像のモデル (画像認識の `infer` op に使える)。 */
+export type ImageModelDefinition = ModelDefinition & {
+    use: 'image';
+    task: ModelTask;
+    input: ModelInputSpec;
+    output: ModelOutputSpec;
+};
+export declare function isImageModel(model: ModelDefinition | undefined | null): model is ImageModelDefinition;
 export interface DesignSystem {
     defaultFont: string;
     primaryColor: string;
@@ -460,7 +708,14 @@ export interface UILayoutData {
     };
     root: UIElement;
 }
-export type UIElementType = 'Panel' | 'Text' | 'Button' | 'Image' | 'Slider' | 'Input' | 'Gauge' | 'Graph';
+export type UIElementType = 'Panel' | 'Text' | 'Button' | 'Image' | 'Slider' | 'Input' | 'Gauge' | 'Graph'
+/**
+ * アプリの中に出すキーボード (ArsistVirtualKeyboard)。
+ * 打った文字は bind.key に入り、確定すると "<bindingId>:submit" のイベントが鳴る。
+ * content にキーの並びを書ける ("1234567890|qwertyuiop|asdfghjkl|zxcvbnm")。
+ * かな漢字変換が要るなら Input 要素 (端末のキーボード) を使う。
+ */
+ | 'Keyboard';
 export interface UIElement {
     id: string;
     type: UIElementType;
@@ -559,7 +814,15 @@ export interface ScriptBundle {
 export interface ArsistProject {
     id: string;
     name: string;
+    /** アプリ (プロジェクト) のバージョン。ユーザーが決める。IR の版ではない */
     version: string;
+    /**
+     * IR (このファイル形式) の版。src/shared/irVersion.ts の CURRENT_IR_VERSION。
+     * 無ければ 1 (この項目が無かった頃のプロジェクト)。
+     * 古い版のプロジェクトを開くと、Unity と同じように「アップグレードするか」を訊く。
+     * 移行の中身は src/main/project/migrations.ts。
+     */
+    irVersion?: number;
     createdAt: string;
     updatedAt: string;
     appType: ProjectTemplate;
@@ -574,6 +837,8 @@ export interface ArsistProject {
     scripts?: ScriptData[];
     /** 画像アンカー等の知覚ターゲット (省略可・後方互換) */
     perception?: PerceptionSettings;
+    /** 画像処理パイプラインの `infer` op が使う学習済みモデル (省略可) */
+    models?: ModelDefinition[];
 }
 export interface BuildConfig {
     targetDevice: string;

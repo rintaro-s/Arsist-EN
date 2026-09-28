@@ -5,7 +5,7 @@ import { useTheme } from '../theme';
 import { useT } from '../i18n';
 
 export function TitleBar() {
-  const { project, isDirty } = useProjectStore();
+  const { project, isDirty, readOnly } = useProjectStore();
   const { theme, toggleTheme } = useTheme();
   const t = useT();
 
@@ -34,6 +34,11 @@ export function TitleBar() {
           {project && (
             <span className="text-arsist-muted">
               {' '} - {project.name}{isDirty && ' *'}
+            </span>
+          )}
+          {project && readOnly && (
+            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 align-middle">
+              {t('ir.readOnlyBadge')}
             </span>
           )}
         </span>

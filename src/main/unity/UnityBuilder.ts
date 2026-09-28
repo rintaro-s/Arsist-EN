@@ -12,6 +12,7 @@ import * as https from 'https';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import { liveContext, getGradleCandidates, getUnityLicenseCandidates } from '../platform/paths';
+import { trackChild, longRunningOptions, killTree } from '../platform/childProcesses';
 import { isUnityTextureExtension, UNITY_TEXTURE_EXTENSIONS } from '../../shared/assets';
 import type { BackgroundMode } from '../../shared/types';
 
@@ -320,12 +321,16 @@ export class UnityBuilder extends EventEmitter {
       }
       env.UNITY_LICENSE_FILE = ulfPath;
 
-      const p = spawn(this.unityPath, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env,
-        shell: false,
-        windowsHide: true,
-      });
+      const p = trackChild(
+        spawn(this.unityPath, args, longRunningOptions({
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env,
+          shell: false,
+          windowsHide: true,
+        })),
+        'Unity license',
+        true,
+      );
 
       const chunks: string[] = [];
       p.stdout?.on('data', (d) => chunks.push(d.toString()));
@@ -465,6 +470,7 @@ export class UnityBuilder extends EventEmitter {
       // Phase 1: Unityワークディレクトリ準備
       this.emitProgress('prepare-unity', 5, 'Unityプロジェクトを準備中...');
       const unityProjectPath = await this.prepareUnityProject(config.projectPath, {
+        manifestData: config.manifestData,
         cleanBuild: config.cleanBuild,
         targetDevice: config.targetDevice,
       });
@@ -837,15 +843,22 @@ export class UnityBuilder extends EventEmitter {
    */
   cancel(): void {
     if (this.currentProcess) {
-      // Windows: シグナルが使えないため通常のkill()を使用
-      if (process.platform === 'win32') {
-        this.currentProcess.kill();
+      // Unity が起こした Gradle / Java ごと止める。親だけ kill すると、
+      // 止めたはずのビルドが裏で走り続ける (CPU を食う)。
+      if (this.currentProcess.pid != null) {
+        killTree(this.currentProcess.pid, process.platform !== 'win32');
       } else {
-        this.currentProcess.kill('SIGTERM');
+        this.currentProcess.kill();
       }
       this.currentProcess = null;
+      this.buildInProgress = false;
       this.emit('log', '[Arsist] Build cancelled by user');
     }
+  }
+
+  /** ビルド中か (終了時に「やめていいか」を聞くために使う)。 */
+  isBuilding(): boolean {
+    return this.buildInProgress || this.currentProcess != null;
   }
 
   // ========================================
@@ -1093,7 +1106,7 @@ export class UnityBuilder extends EventEmitter {
    */
   private async prepareUnityProject(
     workingDir: string,
-    options: { cleanBuild?: boolean; targetDevice: string },
+    options: { cleanBuild?: boolean; targetDevice: string; manifestData?: unknown },
   ): Promise<string> {
     await fs.ensureDir(workingDir);
 
@@ -1146,6 +1159,7 @@ export class UnityBuilder extends EventEmitter {
     await this.removeAssetFolder(assetsRoot, path.join('Arsist', 'Editor', 'Adapters'));
 
     await this.ensureUnityUiPackages(workingDir);
+    await this.ensureInferencePackage(workingDir, options.manifestData);
 
     await fs.writeJSON(
       path.join(workingDir, UnityBuilder.WORKSPACE_STAMP_FILE),
@@ -1186,6 +1200,100 @@ export class UnityBuilder extends EventEmitter {
       await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
       this.emit('log', `[Arsist] Unity UI packages ensured for ${this.getUnityMajorVersion() >= 6000 ? 'Unity 6+' : 'Unity 2022'}`);
     }
+  }
+
+  /**
+   * Unity Inference Engine (旧 Sentis)。ONNX を実機で動かすためのパッケージ。
+   * 2.2.0〜2.6.x はすべて Unity 6000.0 以降で動く (レジストリの unity フィールド)。
+   * 2.6 で ONNX opset 25 まで対応。
+   */
+  static readonly INFERENCE_PACKAGE = 'com.unity.ai.inference';
+  static readonly INFERENCE_PACKAGE_VERSION = '2.6.1';
+
+  /**
+   * モデル (`infer` op) を使うプロジェクトでだけ Inference Engine を入れる。
+   * 常に入れると、使わないプロジェクトの APK までコンピュートシェーダー分 (数 MB) 太る。
+   * 外したプロジェクトからは抜く。ArsistBuildPipeline はパッケージの有無で
+   * ARSIST_INFERENCE define を立て、無いのにモデルがあれば落とす。
+   */
+  private async ensureInferencePackage(workingDir: string, manifestData: unknown): Promise<void> {
+    const manifestPath = path.join(workingDir, 'Packages', 'manifest.json');
+    if (!await fs.pathExists(manifestPath)) return;
+
+    const models = (manifestData as { models?: unknown[] } | undefined)?.models;
+    const wanted = Array.isArray(models) && models.length > 0;
+
+    const manifest = await fs.readJSON(manifestPath);
+    const dependencies = (manifest.dependencies ?? {}) as Record<string, string>;
+    const had = UnityBuilder.INFERENCE_PACKAGE in dependencies;
+
+    if (wanted && dependencies[UnityBuilder.INFERENCE_PACKAGE] !== UnityBuilder.INFERENCE_PACKAGE_VERSION) {
+      dependencies[UnityBuilder.INFERENCE_PACKAGE] = UnityBuilder.INFERENCE_PACKAGE_VERSION;
+      manifest.dependencies = dependencies;
+      await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
+      this.emit('log', `[Arsist] Inference Engine ${UnityBuilder.INFERENCE_PACKAGE_VERSION} added for ${models!.length} model(s)`);
+    } else if (!wanted && had) {
+      delete dependencies[UnityBuilder.INFERENCE_PACKAGE];
+      manifest.dependencies = dependencies;
+      await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
+      this.emit('log', '[Arsist] Inference Engine removed (this project has no models)');
+    }
+
+    // define も揃える。ArsistBuildPipeline が立てるのはビルドの途中 (Phase 3) で、Unity 起動時の
+    // コンパイルには前回のビルドの define が使われる。モデルを外したプロジェクトを同じ作業フォルダで
+    // ビルドすると、パッケージだけ消えて ARSIST_INFERENCE が残り、起動時のコンパイルで落ちる
+    // (実際に一度踏んだ)。起動前にここで直しておく。
+    const settingsPath = path.join(workingDir, 'ProjectSettings', 'ProjectSettings.asset');
+    if (await fs.pathExists(settingsPath)) {
+      const before = await fs.readFile(settingsPath, 'utf8');
+      const after = UnityBuilder.syncInferenceDefine(before, wanted);
+      if (after !== before) {
+        await fs.writeFile(settingsPath, after, 'utf8');
+        this.emit('log', `[Arsist] ARSIST_INFERENCE define ${wanted ? 'added to' : 'removed from'} ProjectSettings`);
+      }
+    }
+  }
+
+  /**
+   * ProjectSettings.asset の scriptingDefineSymbols に ARSIST_INFERENCE を入れる / 抜く (純粋な文字列処理)。
+   * 形は
+   *   scriptingDefineSymbols:
+   *     Android: GLTFAST;ARSIST_INFERENCE
+   * で、空のときは `scriptingDefineSymbols: {}`。Android の行だけを見る (ビルド対象は Android だけ)。
+   */
+  static syncInferenceDefine(assetText: string, wanted: boolean): string {
+    const define = 'ARSIST_INFERENCE';
+    const lines = assetText.split('\n');
+    const at = lines.findIndex((l) => /^\s*scriptingDefineSymbols:/.test(l));
+    if (at < 0) return assetText;
+
+    // `scriptingDefineSymbols: {}` (空) → 入れるなら map に展開する
+    if (/scriptingDefineSymbols:\s*\{\}\s*$/.test(lines[at])) {
+      if (!wanted) return assetText;
+      lines.splice(at, 1, '  scriptingDefineSymbols:', `    Android: ${define}`);
+      return lines.join('\n');
+    }
+
+    let androidLine = -1;
+    for (let i = at + 1; i < lines.length; i++) {
+      if (!/^\s{4}\S/.test(lines[i])) break; // 入れ子の終わり
+      if (/^\s{4}Android:/.test(lines[i])) { androidLine = i; break; }
+    }
+
+    if (androidLine < 0) {
+      if (!wanted) return assetText;
+      lines.splice(at + 1, 0, `    Android: ${define}`);
+      return lines.join('\n');
+    }
+
+    const current = lines[androidLine].replace(/^\s{4}Android:\s*/, '').trim();
+    const symbols = current.length > 0 ? current.split(';').map((s) => s.trim()).filter((s) => s.length > 0) : [];
+    const has = symbols.includes(define);
+    if (wanted && !has) symbols.push(define);
+    if (!wanted && has) symbols.splice(symbols.indexOf(define), 1);
+    if (has === wanted) return assetText;
+    lines[androidLine] = `    Android: ${symbols.join(';')}`;
+    return lines.join('\n');
   }
 
   /** 検出済み Unity バージョンのメジャー番号（例 6000 / 2022）。不明なら 0。 */
@@ -1287,12 +1395,16 @@ export class UnityBuilder extends EventEmitter {
         '-logFile', this.normalizeOsPath(logFile),
       ];
 
-      const proc = spawn(this.unityPath, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
-        shell: false,
-        windowsHide: true,
-      });
+      const proc = trackChild(
+        spawn(this.unityPath, args, longRunningOptions({
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env },
+          shell: false,
+          windowsHide: true,
+        })),
+        'Unity package import',
+        true,
+      );
 
       let stderr = '';
       let stdout = '';
@@ -2666,12 +2778,18 @@ export class UnityBuilder extends EventEmitter {
       }
 
       // Windowsでも shell 経由にせず、Unity.exe を直接起動する（スペース含むパスでも安全）
-      this.currentProcess = spawn(this.unityPath, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env,
-        shell: false,
-        windowsHide: true,
-      });
+      // detached: Unity はさらに Gradle / Java を起こす。プロセスグループの長にしておかないと、
+      // ビルドを止めたとき (ウィンドウを閉じたときも) 子だけが走り続ける。
+      this.currentProcess = trackChild(
+        spawn(this.unityPath, args, longRunningOptions({
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env,
+          shell: false,
+          windowsHide: true,
+        })),
+        'Unity build',
+        true,
+      );
 
       this.currentProcess.stdout?.on('data', (data) => {
         const lines = data.toString().split('\n');

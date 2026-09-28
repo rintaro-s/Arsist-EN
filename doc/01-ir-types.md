@@ -228,11 +228,20 @@ PerceptionRegion { id, name, rect }        rect は 0..1、原点は写真の左
 
 ArsistProject.perception.tasks?: PerceptionTask[]
 PerceptionTask
-├── type       'ocr' | 'capture'
+├── type       'ocr' | 'capture' | 'vision'
 ├── source     { kind:'region', targetId, regionId } | { kind:'viewport', rect }
 ├── trigger    ScriptTrigger (onStart / interval / event) または { type:'manual' }
 ├── storeAs    DataStore キー。UI の bind から <storeAs>.text / .status が読める
-└── engine?    { kind:'mlkit'|'mock', script?:'latin'|'japanese', mockText? }
+├── engine?    { kind:'mlkit'|'mock', script?:'latin'|'japanese', mockText? }
+└── pipeline?  type === 'vision' のときの VisionPipeline (doc/14)。`infer` op は ArsistProject.models を参照する (doc/15)
+
+VisionPipeline
+├── maxWidth   処理前に縮める幅
+├── ops[]      { id, op, in?, out, params?, disabled? }   disabled = 素通し (入出力の型が同じ op だけ)
+└── outputs[]  store (DataStore へ) | world (現実に重ねる) | anchor (見つけた物の位置に札 / オブジェクト) | image (Canvas へ)
+
+ArsistProject.models?: ModelDefinition[]      学習済みモデル (ONNX) の定義。重みは Assets/Models/*.onnx のまま (doc/15)
+ArsistProject.irVersion?: number              この形式の版。無ければ 1。古い版は開くときに移行を提案する (doc/15 §3)
 ```
 
 `region` 指定は「追跡中のターゲット上の枠」なので、斜めから見ていてもランタイムが正対に
@@ -258,7 +267,10 @@ UILayoutData
 ```typescript
 {
   id: string
-  type: UIElementType    // 'Panel' | 'Text' | 'Button' | 'Image' | 'Slider' | 'Input' | 'Gauge' | 'Graph'
+  type: UIElementType    // 'Panel' | 'Text' | 'Button' | 'Image' | 'Slider' | 'Input' | 'Keyboard' | 'Gauge' | 'Graph'
+                         //   Input    = 端末のキーボード (Quest のシステムキーボード)。かな漢字変換が使える
+                         //   Keyboard = アプリの中に出すキーボード (ArsistVirtualKeyboard)。どの端末でも同じ。英数字のみ
+                         //     打った文字 → bind.key、確定 (⏎) → イベント "<bindingId>:submit"、content にキーの並び
   content?: string       // display text (Text / Button)
   assetPath?: string     // for Image elements
   bindingId?: string     // script-addressable ID (ui.setText(bindingId, ...))

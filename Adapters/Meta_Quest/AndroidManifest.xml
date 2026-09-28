@@ -4,15 +4,18 @@
 
     <!-- Quest VR アプリとして認識させる必須エントリ -->
     <!--
-        テーマについて:
-        Unity 6 のエントリポイントは GameActivity (com.google.androidgamesdk.GameActivity) で、
-        これは AppCompatActivity を継承しているため Theme.AppCompat 派生のテーマが必須。
-        AppCompat 派生でないテーマを当てると、起動直後に
-          IllegalStateException: You need to use a Theme.AppCompat theme (or descendant)
-        で落ちる（Unity のロゴだけ出て終わる）。
-        application 側は従来どおり全画面の素のテーマにしつつ、activity には
-        Unity 同梱の BaseUnityGameActivityTheme (= Theme.AppCompat.Light.NoActionBar 派生) を
-        明示する。マージ順に依存して Unity 側のテーマが落ちることがあるため、ここで固定する。
+        入口とテーマについて:
+        Arsist は Android の入口を **Activity** に固定している
+        (ArsistBuildPipeline.UseClassicAndroidActivity)。Unity 6 の既定である GameActivity では
+        ソフトキーボードが出ず、Quest のシステムキーボード オーバーレイも動かないため。
+        入口とテーマは対で決まっていて、混ぜるとビルドが AAPT で落ちる:
+          Activity      → com.unity3d.player.UnityPlayerActivity     + @style/UnityThemeSelector
+          GameActivity  → com.unity3d.player.UnityPlayerGameActivity + @style/BaseUnityGameActivityTheme
+        (Unity 同梱の PlaybackEngines/AndroidPlayer/Apk/UnityManifest.xml がこの対を示している。
+         BaseUnityGameActivityTheme は GameActivity のときしか APK に入らないので、
+         Activity なのに指定すると `resource style/BaseUnityGameActivityTheme not found` で落ちる。)
+        application 側は全画面の素のテーマにしつつ、activity には UnityThemeSelector を明示する。
+        マージ順に依存して Unity 側のテーマが落ちることがあるため、ここで固定する。
     -->
     <application
         android:label="@string/app_name"
@@ -21,8 +24,8 @@
         tools:replace="android:theme,android:usesCleartextTraffic">
 
         <activity
-            android:name="com.unity3d.player.UnityPlayerGameActivity"
-            android:theme="@style/BaseUnityGameActivityTheme"
+            android:name="com.unity3d.player.UnityPlayerActivity"
+            android:theme="@style/UnityThemeSelector"
             android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|mnc|mcc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|touchscreen"
             android:exported="true"
             android:hardwareAccelerated="false"
@@ -39,6 +42,8 @@
 
             <!-- VR専用アプリとして認識させる -->
             <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />
+            <!-- Unity の起動 Activity であることの目印 (Unity 同梱 UnityManifest.xml と同じ) -->
+            <meta-data android:name="unityplayer.UnityActivity" android:value="true" />
         </activity>
 
         <!-- Meta XR SDK 必須メタデータ -->

@@ -66,6 +66,9 @@ namespace Arsist.Builder
                 Debug.Log("[Arsist] Phase 1: Generating scenes...");
                 EnsureUILayerExists();
                 EnsureHudLayerExists();
+                // 折り返しの規則は UI を作る前に置く。TMP は文字を並べる時点でこの表を読むので、
+                // 後から用意しても間に合わない (未設定だとここでビルドが止まる)。
+                EnsureTmpLineBreakingRules();
                 GenerateScenes();
 
                 // Phase 2: UI生成（StreamingAssetsへのコピーのみ。Canvas生成はPhase 1で完了）
@@ -73,7 +76,10 @@ namespace Arsist.Builder
                 CopyUICodeToStreamingAssets();
                 CopyScriptsToStreamingAssets();
                 CopyPerceptionAssetsToStreamingAssets();
+                CopyModelsToProject();
                 ConfigureMlKitPlugin();
+                // 依存を集め終えてから gradle を 1 回で書く (CopyModelsToProject が ONNX Runtime を足していることがある)
+                WriteAndroidGradleTemplate();
                 EnsurePerceptionLinkXml(ProjectHasPerceptionTargets() || ProjectHasPerceptionTasks());
 
                 // Phase 3: ビルド設定適用
@@ -1549,6 +1555,7 @@ namespace Arsist.Builder
                 }
 
                 defaultFontProp.objectReferenceValue = defaultFont;
+                EnsureTmpLineBreakingRules(so);
                 so.ApplyModifiedPropertiesWithoutUndo();
 
                 EditorUtility.SetDirty(settings);
@@ -1561,6 +1568,79 @@ namespace Arsist.Builder
             {
                 Debug.LogError($"[Arsist] Failed to configure TMP Settings default font: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 折り返しの規則 (禁則処理) を TMP Settings に用意する。
+        ///
+        /// TMP は折り返すときにこの 2 つの文字表を読む。未設定のまま折り返しを有効にすると
+        ///   The variable m_leadingCharacters of TMP_Settings has not been assigned.
+        /// でビルドが止まる (TMP Essential Resources を取り込んでいないプロジェクトでは未設定)。
+        /// 中身は Unity 同梱のものと同じで、行頭に置けない文字 / 行末に置けない文字を並べたもの。
+        /// 日本語の「、」「。」が行頭に来ないのはこの表のおかげ。
+        /// </summary>
+        private static void EnsureTmpLineBreakingRules()
+        {
+            try
+            {
+                const string settingsPath = "Assets/Resources/TMP Settings.asset";
+                var settings = AssetDatabase.LoadAssetAtPath<TMP_Settings>(settingsPath);
+                if (settings == null)
+                {
+                    settings = ScriptableObject.CreateInstance<TMP_Settings>();
+                    Directory.CreateDirectory(Path.Combine(Application.dataPath, "Resources"));
+                    AssetDatabase.CreateAsset(settings, settingsPath);
+                    Debug.Log("[Arsist] Created TMP Settings.asset in Resources");
+                }
+
+                var so = new SerializedObject(settings);
+                EnsureTmpLineBreakingRules(so);
+                so.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(settings);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Could not prepare the TMP line-breaking rules: {e.Message}");
+            }
+        }
+
+        private static void EnsureTmpLineBreakingRules(SerializedObject settings)
+        {
+            // 行末に置けない文字 (開き括弧など)
+            const string leading = "([｛〔〈《「『【〘〖〝‘“｟«$—…‥〳〴〵\\［（{£¥\"々〇〉》」＄｠￥￦ #";
+            // 行頭に置けない文字 (閉じ括弧・句読点・長音・小書き仮名など)
+            const string following = ")]｝〕〉》」』】〙〗〟’”｠»ヽヾーァィゥェォッャュョヮヵヶぁぃぅぇぉっゃゅょゎゕゖㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ々〻‐゠–〜?!‼⁇⁈⁉・、%,.:;。！？］）：；＝}¢°\"†‡℃〆％，．";
+
+            WriteLineBreakingRule(settings, "m_leadingCharacters", "LineBreaking Leading Characters", leading);
+            WriteLineBreakingRule(settings, "m_followingCharacters", "LineBreaking Following Characters", following);
+        }
+
+        private static void WriteLineBreakingRule(SerializedObject settings, string propertyName, string assetName, string characters)
+        {
+            var property = settings.FindProperty(propertyName);
+            if (property == null)
+            {
+                Debug.LogWarning($"[Arsist] TMP Settings has no {propertyName}; line wrapping may fail.");
+                return;
+            }
+            if (property.objectReferenceValue != null) return;   // 取り込み済みならそのまま
+
+            var assetPath = $"Assets/Resources/{assetName}.txt";
+            var fullPath = Path.Combine(Application.dataPath, "Resources", assetName + ".txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+            File.WriteAllText(fullPath, characters, new System.Text.UTF8Encoding(true));
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+
+            var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(assetPath);
+            if (asset == null)
+            {
+                Debug.LogWarning($"[Arsist] Could not create {assetPath}; line wrapping may fail.");
+                return;
+            }
+            property.objectReferenceValue = asset;
+            Debug.Log($"[Arsist] TMP line-breaking rules: {assetName} written ({characters.Length} characters).");
         }
 
         /// <summary>
@@ -1648,12 +1728,272 @@ namespace Arsist.Builder
             }
 
             var tasks = _manifest?["perception"]?["tasks"] as JArray ?? new JArray();
-            var config = new JObject { ["targets"] = emitted, ["tasks"] = tasks };
+            // `infer` op が使うモデルの定義。重みは Resources 側 (CopyModelsToProject)、定義はここ。
+            var models = _manifest?["models"] as JArray ?? new JArray();
+            var config = new JObject { ["targets"] = emitted, ["tasks"] = tasks, ["models"] = models };
             File.WriteAllText(Path.Combine(outputDir, "perception.json"), config.ToString());
             AssetDatabase.Refresh();
 
             Debug.Log($"[Arsist] {emitted.Count} perception target(s) and {tasks.Count} task(s) " +
                       "written to StreamingAssets/Perception.");
+        }
+
+        /// <summary>Resources 内の置き場。ArsistModelExecutor.ResourcesFolder と揃えること。</summary>
+        private const string ModelResourcesFolder = "ArsistModels";
+        /// <summary>モデル 1 つのフォルダの中の名前。ArsistModelExecutor / ArsistModelCatalog と揃えること。</summary>
+        private const string ModelFileName = "model";
+        private const string TokenizerFileName = "tokenizer";
+        /// <summary>ONNX Runtime で動かすモデルの置き場 (ArsistOrtRunner.StreamingFolder と揃えること)。</summary>
+        private const string StreamingModelsFolder = "ArsistModels";
+        /// <summary>同梱する ONNX Runtime の版。Editor/AndroidPlugins/ArsistOnnxRuntime.java.txt が使う。</summary>
+        private const string OnnxRuntimeVersion = "1.30.0";
+
+        /// <summary>このモデルを実機で何に動かしてもらうか ("unity" / "onnxruntime")。</summary>
+        private static string ModelRuntimeOf(JObject model)
+        {
+            var declared = model["runtime"]?.ToString();
+            if (declared == "unity" || declared == "onnxruntime") return declared;
+            // 自動: Unity のエンジンが読めない演算子が 1 つでもあれば ONNX Runtime へ
+            var ops = model["inspection"]?["opTypes"] as JArray;
+            if (ops == null) return "unity";
+            foreach (var op in ops)
+            {
+                if (!UnityImportableOps.Contains(op?.ToString() ?? "")) return "onnxruntime";
+            }
+            return "unity";
+        }
+
+        /// <summary>
+        /// Unity の Inference Engine が取り込める演算子 (2.6.1 の ONNXModelConverter の表)。
+        /// エディタ側の src/shared/unityOps.ts と同じ中身。どちらかだけ直すと、
+        /// 「エディタでは実機で動くと言っていたのにビルドで落ちる」が起きる。
+        /// </summary>
+        private static readonly HashSet<string> UnityImportableOps = new HashSet<string>
+        {
+            "Constant","Celu","Elu","Erf","Gelu","Hardmax","HardSigmoid","HardSwish","LeakyRelu","Mish","PRelu","Relu",
+            "Selu","Sigmoid","Softplus","Softsign","Tanh","ThresholdedRelu","LogSoftmax","Softmax","Conv","ConvTranspose",
+            "Shape","Size","ConstantOfShape","Range","OneHot","ArgMax","ArgMin","Gather","GatherElements","GatherND",
+            "NonZero","Scatter","ScatterElements","ScatterND","TopK","And","Compress","Equal","Greater","GreaterOrEqual",
+            "IsInf","IsNaN","Less","LessOrEqual","Not","Or","Xor","Where","Abs","Add","BitwiseAnd","BitwiseNot",
+            "BitwiseOr","BitwiseXor","Ceil","Clip","CumSum","Div","Einsum","Exp","Floor","Gemm","Log","MatMul","Max",
+            "Mean","Min","Mod","Mul","Neg","Pow","Reciprocal","Round","Shrink","Sign","Sqrt","Sub","Sum",
+            "BatchNormalization","InstanceNormalization","LayerNormalization","RMSNormalization","LRN","NonMaxSuppression",
+            "RoiAlign","AveragePool","GlobalAveragePool","GlobalMaxPool","MaxPool","Bernoulli","Multinomial","RandomNormal",
+            "RandomNormalLike","RandomUniform","RandomUniformLike","LSTM","ReduceLogSum","ReduceLogSumExp","ReduceMax",
+            "ReduceMean","ReduceMin","ReduceProd","ReduceSum","ReduceSumSquare","BlackmanWindow","DFT","HammingWindow",
+            "HannWindow","MelWeightMatrix","STFT","Cast","CastLike","Concat","DepthToSpace","Expand","Flatten","GridSample",
+            "Dropout","Identity","Pad","Reshape","Resize","Slice","SpaceToDepth","Split","Squeeze","Tile","Transpose",
+            "Trilu","Upsample","Unsqueeze","Acos","Acosh","Asin","Asinh","Atan","Atanh","Cos","Cosh","Sin","Sinh",
+            "Tan","Swish","ImageScaler",
+        };
+        /// <summary>定義一式 (models.json)。ArsistModelCatalog.CatalogName と揃えること。</summary>
+        private const string CatalogName = "models";
+
+        /// <summary>Inference Engine (com.unity.ai.inference) がこのプロジェクトに入っているか。</summary>
+        private static bool InferencePackagePresent()
+        {
+            return System.Type.GetType("Unity.InferenceEngine.Worker, Unity.InferenceEngine") != null;
+        }
+
+        /// <summary>
+        /// プロジェクトの ONNX を Resources に置き、Inference Engine に取り込ませる
+        /// (画像認識の `infer` op とスクリプトの model.* の両方が使う)。
+        ///
+        /// 置き場は Assets/ArsistGenerated/Resources/ArsistModels/&lt;id&gt;.onnx。
+        /// ランタイムは Resources.Load&lt;ModelAsset&gt;("ArsistModels/&lt;id&gt;") で読む。
+        /// StreamingAssets に置かないのは、Android では APK の中 (jar:) にあってファイルとして
+        /// 開けず、ModelLoader.Load(path) が使えないため。
+        ///
+        /// パッケージはモデルを使うプロジェクトでだけ UnityBuilder が入れる。無ければここで
+        /// はっきり落とす。「ビルドは通るのに実機で何も起きない」が一番困る。
+        /// </summary>
+        private static void CopyModelsToProject()
+        {
+            var models = _manifest?["models"] as JArray;
+            var resourcesDir = Path.Combine(Application.dataPath, "ArsistGenerated", "Resources", ModelResourcesFolder);
+
+            if (models == null || models.Count == 0)
+            {
+                // 前回ビルドの残骸を消す (モデルを外したのに APK に残るのを防ぐ)
+                if (Directory.Exists(resourcesDir))
+                {
+                    Directory.Delete(resourcesDir, true);
+                    var meta = resourcesDir + ".meta";
+                    if (File.Exists(meta)) File.Delete(meta);
+                    AssetDatabase.Refresh();
+                    Debug.Log("[Arsist] No models; removed stale Resources/ArsistModels.");
+                }
+                return;
+            }
+
+            // モデルごとに、実機で何に動かしてもらうかを決める。
+            //   unity        Inference Engine の ModelAsset として Resources へ
+            //   onnxruntime  同梱の ONNX Runtime が開けるよう、素のファイルのまま StreamingAssets へ
+            var unityModels = new List<JObject>();
+            var ortModels = new List<JObject>();
+            foreach (JObject model in models)
+            {
+                if (ModelRuntimeOf(model) == "onnxruntime") ortModels.Add(model);
+                else unityModels.Add(model);
+            }
+
+            if (unityModels.Count > 0 && !InferencePackagePresent())
+            {
+                throw new InvalidOperationException(
+                    $"This project uses {unityModels.Count} model(s) that run on the Unity Inference Engine, but the " +
+                    "com.unity.ai.inference package is not in the Unity workspace. UnityBuilder adds it when the " +
+                    "manifest lists such models; check the build log for a package resolution error.");
+            }
+
+            Directory.CreateDirectory(resourcesDir);
+            var copied = new List<string>();
+            var streamingRoot = Path.Combine(Application.streamingAssetsPath, StreamingModelsFolder);
+
+            foreach (JObject model in models)
+            {
+                var id = model["id"]?.ToString();
+                var file = model["file"]?.ToString();
+                if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(file))
+                {
+                    throw new InvalidOperationException("A model definition has no id/file; fix it in the editor.");
+                }
+
+                var source = ResolveProjectAssetPath(file);
+                if (source == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Model '{model["name"] ?? id}' points at '{file}', which is not in the project's Assets/. " +
+                        "Re-import the ONNX in the Models tab.");
+                }
+
+                var runtime = ModelRuntimeOf(model);
+                var packagedFiles = new JArray();
+
+                // モデル 1 つにつき 1 フォルダ。重みの別ファイルは ONNX の中に「ファイル名」で書かれているので、
+                // 同じ名前で隣に置く必要がある。フォルダを分けないと、別のモデルの model.onnx_data と
+                // 名前がぶつかって上書きされる。
+                // ONNX Runtime 側は Resources に置いても開けない (ModelAsset ではなく実ファイルが要る) ので、
+                // StreamingAssets に素のまま置き、実機の初回に端末側へ写す (ArsistOrtRunner.EnsureOnDisk)。
+                var modelDir = runtime == "onnxruntime"
+                    ? Path.Combine(streamingRoot, id)
+                    : Path.Combine(resourcesDir, id);
+                Directory.CreateDirectory(modelDir);
+                var destination = Path.Combine(modelDir, ModelFileName + ".onnx");
+                File.Copy(source, destination, true);
+                packagedFiles.Add(ModelFileName + ".onnx");
+                if (runtime != "onnxruntime") copied.Add(modelDir);
+
+                // 重みを別ファイルに持つモデル (external data)。ONNX の中にファイル名で書かれているので、
+                // 同じ名前で隣に置く。
+                var external = model["inspection"]?["externalData"] as JArray;
+                if (external != null)
+                {
+                    foreach (var entry in external)
+                    {
+                        var name = entry?.ToString();
+                        if (string.IsNullOrEmpty(name)) continue;
+                        var externalSource = Path.Combine(Path.GetDirectoryName(source) ?? "", name);
+                        if (!File.Exists(externalSource))
+                        {
+                            throw new InvalidOperationException(
+                                $"Model '{id}' needs its weight file '{name}' next to the ONNX, but it is missing.");
+                        }
+                        File.Copy(externalSource, Path.Combine(modelDir, name), true);
+                        packagedFiles.Add(name);
+                    }
+                }
+
+                // 文章のモデルは分割器 (tokenizer.json) も要る。TextAsset として Resources から読む。
+                var use = model["use"]?.ToString() ?? "image";
+                var tokenizerFile = model["text"]?["tokenizer"]?.ToString();
+                if (use == "text")
+                {
+                    var tokenizerSource = string.IsNullOrEmpty(tokenizerFile) ? null : ResolveProjectAssetPath(tokenizerFile);
+                    if (tokenizerSource == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"Text model '{model["name"] ?? id}' has no tokenizer.json in the project's Assets/ " +
+                            $"('{tokenizerFile ?? "(not set)"}'). Import it in the Models tab.");
+                    }
+                    var tokenizerDestination = Path.Combine(modelDir, TokenizerFileName + ".json");
+                    File.Copy(tokenizerSource, tokenizerDestination, true);
+                    packagedFiles.Add(TokenizerFileName + ".json");
+                }
+
+                // 実機の ArsistModelCatalog が「何をどこから読むか」を知るための印
+                model["runtime"] = runtime;
+                model["files"] = packagedFiles;
+
+                Debug.Log($"[Arsist] Model packaged: {id} ({Path.GetFileName(source)}, use={use}, task={model["task"] ?? model["text"]?["task"]}, " +
+                          $"runtime={runtime}, backend={model["backend"] ?? "auto"})");
+            }
+
+            // 定義一式。スクリプトの model.* がこれで id / 名前 → 使い方を引く (ArsistModelCatalog)。
+            var catalogPath = Path.Combine(resourcesDir, CatalogName + ".json");
+            File.WriteAllText(catalogPath, new JObject { ["models"] = models }.ToString());
+            copied.Add(catalogPath);
+
+            // 前回のビルドで入れて今回は使わないモデルを消す
+            foreach (var stale in Directory.GetDirectories(resourcesDir))
+            {
+                if (copied.Contains(stale)) continue;
+                Directory.Delete(stale, true);
+                var meta = stale + ".meta";
+                if (File.Exists(meta)) File.Delete(meta);
+            }
+
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+
+            // 取り込みの結果を確かめる。Inference Engine の importer が ModelAsset を作っていなければ、
+            // 対応していない演算子か opset なので、ここで落とす。
+            foreach (JObject model in unityModels)
+            {
+                var id = model["id"]?.ToString();
+                var assetPath = $"Assets/ArsistGenerated/Resources/{ModelResourcesFolder}/{id}/{ModelFileName}.onnx";
+                var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+                var typeName = asset != null ? asset.GetType().FullName : "(none)";
+                if (asset == null || !typeName.EndsWith(".ModelAsset"))
+                {
+                    throw new InvalidOperationException(
+                        $"Model '{id}' did not import as an Inference Engine ModelAsset (got {typeName}). " +
+                        "The ONNX probably uses an operator or opset the engine does not support; " +
+                        "see the import errors above in this log.");
+                }
+            }
+            Debug.Log($"[Arsist] {unityModels.Count} model(s) imported into Resources/{ModelResourcesFolder}" +
+                      (ortModels.Count > 0 ? $", {ortModels.Count} packaged for the bundled ONNX Runtime." : "."));
+
+            // 画像処理の `infer` は Unity の推論器 (Resources から読む) だけを使う。
+            // ONNX Runtime に回したモデルは Resources に入らないので、実機で
+            //   Resources/ArsistModels/<id>/model not found
+            // になる。ビルドが通ってから実機で気づくのは割に合わないので、ここで止める。
+            var ortIds = new HashSet<string>();
+            foreach (JObject model in ortModels) ortIds.Add(model["id"]?.ToString() ?? "");
+            foreach (var used in VisionInferModelIds())
+            {
+                if (!ortIds.Contains(used)) continue;
+                throw new InvalidOperationException(
+                    $"The vision pipeline uses model '{used}', but that model runs on the bundled ONNX Runtime " +
+                    "(Unity's engine cannot import it). Image pipelines can only use models Unity can import. " +
+                    "Use a standard-operator export for the `infer` step, or drive this model from a script (model.*) instead.");
+            }
+
+            // ONNX Runtime で動かすモデルがあるときだけ、ライブラリと Java ブリッジを入れる
+            ConfigureOnnxRuntimePlugin(ortModels.Count > 0);
+
+            // 前回のビルドで入れて今回は使わないモデル (StreamingAssets 側) を消す
+            if (Directory.Exists(streamingRoot))
+            {
+                var wanted = new HashSet<string>();
+                foreach (JObject model in ortModels) wanted.Add(model["id"]?.ToString() ?? "");
+                foreach (var stale in Directory.GetDirectories(streamingRoot))
+                {
+                    if (wanted.Contains(Path.GetFileName(stale))) continue;
+                    Directory.Delete(stale, true);
+                    var staleMeta = stale + ".meta";
+                    if (File.Exists(staleMeta)) File.Delete(staleMeta);
+                }
+            }
         }
 
         /// <summary>
@@ -1668,17 +2008,22 @@ namespace Arsist.Builder
         /// Arsist にとって初めての「Android の Maven 依存を足す」機構でもある。
         /// バーコードや BLE を足すときも同じ口を使う。
         /// </summary>
+        /// <summary>
+        /// この APK に足す Android の Maven 依存。mainTemplate.gradle は 1 つしか無いので、
+        /// 機能ごとに書くのではなく、ここに集めてから 1 回で書く
+        /// (OCR とモデルの両方を使うプロジェクトで、後から書いた方が相手を消してしまうため)。
+        /// </summary>
+        private static readonly List<string> _androidGradleDependencies = new List<string>();
+
         private static void ConfigureMlKitPlugin()
         {
             var pluginDir = Path.Combine(Application.dataPath, "Plugins", "Android");
             var javaDest = Path.Combine(pluginDir, "ArsistMlkitOcr.java");
-            var gradleDest = Path.Combine(pluginDir, "mainTemplate.gradle");
 
             var scripts = CollectOcrScripts();
             if (scripts.Count == 0)
             {
                 RemoveIfExists(javaDest);
-                RemoveIfExists(gradleDest);
                 return;
             }
 
@@ -1693,10 +2038,60 @@ namespace Arsist.Builder
             }
             File.Copy(javaSource, javaDest, true);
 
-            if (!TryWriteMlKitGradleTemplate(gradleDest, scripts)) return;
-
-            AssetDatabase.Refresh();
+            _androidGradleDependencies.Add("    // ML Kit Text Recognition v2 (bundled models, no Google Play Services)");
+            foreach (var script in scripts)
+            {
+                _androidGradleDependencies.Add(script == "latin"
+                    ? "    implementation 'com.google.mlkit:text-recognition:16.0.1'"
+                    : "    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'");
+            }
             Debug.Log($"[Arsist] On-device OCR enabled (ML Kit bundled, models: {string.Join(", ", scripts)}).");
+        }
+
+        /// <summary>
+        /// Unity のエンジンでは動かないモデル用に、ONNX Runtime (Android) と Java ブリッジを入れる。
+        /// 入れるのは、そういうモデルがあるビルドのときだけ (arm64 のライブラリだけで 33MB ある)。
+        /// </summary>
+        private static void ConfigureOnnxRuntimePlugin(bool enabled)
+        {
+            var pluginDir = Path.Combine(Application.dataPath, "Plugins", "Android");
+            var javaDest = Path.Combine(pluginDir, "ArsistOnnxRuntime.java");
+
+            if (!enabled)
+            {
+                RemoveIfExists(javaDest);
+                return;
+            }
+
+            Directory.CreateDirectory(pluginDir);
+            var javaSource = Path.Combine(
+                Application.dataPath, "Arsist", "Editor", "AndroidPlugins", "ArsistOnnxRuntime.java.txt");
+            if (!File.Exists(javaSource))
+            {
+                throw new InvalidOperationException($"ONNX Runtime bridge source missing: {javaSource}");
+            }
+            File.Copy(javaSource, javaDest, true);
+
+            // gradle は ASCII だけ (非 ASCII があると Unity の置換で壊れる。TryWriteAndroidGradleTemplate の検査を参照)
+            _androidGradleDependencies.Add("    // ONNX Runtime: for models the Unity Inference Engine cannot import");
+            _androidGradleDependencies.Add($"    implementation 'com.microsoft.onnxruntime:onnxruntime-android:{OnnxRuntimeVersion}'");
+            Debug.Log($"[Arsist] ONNX Runtime {OnnxRuntimeVersion} bundled (models that Unity cannot run).");
+        }
+
+        /// <summary>集めた依存を mainTemplate.gradle に 1 回で書く。無ければ template ごと消す。</summary>
+        private static void WriteAndroidGradleTemplate()
+        {
+            var pluginDir = Path.Combine(Application.dataPath, "Plugins", "Android");
+            var gradleDest = Path.Combine(pluginDir, "mainTemplate.gradle");
+
+            if (_androidGradleDependencies.Count == 0)
+            {
+                RemoveIfExists(gradleDest);
+                return;
+            }
+
+            Directory.CreateDirectory(pluginDir);
+            if (TryWriteAndroidGradleTemplate(gradleDest, _androidGradleDependencies)) AssetDatabase.Refresh();
         }
 
         /// <summary>
@@ -1763,7 +2158,7 @@ namespace Arsist.Builder
         /// 固定のテンプレートをリポジトリに置かずインストール済みエディタから取るのは、
         /// 置換されるプレースホルダが Unity のバージョンごとに違うため。
         /// </summary>
-        private static bool TryWriteMlKitGradleTemplate(string destination, List<string> scripts)
+        private static bool TryWriteAndroidGradleTemplate(string destination, List<string> dependencyLines)
         {
             var source = Path.Combine(
                 EditorApplication.applicationContentsPath,
@@ -1772,7 +2167,7 @@ namespace Arsist.Builder
             if (!File.Exists(source))
             {
                 Debug.LogError($"[Arsist] Unity's mainTemplate.gradle not found at {source}; " +
-                               "on-device OCR cannot be enabled.");
+                               "Android dependencies (OCR / ONNX Runtime) cannot be added.");
                 return false;
             }
 
@@ -1788,19 +2183,13 @@ namespace Arsist.Builder
             }
 
             var deps = new System.Text.StringBuilder();
-            deps.AppendLine("    // ML Kit Text Recognition v2 (bundled models, no Google Play Services)");
-            deps.AppendLine("    // Added by Arsist because this project has on-device OCR tasks.");
-            foreach (var script in scripts)
-            {
-                deps.AppendLine(script == "latin"
-                    ? "    implementation 'com.google.mlkit:text-recognition:16.0.1'"
-                    : "    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'");
-            }
+            deps.AppendLine("    // Added by Arsist for what this project actually uses.");
+            foreach (var line in dependencyLines) deps.AppendLine(line);
 
             var header =
                 "// Generated by Arsist. Do not edit; it is rewritten on every build.\n" +
                 "// Source: the mainTemplate.gradle of the Unity editor performing the build,\n" +
-                "// with the ML Kit dependency lines below added to the dependencies block.\n" +
+                "// with the dependency lines below added to the dependencies block.\n" +
                 "//\n" +
                 "// Two rules for anything written here, both found the hard way:\n" +
                 "//  1. ASCII only. Unity rewrites this file while substituting placeholders and\n" +
@@ -2014,6 +2403,24 @@ namespace Arsist.Builder
         }
 
         /// <summary>画像認識タスクが1つでも定義されているか。</summary>
+        /// <summary>画像処理の `infer` が名指ししているモデルの id。</summary>
+        private static IEnumerable<string> VisionInferModelIds()
+        {
+            var tasks = _manifest?["perception"]?["tasks"] as JArray;
+            if (tasks == null) yield break;
+            foreach (JObject task in tasks)
+            {
+                var ops = task?["pipeline"]?["ops"] as JArray;
+                if (ops == null) continue;
+                foreach (JObject op in ops)
+                {
+                    if (op?["op"]?.ToString() != "infer") continue;
+                    var id = op["params"]?["model"]?.ToString();
+                    if (!string.IsNullOrEmpty(id)) yield return id;
+                }
+            }
+        }
+
         private static bool ProjectHasPerceptionTasks()
         {
             var tasks = _manifest?["perception"]?["tasks"] as JArray;
@@ -2056,6 +2463,55 @@ namespace Arsist.Builder
             Debug.Log($"[Arsist] ArsistPerceptionTaskRunner added for {tasks.Count} task(s).");
 
             EnsureWorldOverlayInScene(tasks);
+            EnsureWorldAnchorsInScene(tasks);
+        }
+
+        /// <summary>
+        /// 見つけた物の位置に札やオブジェクトを置く出力 (anchor) を持つタスクがあれば、その置き場をシーンに入れる。
+        /// </summary>
+        private static void EnsureWorldAnchorsInScene(JArray tasks)
+        {
+            bool needed = false;
+            foreach (JObject task in tasks)
+            {
+                if ((task["type"]?.ToString() ?? "ocr") != "vision") continue;
+                var outputs = task["pipeline"]?["outputs"] as JArray;
+                if (outputs == null) continue;
+                foreach (JObject output in outputs)
+                {
+                    if (output["kind"]?.ToString() == "anchor") { needed = true; break; }
+                }
+                if (needed) break;
+            }
+            if (!needed) return;
+
+            var go = new GameObject("[ArsistWorldAnchors]");
+            if (TryAddComponentByTypeName(go, "Arsist.Runtime.Perception.Overlay.ArsistWorldAnchors") == null)
+            {
+                Debug.LogError("[Arsist] ArsistWorldAnchors type not found; anchor outputs will do nothing.");
+                UnityEngine.Object.DestroyImmediate(go);
+                return;
+            }
+            Debug.Log("[Arsist] ArsistWorldAnchors added (found things get labels / objects placed on them).");
+        }
+
+        /// <summary>
+        /// 学習済みモデルを使うプロジェクトなら、推論器 (Inference Engine の窓口) をシーンに置く。
+        /// パイプラインはワーカースレッドで回るが、推論はメインスレッドでしかできないため。
+        /// </summary>
+        private static void EnsureModelExecutorInScene(JObject manifest)
+        {
+            var models = manifest?["models"] as JArray;
+            if (models == null || models.Count == 0) return;
+
+            var go = new GameObject("[ArsistModels]");
+            if (TryAddComponentByTypeName(go, "Arsist.Runtime.Inference.ArsistModelExecutor") == null)
+            {
+                Debug.LogError("[Arsist] ArsistModelExecutor type not found; `infer` steps and model.* in scripts will fail.");
+                UnityEngine.Object.DestroyImmediate(go);
+                return;
+            }
+            Debug.Log($"[Arsist] ArsistModelExecutor added for {models.Count} model(s).");
         }
 
         /// <summary>
@@ -2227,6 +2683,9 @@ namespace Arsist.Builder
                     "Unlit/Color",
                     "Unlit/Texture",
                     "Unlit/Transparent",
+                    // "GUI/Text Shader" を入れてはいけない: 組み込みの unity_builtin_extra に入る
+                    // シェーダーを Always Included に足すと、BuildPlayer が unity_builtin_extra の
+                    // 書き出しで落ちる (m_LockCount == 0 の assertion)。札の文字は TextMeshPro で描く。
                     "UI/Default",
                     "Sprites/Default",
                     "TextMeshPro/Distance Field",
@@ -2612,10 +3071,10 @@ namespace Arsist.Builder
             {
                 EnsureQuestOvrManager(xrOrigin);
                 ConfigureQuestPassthrough(xrOrigin, originCamera, backgroundMode);
-                if (ProjectHasInputElement())
-                {
-                    ConfigureQuestSystemKeyboard(xrOrigin);
-                }
+                // 端末のキーボードを要求する設定は OVRProjectConfig 側にある
+                // (ConfigureOculusProjectConfigForQuest の requiresSystemKeyboard)。
+                // かつては OVRManager にあると思って reflection で触っていたが、
+                // SDK にそのフィールドは無く、何の効果も無かった。
             }
 
             // XREAL: AR Session + SDK の安定化コンポーネントをリグに付与
@@ -3153,6 +3612,10 @@ ScriptedImporter:
             // 画像アンカー（ターゲットが定義されている場合のみ）
             EnsurePerceptionManagerInScene(manifest);
 
+            // 学習済みモデル (ONNX)。画像認識の `infer` もスクリプトの model.* もここを通るので、
+            // 画像認識のタスクが無くてもモデルがあれば置く。
+            EnsureModelExecutorInScene(manifest);
+
             // 実機ログの LAN 中継（ビルドしたマシンの宛先が manifest にある場合のみ）
             EnsureLogRelayInScene(manifest);
             
@@ -3596,10 +4059,23 @@ ScriptedImporter:
                 SetLayerRecursively(canvasGO, canvasGO.layer);
             }
 
-            if (createdHudCount == 0)
+            // 常時表示の UI が 1 つも無いときだけ、動いていることが分かる板を出す。
+            // 空間に置いた Canvas (scope: canvas) を使うプロジェクトでは邪魔になるので出さない。
+            if (createdHudCount == 0 && !ProjectHasWorldCanvas())
             {
                 CreateFallbackHUDCanvas();
             }
+        }
+
+        /// <summary>空間に置く Canvas (scope: canvas) を持っているか。</summary>
+        private static bool ProjectHasWorldCanvas()
+        {
+            EnsureUILayoutCache();
+            foreach (var layout in _uiLayoutCache?.Values ?? Enumerable.Empty<JObject>())
+            {
+                if (layout?["scope"]?.ToString() == "canvas") return true;
+            }
+            return false;
         }
 
         private static void CreateFallbackHUDCanvas()
@@ -3771,7 +4247,7 @@ ScriptedImporter:
 
             var rectTransform = go.AddComponent<RectTransform>();
             var style = elementData["style"] as JObject;
-            ApplyRectTransformStyle(rectTransform, style);
+            ApplyRectTransformStyle(rectTransform, style, parent);
             
             switch (type)
             {
@@ -3838,19 +4314,26 @@ ScriptedImporter:
                         }
 
                         var align = style["textAlign"]?.ToString();
+                        // 縦は上そろえ。エディタのプレビュー (ふつうの文章と同じ) と合わせるため、
+                        // また長い文章が箱の真ん中から上下にはみ出さないため。
                         tmp.alignment = align switch
                         {
-                            "center" => TextAlignmentOptions.Center,
-                            "right" => TextAlignmentOptions.Right,
-                            _ => TextAlignmentOptions.Left,
+                            "center" => TextAlignmentOptions.Top,
+                            "right" => TextAlignmentOptions.TopRight,
+                            _ => TextAlignmentOptions.TopLeft,
                         };
                     }
                     else
                     {
                         tmp.fontSize = 100;
                         tmp.color = Color.white;
-                        tmp.alignment = TextAlignmentOptions.Center;
+                        tmp.alignment = TextAlignmentOptions.Top;
                     }
+
+                    // 折り返し。ここを明示しないと 1 行のまま横に伸び続ける
+                    // (AddComponent で足した TextMeshProUGUI は折り返しが切れた状態で入る。
+                    //  実機では「改行せず左に伸びていく」という形で出た。2026-09 に踏んだ)。
+                    tmp.textWrappingMode = TextWrappingModes.Normal;
 
                     // FIX 5: Disable auto-sizing - it can cause text to shrink to 0
                     tmp.enableAutoSizing = false;
@@ -3933,6 +4416,7 @@ ScriptedImporter:
                     
                     buttonText.fontSize = style?["fontSize"]?.Value<int>() ?? 80;
                     buttonText.alignment = TextAlignmentOptions.Center;
+                    buttonText.textWrappingMode = TextWrappingModes.Normal;
                     buttonText.color = TryParseColor(style?["color"], out var btnTextColor) ? btnTextColor : Color.white;
                     buttonText.enableAutoSizing = false;
                     buttonText.raycastTarget = false;
@@ -3984,18 +4468,45 @@ ScriptedImporter:
                     }
                     break;
 
+                case "Keyboard":
+                {
+                    // アプリの中に出すキーボード。キーは実行時に ArsistVirtualKeyboard が作る
+                    // (ボタンを 40 個 IR に並べない)。押す仕組みはボタンと同じ。
+                    var keyboardBg = go.AddComponent<UnityEngine.UI.Image>();
+                    keyboardBg.color = TryParseColor(style?["backgroundColor"], out var keyboardBgColor)
+                        ? keyboardBgColor
+                        : new Color(0f, 0f, 0f, 0.55f);
+
+                    var keyboard = TryAddComponentByTypeName(go, "Arsist.Runtime.UI.ArsistVirtualKeyboard");
+                    if (keyboard == null)
+                    {
+                        Debug.LogError("[Arsist] ArsistVirtualKeyboard type not found; the keyboard will not work.");
+                        break;
+                    }
+                    var rowSpec = elementData["content"]?.ToString();
+                    if (!string.IsNullOrEmpty(rowSpec)) TrySetMemberValue(keyboard, "_rows", rowSpec);
+                    var keyboardBindKey = elementData["bind"]?["key"]?.ToString();
+                    if (!string.IsNullOrEmpty(keyboardBindKey)) TrySetMemberValue(keyboard, "_bindKey", keyboardBindKey);
+                    var keyboardBindingId = elementData["bindingId"]?.ToString();
+                    if (!string.IsNullOrEmpty(keyboardBindingId)) TrySetMemberValue(keyboard, "_bindingId", keyboardBindingId);
+                    if (style?["fontSize"] != null) TrySetMemberValue(keyboard, "_fontSize", style["fontSize"].Value<int>());
+                    if (TryParseColor(style?["color"], out var keyTextColor)) TrySetMemberValue(keyboard, "_textColor", keyTextColor);
+                    break;
+                }
+
                 case "Input":
-                    // 文字入力。自前の仮想キーボードは作らず、選択時に Quest の
-                    // システムキーボード オーバーレイ (TouchScreenKeyboard) を呼ぶ
-                    // (ArsistSystemKeyboardTarget)。OS標準の入力方式（音声入力・予測変換・
-                    // 他言語含む）がそのまま使える。
+                    // 文字入力。押されたら「文字を打つ」を始める (Arsist.Runtime.Input.ArsistTextEntry)。
+                    // 端末に入力方式があればその端末のキーボード (日本語・音声入力・予測変換つき)、
+                    // 無い/出てこない端末ではアプリの中のキーボードが下から出る。
+                    // どちらになるかは実行時に端末が決めるので、プロジェクトは 1 つのままでよい。
                     var inputBg = go.AddComponent<UnityEngine.UI.Image>();
                     inputBg.color = TryParseColor(style?["backgroundColor"], out var inputBgColor)
                         ? inputBgColor
                         : new Color(1f, 1f, 1f, 0.08f);
 
-                    var inputField = go.AddComponent<TMP_InputField>();
-
+                    // TMP_InputField は付けない。EventSystem のクリックで動く部品なので、
+                    // ワールド空間のレイ (視線 / コントローラー / 手) では選ばれず、
+                    // それでいて中の文字を自分で書き換えるため、打った文字を消してしまう。
                     var textAreaGO = new GameObject("Text Area");
                     textAreaGO.transform.SetParent(go.transform, false);
                     var textAreaRect = textAreaGO.AddComponent<RectTransform>();
@@ -4013,11 +4524,13 @@ ScriptedImporter:
                     placeholderRect.offsetMin = Vector2.zero;
                     placeholderRect.offsetMax = Vector2.zero;
                     var placeholderText = placeholderGO.AddComponent<TextMeshProUGUI>();
-                    placeholderText.text = elementData["content"]?.ToString() ?? "Input";
+                    placeholderText.text = elementData["content"]?.ToString() ?? "Tap to type";
                     placeholderText.fontStyle = FontStyles.Italic;
                     placeholderText.color = new Color(1f, 1f, 1f, 0.4f);
                     placeholderText.fontSize = style?["fontSize"]?.Value<int>() ?? 60;
                     placeholderText.raycastTarget = false;
+                    placeholderText.textWrappingMode = TextWrappingModes.Normal;
+                    placeholderText.alignment = TextAlignmentOptions.TopLeft;
                     if (_defaultTmpFont != null) placeholderText.font = _defaultTmpFont;
                     if (_defaultTmpMaterial != null) placeholderText.fontSharedMaterial = _defaultTmpMaterial;
 
@@ -4032,21 +4545,27 @@ ScriptedImporter:
                     inputContentText.color = TryParseColor(style?["color"], out var inputTextColor) ? inputTextColor : Color.white;
                     inputContentText.fontSize = style?["fontSize"]?.Value<int>() ?? 60;
                     inputContentText.raycastTarget = false;
+                    inputContentText.textWrappingMode = TextWrappingModes.Normal;
+                    inputContentText.alignment = TextAlignmentOptions.TopLeft;
                     if (_defaultTmpFont != null) inputContentText.font = _defaultTmpFont;
                     if (_defaultTmpMaterial != null) inputContentText.fontSharedMaterial = _defaultTmpMaterial;
 
-                    inputField.textViewport = textAreaRect;
-                    inputField.textComponent = inputContentText;
-                    inputField.placeholder = placeholderText;
-                    inputField.text = "";
+                    inputContentText.text = "";
 
                     SizeBoxColliderToRect(go, rectTransform);
                     TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistGazeTarget");
-                    var keyboardTarget = TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistSystemKeyboardTarget");
-                    if (keyboardTarget != null)
+                    var textInput = TryAddComponentByTypeName(go, "Arsist.Runtime.Input.ArsistTextInput");
+                    if (textInput == null)
                     {
-                        TrySetMemberValue(keyboardTarget, "textComponent", inputContentText);
+                        Debug.LogError("[Arsist] ArsistTextInput type not found; text input will not work.");
+                        break;
                     }
+                    TrySetMemberValue(textInput, "textComponent", inputContentText);
+                    TrySetMemberValue(textInput, "placeholder", placeholderGO);
+                    var inputBindKey = elementData["bind"]?["key"]?.ToString();
+                    if (!string.IsNullOrEmpty(inputBindKey)) TrySetMemberValue(textInput, "bindKey", inputBindKey);
+                    var inputBindingId = elementData["bindingId"]?.ToString();
+                    if (!string.IsNullOrEmpty(inputBindingId)) TrySetMemberValue(textInput, "bindingId", inputBindingId);
                     break;
             }
 
@@ -4055,7 +4574,7 @@ ScriptedImporter:
             var bindFormat = bind?["format"]?.ToString();
             if (!string.IsNullOrEmpty(bindKey))
             {
-                // Input は ArsistSystemKeyboardTarget 自身が表示更新 + store 書き戻しの両方を
+                // Input は ArsistTextInput 自身が表示更新 + store 書き戻しの両方を
                 // 担うので、読み取り専用の ArsistUIBinding は付けない（同じ子TMP_Textを取り合って
                 // 無駄な二重書きになるため）。
                 if (type != "Input")
@@ -4079,12 +4598,12 @@ ScriptedImporter:
                     TrySetMemberValue(sliderTargetComp, "bindKey", bindKey);
                 }
 
-                // Input はキーボードで打った内容を bind.key に書き戻す
-                var keyboardTargetType = FindType("Arsist.Runtime.Input.ArsistSystemKeyboardTarget");
-                var keyboardTargetComp = keyboardTargetType != null ? go.GetComponent(keyboardTargetType) : null;
-                if (keyboardTargetComp != null)
+                // Input は打った内容を bind.key に書き戻す
+                var textInputType = FindType("Arsist.Runtime.Input.ArsistTextInput");
+                var textInputComp = textInputType != null ? go.GetComponent(textInputType) : null;
+                if (textInputComp != null)
                 {
-                    TrySetMemberValue(keyboardTargetComp, "bindKey", bindKey);
+                    TrySetMemberValue(textInputComp, "bindKey", bindKey);
                 }
             }
 
@@ -4189,7 +4708,31 @@ ScriptedImporter:
             }
         }
 
-        private static void ApplyRectTransformStyle(RectTransform rectTransform, JObject style)
+        /// <summary>
+        /// 親が並べる係 (FlexRow / FlexColumn = LayoutGroup) かどうか。
+        ///
+        /// Unity の LayoutGroup は子のアンカーを左上に固定する。つまり「幅 100%」を
+        /// アンカーの引き伸ばしで表すと、親が並べる係のときだけ幅が 0 になって消える。
+        /// そういう親の下では、割合ではなく実際の数値で大きさを入れる。
+        /// </summary>
+        private static bool ParentControlsLayout(Transform parent, out float innerWidth, out float innerHeight)
+        {
+            innerWidth = 0f;
+            innerHeight = 0f;
+            if (parent == null) return false;
+
+            var group = parent.GetComponent<UnityEngine.UI.HorizontalOrVerticalLayoutGroup>();
+            if (group == null) return false;
+
+            var parentRect = parent as RectTransform;
+            if (parentRect == null) return false;
+
+            innerWidth = parentRect.rect.width - group.padding.left - group.padding.right;
+            innerHeight = parentRect.rect.height - group.padding.top - group.padding.bottom;
+            return true;
+        }
+
+        private static void ApplyRectTransformStyle(RectTransform rectTransform, JObject style, Transform parent = null)
         {
             // FIX 9: Ensure minimum size for text elements
             const float MIN_SIZE = 50f;
@@ -4228,6 +4771,27 @@ ScriptedImporter:
 
             var stretchWidth = IsPercent100(style["width"]);
             var stretchHeight = IsPercent100(style["height"]);
+
+            // 親が並べる係なら、アンカーで引き伸ばしても効かない (上のコメント)。実寸で入れる。
+            if ((stretchWidth || stretchHeight) && ParentControlsLayout(parent, out var innerWidth, out var innerHeight))
+            {
+                rectTransform.anchorMin = new Vector2(0f, 1f);
+                rectTransform.anchorMax = new Vector2(0f, 1f);
+                rectTransform.pivot = new Vector2(0f, 1f);
+                rectTransform.anchoredPosition = Vector2.zero;
+
+                var laidOutWidth = stretchWidth
+                    ? Mathf.Max(MIN_SIZE, innerWidth)
+                    : Mathf.Max(MIN_SIZE, ParseSizeValue(style["width"], DEFAULT_WIDTH));
+                var laidOutHeight = stretchHeight
+                    ? Mathf.Max(MIN_SIZE, innerHeight)
+                    : Mathf.Max(MIN_SIZE, ParseSizeValue(style["height"], DEFAULT_HEIGHT));
+                rectTransform.sizeDelta = new Vector2(laidOutWidth, laidOutHeight);
+
+                Debug.Log($"[Arsist] RectTransform inside a layout: size=({laidOutWidth},{laidOutHeight}) " +
+                          $"(100% resolved against the parent, which places its children itself)");
+                return;
+            }
 
             if (stretchWidth || stretchHeight)
             {
@@ -4442,6 +5006,88 @@ ScriptedImporter:
             }
         }
 
+        /// <summary>
+        /// Android の入口を **Activity** にする (Unity 6 の既定は GameActivity)。
+        ///
+        /// GameActivity で作ると、マニフェストの起動 Activity が
+        /// `com.unity3d.player.UnityPlayerGameActivity` になる。この入口では、
+        /// **文字入力のソフトキーボードが出ない**:
+        ///   - Quest のシステムキーボード オーバーレイは、Meta の Unity 統合が
+        ///     `UnityPlayerActivity` (古典的な Activity) 前提で動く。マニフェストに
+        ///     oculus.software.overlay_keyboard を宣言しても、GameActivity では何も出ない。
+        ///   - スマホでも、GameActivity は入力を GameTextInput 経由で扱うため、
+        ///     TouchScreenKeyboard.Open() で IME が出ない (Unity 6 の既知の問題)。
+        /// どちらも「押しても何も起きない」形で出るだけで、ビルドは何も言わずに通る
+        /// (2026-09 に踏んだ: Quest でも Android でもキーボードが出ない)。
+        ///
+        /// API 名が版によって違う可能性があるので reflection で触る。無ければ警告だけ。
+        /// </summary>
+        private static void UseClassicAndroidActivity()
+        {
+            try
+            {
+                var androidSettings = typeof(PlayerSettings).GetNestedType("Android", BindingFlags.Public | BindingFlags.Static);
+                var property = androidSettings?.GetProperty("applicationEntry", BindingFlags.Public | BindingFlags.Static);
+                if (property == null)
+                {
+                    Debug.LogWarning("[Arsist] PlayerSettings.Android.applicationEntry not found; " +
+                                     "cannot force the classic Activity entry point. On-device text input may not work.");
+                    return;
+                }
+
+                var before = property.GetValue(null);
+                var activity = Enum.Parse(property.PropertyType, "Activity");
+                if (Equals(before, activity))
+                {
+                    Debug.Log("[Arsist] Android application entry: Activity (already set)");
+                    return;
+                }
+
+                property.SetValue(null, activity);
+                Debug.Log($"[Arsist] Android application entry: {before} -> Activity " +
+                          "(GameActivity has no working soft keyboard; Meta's keyboard overlay needs UnityPlayerActivity)");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Could not set the Android application entry point: {e.Message}");
+            }
+
+            AlignAndroidManifestWithActivityEntry();
+        }
+
+        /// <summary>
+        /// アダプタが置いた AndroidManifest.xml を、入口 (Activity) に合わせる。
+        ///
+        /// 入口とテーマ・Activity クラスは対で決まっている。片方だけ GameActivity のままだと、
+        /// Gradle が `resource style/BaseUnityGameActivityTheme not found` で落ちる
+        /// (そのテーマは GameActivity のときしか APK に入らない)。
+        /// アダプタは誰でも足せるので、ここで必ず合わせる。
+        /// </summary>
+        private static void AlignAndroidManifestWithActivityEntry()
+        {
+            var manifestPath = Path.Combine(Application.dataPath, "Plugins", "Android", "AndroidManifest.xml");
+            if (!File.Exists(manifestPath)) return;
+
+            try
+            {
+                var text = File.ReadAllText(manifestPath);
+                var fixedText = text
+                    .Replace("com.unity3d.player.UnityPlayerGameActivity", "com.unity3d.player.UnityPlayerActivity")
+                    .Replace("@style/BaseUnityGameActivityTheme", "@style/UnityThemeSelector");
+                if (fixedText == text) return;
+
+                File.WriteAllText(manifestPath, fixedText);
+                AssetDatabase.Refresh();
+                Debug.LogWarning("[Arsist] AndroidManifest.xml still described the GameActivity entry point " +
+                                 "(UnityPlayerGameActivity / BaseUnityGameActivityTheme). Rewrote it for the " +
+                                 "Activity entry point, which is what this build uses.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Arsist] Could not align AndroidManifest.xml with the activity entry point: {e.Message}");
+            }
+        }
+
         private static void ApplyBuildSettings(JObject manifest)
         {
             var build = manifest["build"] as JObject;
@@ -4477,6 +5123,7 @@ ScriptedImporter:
             
             PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+            UseClassicAndroidActivity();
             PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
             PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
 
@@ -4639,6 +5286,15 @@ ScriptedImporter:
             }
             
             if (isQuest) defines.Add("ARSIST_META_QUEST");
+
+            // Inference Engine はモデルを使うプロジェクトでだけ入る。ArsistModelExecutor は
+            // この define の有無で本物と空の実装を切り替える。
+            defines.Remove("ARSIST_INFERENCE");
+            if (InferencePackagePresent())
+            {
+                defines.Add("ARSIST_INFERENCE");
+                Debug.Log("[Arsist] Inference Engine detected, adding ARSIST_INFERENCE define");
+            }
 
             var joined = string.Join(";", defines.OrderBy(x => x));
             PlayerSettings.SetScriptingDefineSymbolsForGroup(group, joined);
@@ -5312,6 +5968,11 @@ ScriptedImporter:
             {
                 "com.unity.openxr.feature.metaquest",
                 "com.meta.openxr.feature.metaxr",
+                // コントローラーの「インタラクションプロファイル」。
+                // OpenXR は、これが有効でないとコントローラーを一切見せない
+                // (InputDevices に何も出ず、レイもトリガーも死ぬ)。
+                // 実機の症状は「線が出ない・UI を押せない」で、ビルドは何も言わずに通る。
+                "com.unity.openxr.feature.input.oculustouch",
             };
 
             try
@@ -5907,6 +6568,41 @@ ScriptedImporter:
                 var setup = xrOrigin.GetComponent(setupType);
                 var wired = TrySetMemberValue(setup, "enableRayInteraction", controllerRay);
                 Debug.Log($"[Arsist] XROriginSetup controller-ray interaction: {controllerRay} (wired={wired})");
+
+                // 視線で押す (コントローラーが無いとき用)。0 なら使わない。
+                var dwell = _manifest?["arSettings"]?["interaction"]?["gazeDwellSeconds"]?.Value<float>() ?? 0f;
+                var wiredDwell = TrySetMemberValue(setup, "gazeDwellSeconds", dwell);
+                Debug.Log($"[Arsist] XROriginSetup gaze dwell: {dwell:F1}s (wired={wiredDwell})");
+            }
+
+            // 文字入力で出すキーボードの選び方 (自動 / 端末のものだけ / アプリの中のものだけ)。
+            var textInputMode = (_manifest?["arSettings"]?["interaction"]?["textInput"]?.ToString() ?? "auto") switch
+            {
+                "device" => 1,
+                "inApp" => 2,
+                _ => 0,
+            };
+            var textEntryConfigType = FindType("Arsist.Runtime.Input.ArsistTextEntryConfig, Assembly-CSharp")
+                ?? FindTypeInLoadedAssemblies("Arsist.Runtime.Input.ArsistTextEntryConfig");
+            if (textEntryConfigType != null)
+            {
+                var config = xrOrigin.GetComponent(textEntryConfigType) ?? xrOrigin.AddComponent(textEntryConfigType);
+                TrySetMemberValue(config, "mode", textInputMode);
+                Debug.Log($"[Arsist] Text input keyboard: {(textInputMode == 1 ? "device only" : textInputMode == 2 ? "in-app only" : "automatic")}");
+            }
+
+            // 画面を触って押す。スマホでは唯一の押す手立てで、パソコンでの確認にも効く。
+            // 触る画面が無い端末 (ヘッドセット) では何もしないので、いつも付けてよい。
+            var screenPointerType = FindType("Arsist.Runtime.Input.ArsistScreenPointer, Assembly-CSharp")
+                ?? FindTypeInLoadedAssemblies("Arsist.Runtime.Input.ArsistScreenPointer");
+            if (screenPointerType != null)
+            {
+                if (xrOrigin.GetComponent(screenPointerType) == null) xrOrigin.AddComponent(screenPointerType);
+                Debug.Log("[Arsist] ArsistScreenPointer added (touch / mouse can press the same UI).");
+            }
+            else
+            {
+                Debug.LogWarning("[Arsist] ArsistScreenPointer script not found; touch input will not work.");
             }
 
             if (handTracking)
@@ -6089,42 +6785,6 @@ ScriptedImporter:
             Debug.Log("[Arsist] OVRManager added on fallback root for Quest.");
         }
 
-        /// <summary>
-        /// OVRManager の「Require System Keyboard」(Quest Features 内のチェックボックス) を有効化する。
-        ///
-        /// これが無いと、Input要素があっても TouchScreenKeyboard.Open() が実機で機能しない
-        /// （Meta公式ドキュメント "Enable Keyboard Overlay" 参照）。フィールド名 "requireSystemKeyboard"
-        /// は、Unity Inspector が camelCase フィールド名をそのまま整形して表示する規則
-        /// （このファイル内の isInsightPassthroughEnabled と同じ規則）からの推測であり、
-        /// SDKソースで直接確認できていない best-effort 設定。TrySetMemberValue は対象フィールドが
-        /// 無ければ何もせず警告を出すだけなので、外れていてもビルド自体は壊れない。
-        /// 外れていた場合は、生成された Unity プロジェクトを開いて OVRCameraRig の OVRManager から
-        /// 手動で有効化すること。
-        /// </summary>
-        private static void ConfigureQuestSystemKeyboard(GameObject xrOrigin)
-        {
-            var ovrManagerType = FindType("OVRManager") ?? FindTypeInLoadedAssemblies("OVRManager");
-            var manager = xrOrigin != null ? xrOrigin.GetComponentInChildren(ovrManagerType, true) : null;
-            if (manager == null)
-            {
-                Debug.LogWarning("[Arsist] OVRManager not found; cannot enable system keyboard requirement.");
-                return;
-            }
-
-            var wired = TrySetMemberValue(manager, "requireSystemKeyboard", true);
-            if (wired)
-            {
-                Debug.Log("[Arsist] OVRManager.requireSystemKeyboard = true (Input要素があるため有効化)");
-            }
-            else
-            {
-                Debug.LogWarning(
-                    "[Arsist] Could not set OVRManager's system-keyboard field by reflection " +
-                    "(field name guess 'requireSystemKeyboard' didn't match). " +
-                    "Enable 'Require System Keyboard' manually under OVRManager > Quest Features " +
-                    "in the generated Unity project if on-device text input doesn't open the keyboard.");
-            }
-        }
 
         private static void ExecuteBuild(JObject manifest)
         {
@@ -6292,6 +6952,14 @@ ScriptedImporter:
                     changed |= SetSerializedIntOrBool(serialized, "_insightPassthroughSupport", passthroughSupport, passthrough);
                     changed |= SetSerializedIntOrBool(serialized, "focusAware", 1, true);
                     changed |= SetSerializedIntOrBool(serialized, "sceneSupport", 1, true);
+                    // 文字入力のある プロジェクトだけ、端末のキーボードを要求する。
+                    // これは OVRManager ではなく OVRProjectConfig 側の設定 (SDK の
+                    // OVRProjectConfig.requiresSystemKeyboard)。ここが false だと、
+                    // OVRManifestPreprocessor がビルド中にマニフェストを作り直したときに
+                    // oculus.software.overlay_keyboard が消え、TouchScreenKeyboard.Open() が
+                    // **黙って何も出さない** (実機では「押しても何も起きない」にしか見えない)。
+                    var wantsKeyboard = ProjectHasInputElement();
+                    changed |= SetSerializedIntOrBool(serialized, "requiresSystemKeyboard", wantsKeyboard ? 1 : 0, wantsKeyboard);
 
                     if (changed)
                     {
@@ -6301,7 +6969,7 @@ ScriptedImporter:
                         AssetDatabase.Refresh();
                     }
 
-                    Debug.Log($"[Arsist] OculusProjectConfig applied for Quest: HandTracking=1, Passthrough={(passthrough ? 1 : 0)}, FocusAware=1, SceneSupport=1");
+                    Debug.Log($"[Arsist] OculusProjectConfig applied for Quest: HandTracking=1, Passthrough={(passthrough ? 1 : 0)}, FocusAware=1, SceneSupport=1, SystemKeyboard={(wantsKeyboard ? 1 : 0)}");
                     return;
                 }
 
@@ -6361,6 +7029,7 @@ ScriptedImporter:
             yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", passthrough ? 2 : 0);
             yaml = ReplaceYamlNumericValue(yaml, "focusAware", 1);
             yaml = ReplaceYamlNumericValue(yaml, "sceneSupport", 1);
+            yaml = ReplaceYamlNumericValue(yaml, "requiresSystemKeyboard", ProjectHasInputElement() ? 1 : 0);
 
             File.WriteAllText(path, yaml);
             AssetDatabase.Refresh();

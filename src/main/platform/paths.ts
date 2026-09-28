@@ -152,6 +152,42 @@ export function getAndroidSdkDefault(ctx: PlatformContext): string {
 // Forcing ozone-platform-hint=x11 on a pure-Wayland box (no XWayland) can break
 // window creation. We only default to X11 when we are clearly NOT on Wayland.
 // ------------------------------------------------------------------
+/**
+ * adb (Android Debug Bridge) の候補。
+ * Unity は Android SDK を同梱しているので、まずそれを見る。次に環境変数の SDK、最後に PATH。
+ * 端末へのインストールに使う (ビルド画面の「ビルドしてインストール」)。
+ */
+export function getAdbCandidates(ctx: PlatformContext, unityEditorPath: string | null): string[] {
+  const { platform, env, homedir } = ctx;
+  const exe = platform === 'win32' ? 'adb.exe' : 'adb';
+  const out: string[] = [];
+
+  const fromSdk = (sdk: string) => path.join(sdk, 'platform-tools', exe);
+
+  if (unityEditorPath) {
+    const editorDir = path.dirname(unityEditorPath);
+    out.push(fromSdk(path.join(editorDir, 'Data', 'PlaybackEngines', 'AndroidPlayer', 'SDK')));
+    if (platform === 'darwin') {
+      out.push(fromSdk(path.join(editorDir, '..', '..', '..', 'PlaybackEngines', 'AndroidPlayer', 'SDK')));
+    }
+  }
+
+  for (const key of ['ANDROID_HOME', 'ANDROID_SDK_ROOT']) {
+    const value = env[key];
+    if (value) out.push(fromSdk(value));
+  }
+
+  out.push(fromSdk(getAndroidSdkDefault(ctx)));
+  if (platform !== 'win32') out.push(fromSdk(path.join(homedir, 'Android', 'Sdk')));
+
+  const separator = platform === 'win32' ? ';' : ':';
+  for (const dir of (env.PATH || '').split(separator)) {
+    if (dir.trim()) out.push(path.join(dir.trim(), exe));
+  }
+
+  return dedupe(out);
+}
+
 export function isWaylandSession(env: NodeJS.ProcessEnv): boolean {
   const sessionType = (env.XDG_SESSION_TYPE || '').toLowerCase();
   if (sessionType === 'wayland') return true;

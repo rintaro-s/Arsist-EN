@@ -20,7 +20,23 @@
     <AssemblyName>VisionPreview</AssemblyName>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <RollForward>LatestMajor</RollForward>
+    <!--
+      `infer` op (ONNX) のプレビューには ONNX Runtime が要る。NuGet から取れない環境
+      (オフライン) でも古典的な op のプレビューは動かしたいので、任意にしてある。
+      src/main/vision/VisionPreview.ts が true → false の順に試す。
+    -->
+    <ArsistOnnx Condition="'$(ArsistOnnx)' == ''">true</ArsistOnnx>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(ArsistOnnx)' == 'true'">
+    <DefineConstants>$(DefineConstants);ARSIST_ONNX</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(ArsistOnnx)' == 'true'">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
+    <Compile Include="OnnxModelRunner.cs" />
+    <Compile Include="ModelTry.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Include="Program.cs" />
@@ -37,9 +53,30 @@
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Recolor.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/ColorSummary.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Composite.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Tracking.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Quads.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Classic/Annotate.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/LinAlg.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/Homography.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Vision/RegionRectifier.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionValue.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionOps.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Pipeline/VisionPipelineRunner.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Models/TensorData.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Models/ModelSpec.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Models/ModelPreprocess.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Models/ModelPostprocess.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/Models/IVisionModelRunner.cs" />
+    <!-- 汎用の推論 (文章のモデル・テンソルのモデル)。実機のスクリプト model.* と同じもの -->
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/MiniJson.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/ModelTensor.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/InferenceService.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/Text/HfTokenizer.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/Text/Sampler.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/Text/ChatFormat.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/Text/TextModelSpec.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/Text/TextGeneration.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/Text/TextEncoding.cs" />
   </ItemGroup>
 
 </Project>

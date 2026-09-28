@@ -5,7 +5,7 @@
  * 新しい op を足すときは、ここと `VisionOps.Signatures` の両方を直せばよい。
  * 片方だけ直すと、エディタでは繋げるのにビルドで落ちる（あるいはその逆）になる。
  */
-import type { VisionOpType } from '../../shared/types';
+import type { ModelDefinition, ModelTask, VisionOpType } from '../../shared/types';
 
 /** op を流れる値の型。噛み合わない結線を弾くためにある。 */
 export type VisionValueKind =
@@ -16,12 +16,13 @@ export type VisionValueKind =
   | 'boundary'
   | 'blobs'
   | 'contours'
-  | 'record';
+  | 'record'
+  | 'quads';
 
 export interface OpParam {
   key: string;
-  /** UI の種類 */
-  kind: 'number' | 'text' | 'bool' | 'choice' | 'color' | 'valueRef';
+  /** UI の種類。modelRef はプロジェクトのモデル定義から選ぶ */
+  kind: 'number' | 'text' | 'bool' | 'choice' | 'color' | 'valueRef' | 'modelRef';
   default: number | string | boolean;
   min?: number;
   max?: number;
@@ -36,8 +37,22 @@ export interface OpDefinition {
   inputs: VisionValueKind[];
   output: VisionValueKind;
   /** 道具箱でのまとまり */
-  group: 'convert' | 'find' | 'shape' | 'measure' | 'draw';
+  group: 'convert' | 'find' | 'shape' | 'measure' | 'draw' | 'ai' | 'items' | 'time' | 'geometry';
   params: OpParam[];
+  /**
+   * 出力の型が params で変わる op (`infer`: モデルの task で決まる)。
+   * 指定があれば output の代わりにこれを使う。
+   */
+  dynamicOutput?: (params: Record<string, unknown> | undefined, models: ModelDefinition[]) => VisionValueKind;
+}
+
+/** モデルの task → `infer` の出力の型。C# の VisionOps.KindForTask と同じ表。 */
+export function kindForModelTask(task: ModelTask | undefined): VisionValueKind {
+  switch (task) {
+    case 'detect': return 'blobs';
+    case 'segment': return 'mask';
+    default: return 'record';
+  }
 }
 
 /** 値の型ごとの色。結線が合っているかを一目で分かるようにする。 */
@@ -50,6 +65,7 @@ export const KIND_COLORS: Record<VisionValueKind, string> = {
   blobs: '#4A9BD1',
   contours: '#5FB3B3',
   record: '#C77D4A',
+  quads: '#B58AD9',
 };
 
 export const OP_CATALOG: OpDefinition[] = [
@@ -182,7 +198,112 @@ export const OP_CATALOG: OpDefinition[] = [
       { key: 'step', kind: 'number', default: 1, min: 1, max: 8, step: 1, i18n: 'step' },
     ],
   },
+  // ---- 見つけた物を扱う ----
+  {
+    op: 'select', inputs: ['blobs'], output: 'blobs', group: 'items',
+    params: [
+      { key: 'label', kind: 'text', default: '', i18n: 'selectLabel' },
+      { key: 'minScore', kind: 'number', default: 0, min: 0, max: 1, step: 0.05, i18n: 'minScore' },
+      { key: 'minWidth', kind: 'number', default: 0, min: 0, max: 1, step: 0.01, i18n: 'minWidth' },
+      { key: 'minHeight', kind: 'number', default: 0, min: 0, max: 1, step: 0.01, i18n: 'minHeight' },
+      { key: 'sortBy', kind: 'choice', default: 'score', choices: ['score', 'size', 'x', 'y', 'none'], i18n: 'sortBy' },
+      { key: 'maxItems', kind: 'number', default: 0, min: 0, max: 64, step: 1, i18n: 'maxItemsZero' },
+      { key: 'stableOnly', kind: 'bool', default: false, i18n: 'stableOnly' },
+    ],
+  },
+  {
+    op: 'countItems', inputs: ['blobs'], output: 'record', group: 'items', params: [],
+  },
+  {
+    op: 'track', inputs: ['blobs'], output: 'blobs', group: 'time',
+    params: [
+      { key: 'maxDistance', kind: 'number', default: 0.15, min: 0.01, max: 1, step: 0.01, i18n: 'maxDistance' },
+      { key: 'maxAge', kind: 'number', default: 5, min: 0, max: 60, step: 1, i18n: 'maxAge' },
+      { key: 'smooth', kind: 'number', default: 0.5, min: 0, max: 0.95, step: 0.05, i18n: 'smooth' },
+      { key: 'minHits', kind: 'number', default: 2, min: 1, max: 30, step: 1, i18n: 'minHits' },
+      { key: 'matchLabel', kind: 'bool', default: true, i18n: 'matchLabel' },
+    ],
+  },
+  {
+    op: 'annotate', inputs: ['color', 'blobs'], output: 'color', group: 'draw',
+    params: [
+      { key: 'color', kind: 'color', default: '#4A9BD1', i18n: 'boxColor' },
+      { key: 'thickness', kind: 'number', default: 2, min: 1, max: 16, step: 1, i18n: 'thickness' },
+    ],
+  },
+  {
+    op: 'boxMask', inputs: ['blobs'], output: 'mask', group: 'draw',
+    params: [
+      { key: 'thickness', kind: 'number', default: 2, min: 1, max: 16, step: 1, i18n: 'thickness' },
+      { key: 'fill', kind: 'bool', default: false, i18n: 'fill' },
+    ],
+  },
+  // ---- 時間 ----
+  {
+    op: 'stabilize', inputs: ['record'], output: 'record', group: 'time',
+    params: [
+      { key: 'alpha', kind: 'number', default: 0.4, min: 0.05, max: 1, step: 0.05, i18n: 'alpha' },
+      { key: 'window', kind: 'number', default: 5, min: 1, max: 30, step: 1, i18n: 'window' },
+    ],
+  },
+  {
+    op: 'motion', inputs: ['gray'], output: 'mask', group: 'time',
+    params: [{ key: 'threshold', kind: 'number', default: 25, min: 1, max: 255, step: 1, i18n: 'motionThreshold' }],
+  },
+  {
+    op: 'event', inputs: ['record'], output: 'record', group: 'time',
+    params: [
+      { key: 'name', kind: 'text', default: 'vision.found', i18n: 'eventName' },
+      { key: 'value', kind: 'text', default: 'count', i18n: 'gateValue' },
+      { key: 'op', kind: 'choice', default: 'gte', choices: ['gte', 'gt', 'lte', 'lt', 'eq', 'neq'], i18n: 'gateOp' },
+      { key: 'compare', kind: 'number', default: 1, min: -100000, max: 100000, step: 0.01, i18n: 'compare' },
+      { key: 'mode', kind: 'choice', default: 'onChange', choices: ['onChange', 'always'], i18n: 'eventMode' },
+      { key: 'cooldown', kind: 'number', default: 0, min: 0, max: 60, step: 0.5, i18n: 'cooldown' },
+    ],
+  },
+  // ---- 幾何 ----
+  {
+    op: 'quads', inputs: ['mask'], output: 'quads', group: 'geometry',
+    params: [
+      { key: 'epsilonRatio', kind: 'number', default: 0.04, min: 0.005, max: 0.2, step: 0.005, i18n: 'epsilonRatio' },
+      { key: 'minArea', kind: 'number', default: 400, min: 1, max: 100000, step: 10, i18n: 'minArea' },
+      { key: 'maxItems', kind: 'number', default: 4, min: 1, max: 32, step: 1, i18n: 'maxItems' },
+    ],
+  },
+  {
+    op: 'rectify', inputs: ['color', 'quads'], output: 'color', group: 'geometry',
+    params: [
+      { key: 'width', kind: 'number', default: 320, min: 16, max: 1024, step: 16, i18n: 'rectifyWidth' },
+      { key: 'height', kind: 'number', default: 0, min: 0, max: 1024, step: 16, i18n: 'rectifyHeight' },
+      { key: 'index', kind: 'number', default: 0, min: 0, max: 31, step: 1, i18n: 'quadIndex' },
+      { key: 'reason', kind: 'text', default: 'noQuad', i18n: 'reason' },
+    ],
+  },
+  {
+    // 学習済みモデル (ONNX)。出力の型はモデルの task で決まる。
+    op: 'infer', inputs: ['color'], output: 'record', group: 'ai',
+    params: [{ key: 'model', kind: 'modelRef', default: '', i18n: 'model' }],
+    dynamicOutput: (params, models) => {
+      const id = params?.model;
+      const model = typeof id === 'string' ? models.find((m) => m.id === id) : undefined;
+      return kindForModelTask(model?.task);
+    },
+  },
 ];
+
+/** op の出力の型。`infer` はモデル次第なので、モデル一覧が要る。 */
+export function outputKindOf(op: { op: VisionOpType; params?: Record<string, unknown> }, models: ModelDefinition[]): VisionValueKind {
+  const definition = OP_BY_NAME.get(op.op);
+  if (!definition) return 'record';
+  return definition.dynamicOutput ? definition.dynamicOutput(op.params, models) : definition.output;
+}
+
+/** 一時的に外せる op か (入力と出力の型が同じ)。C# の Validate と同じ判定。 */
+export function canBypass(op: { op: VisionOpType; params?: Record<string, unknown> }, models: ModelDefinition[]): boolean {
+  const definition = OP_BY_NAME.get(op.op);
+  if (!definition || definition.inputs.length === 0) return false;
+  return definition.inputs[0] === outputKindOf(op, models);
+}
 
 export const OP_BY_NAME = new Map(OP_CATALOG.map((d) => [d.op, d]));
 

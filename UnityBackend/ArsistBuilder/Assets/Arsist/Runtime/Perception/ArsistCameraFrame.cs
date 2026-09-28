@@ -11,6 +11,11 @@
 //  - Intrinsics は Image の解像度に合わせて換算済みであること（センサー解像度のままにしない）。
 //  - CameraPose は「消費した時刻」ではなく「撮影した時刻」の姿勢。
 //    頭を動かしながらだと、ここを間違えるだけでアンカーがずれる。
+//
+// 大きさ:
+//  - 供給側は RequestedMaxWidth を見て、GPU 上で縮めてから読み出す (GpuFrameReader)。
+//    読み出しも変換も画素数に比例するので、要らない解像度を CPU に運ばない。
+//    0 はフル解像度 (OCR は細かい方がよい)。
 // ==============================================
 
 using Arsist.Runtime.Perception.Vision;
@@ -43,6 +48,13 @@ namespace Arsist.Runtime.Perception
         /// 毎フレーム変換すると無駄なので、必要なときだけ Manager が立てる。
         /// </summary>
         bool CaptureColor { get; set; }
+
+        /// <summary>
+        /// 次のフレームで要る幅 (px)。0 はフル解像度。
+        /// Manager が FrameBudget で「いま待っている消費者の中で一番大きい要求」を毎フレーム立てる。
+        /// 供給側はこれ以上の画素を CPU に運ばなくてよい (GPU で縮めてから読む)。
+        /// </summary>
+        int RequestedMaxWidth { get; set; }
 
         /// <summary>取得を開始する。成功したら true。</summary>
         bool Initialize();

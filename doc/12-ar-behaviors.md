@@ -575,3 +575,189 @@ Only the last two genuinely need the headset, and the first of them is a one-com
    means a small HUD overlay the task owns. Cheap, but it is UI that does not exist yet.
 3. **Region coordinates when the photo is replaced.** Regions are normalised, so they survive a
    replacement of the same framing but not a re-shot photo. Warn, don't silently move them.
+
+## コントローラーのレイ
+
+`XROriginSetup.UpdateRayInteraction` がレイを引き、当たった相手に `OnGazeEnter` / `OnGazeDwellSelect` を
+SendMessage で送る (視線・ハンドトラッキングと同じ道)。
+
+**OpenXR はインタラクションプロファイルが要る。** Quest ビルドは OpenXR で動く。OpenXR は
+「どのコントローラーの形を使うか」(interaction profile) を有効にしていないと、**コントローラーを
+一切見せない**。`InputDevices` は空、レイもトリガーも動かない。ビルドは何も言わずに通り、実機では
+「線が出ない・UI を押せない」だけが起きる (2026-09 に踏んだ)。`EnableQuestOpenXRFeatures` が
+`com.unity.openxr.feature.input.oculustouch` を有効にする。実機のログで確かめられる:
+
+```
+[Arsist] XR input: 'Oculus Touch Controller - Right' [Controller, TrackedDevice, HeldInHand, …]
+[Arsist] XR input: no devices at all (…)      ← プロファイルが無効だとこうなる
+```
+
+**姿勢の空間に注意。** `InputDevices` が返すコントローラーの位置・向きは、カメラを吊っている
+**Camera Offset の中の座標**で、ワールド座標ではない。そのまま LineRenderer や `Physics.Raycast` に
+渡すと、床のあたりに線が引かれ、当たり判定も見当違いの場所を通る。実機では「レイが出ない」ように見え、
+UI も押せない (2026-09 に踏んだ)。`_cameraOffset.TransformPoint(pos)` でワールドに直してから使う。
+
+実機のログで切り分けられる:
+
+```
+[Arsist] Controller ray: using 'Oculus Touch Controller - Right' (2 controller(s) tracked).
+[Arsist] Controller ray: no controller is being tracked yet.     ← 握って動かすと出なくなる
+[Arsist] Select: 'Key a'                                         ← トリガーで何を押したか
+[Arsist] Select: pressed, but the ray was not on anything.       ← 押せてはいる。狙いが外れている
+```
+
+**どのコントローラーを使うかを決め打ちにしない。** `InputDevices.GetDevicesWithCharacteristics` が返す
+順番に意味は無い。`inputDevices[0]` だけを見ていると、それが左手だったときに**右手のトリガーが一生
+見えない**。実機では「線は出ているのにトリガーで何も起きない」という形で出る (2026-09 に踏んだ)。
+いま引いているもの → 前に使っていたもの → 右手 → 最初の 1 つ、の順で選び、トリガーは全部のコントローラーを見る。
+押し方も端末で違うので `triggerButton` / `trigger` (0〜1、0.55 以上) / `primaryButton` のどれでも「決定」とする
+(`XROriginSetup.IsSelectPressed`)。
+
+**視線の輪は、コントローラーが見えている間は出さない。** 出していると、コントローラーで狙っている板の上に
+常に丸が乗ったままになり、邪魔なだけになる (2026-09 に言われた)。押すのもコントローラーに任せる。
+
+## 画面を触って押す (スマホ・パソコンでの確認)
+
+`Runtime/Input/ArsistScreenPointer.cs`。触った場所からカメラ越しにレイを出し、視線・コントローラー・手と
+**同じ判定 (`ArsistUiPointer.RaycastScene`) と同じ通知 (`OnGazeEnter` / `OnGazeDwellSelect` / `OnGazeDrag`)**
+を使う。ビルドの種類にかかわらずいつも付ける: 触る画面が無い端末では何も起きないので害が無く、
+これが無いと同じプロジェクトがスマホでは**何も押せない**。パソコンではマウスで同じことができる。
+
+```
+[Arsist] Touch: 'Key a'
+```
+
+## 見つめて押す (コントローラーが無いとき)
+
+`interaction.gazeDwellSeconds` (ビルド画面の「見つめて押す」) を 0 より大きくすると、
+ボタンを見つめたままにしたときに `OnGazeDwellSelect` が飛ぶ。溜まり具合は視線カーソルの
+大きさで見せる。**コントローラーが見えている間は働かない** (持っているときに誤爆しない)。
+
+コントローラーが繋がらない・電池切れ・そもそも持っていない、のときでも操作できる逃げ道として置いてある。
+
+## 文字入力
+
+**基本は `Input` 要素 1 つ。** 押すと文字を打ち始める。何で打つかは端末が決める
+(`Runtime/Input/ArsistTextEntry.cs`):
+
+| 端末 | 出るもの |
+|---|---|
+| キーボードを持っている端末 (Quest のオーバーレイ、XREAL/スマホの Android IME) | **その端末のキーボード**。日本語 (かな漢字変換)・音声入力・予測変換は端末のものがそのまま使える |
+| 持っていない / 頼んでも出てこない端末、パソコンでの確認 | **アプリの中のキーボード**が下から出る (英数字のみ)。物理キーボードでも打てる |
+
+端末を見て分岐するのは `ArsistTextEntry` だけで、プロジェクト (IR・スクリプト) は 1 つのまま。
+**同じプロジェクトがどの端末でも同じように動く**ことがこのエンジンの前提なので、
+「Quest だけ直す」は答えにならない。
+
+`TouchScreenKeyboard.Open()` は、機能宣言や端末の設定が足りないと**黙って何も出さない**。
+待っていても何も打てず、実機では「押しても何も起きない」にしか見えないので、1.5 秒出てこなければ
+アプリの中のキーボードに落とす。ログに理由が出る:
+
+```
+[Arsist] Text entry: asked the device for its keyboard.
+[Arsist] Text entry: the device keyboard did not appear; showing the in-app one.
+[Arsist] Text entry: this device has no keyboard of its own; using the in-app one.
+```
+
+**どのキーボードを出すかは選べる** (ビルド画面の「入力欄で出すキーボード」、
+IR は `arSettings.interaction.textInput`):
+
+| 設定 | 動き |
+|---|---|
+| `auto` (既定) | 端末のキーボードを試し、出なければアプリの中のものに切り替える |
+| `device` | 端末のキーボードだけ。出なければ打てない (ログにエラーを残す) |
+| `inApp` | アプリの中のキーボードだけ。どの端末でも同じ見た目・同じ操作 |
+
+選べるようにしてあるのは、**端末のキーボードが「どこに出るか」まではエンジンから分からない**ため。
+たとえば XREAL は Android の入力方式が**手元のスマホ側に開く**ので、グラスの中では何も起きないように見える。
+そういう端末では `inApp` を選ぶ。Quest は OS のオーバーレイがグラス内に出るので `auto` のままでよい。
+
+### Android の入口は **Activity** でなければならない (Unity 6 の既定は GameActivity)
+
+Unity 6 の `PlayerSettings.Android.applicationEntry` の既定は **GameActivity** で、そのまま作ると
+起動 Activity が `com.unity3d.player.UnityPlayerGameActivity` になる。この入口では
+**ソフトキーボードが一切出ない**:
+
+- Quest のシステムキーボード オーバーレイは、Meta の Unity 統合が `UnityPlayerActivity` 前提。
+  マニフェストに `oculus.software.overlay_keyboard` を宣言していても、GameActivity では出ない。
+- スマホでも、GameActivity は文字入力を GameTextInput 経由で扱うため、
+  `TouchScreenKeyboard.Open()` で IME が出ない。
+
+ビルドは何も言わずに通り、実機では「入力欄を押しても何も起きない」だけが起きる (2026-09 に踏んだ。
+Quest でも Android でも同じ症状で、当たり判定やレイヤーを直しても直らなかった原因はこれ)。
+`UseClassicAndroidActivity()` が毎回 Activity に直す。
+
+**入口とマニフェストは対で決まる。** アダプタの `AndroidManifest.xml` が GameActivity 用のままだと、
+Gradle が `resource style/BaseUnityGameActivityTheme not found` で落ちる (そのテーマは GameActivity の
+ビルドにしか入らない)。
+
+| 入口 | Activity クラス | テーマ |
+|---|---|---|
+| Activity (Arsist はこちら) | `com.unity3d.player.UnityPlayerActivity` | `@style/UnityThemeSelector` |
+| GameActivity (Unity 6 の既定) | `com.unity3d.player.UnityPlayerGameActivity` | `@style/BaseUnityGameActivityTheme` |
+
+(Unity 同梱の `PlaybackEngines/AndroidPlayer/Apk/UnityManifest.xml` がこの対を示している。)
+アダプタは誰でも足せるので、`AlignAndroidManifestWithActivityEntry()` が食い違いを見つけたら書き換えて警告する。
+
+ログとビルド結果で確かめられる:
+
+```
+[Arsist] Android application entry: GameActivity -> Activity (…)
+```
+```bash
+$ANDROID_SDK/build-tools/<版>/aapt2 dump xmltree <apk> --file AndroidManifest.xml | grep "E: activity" -A2
+#  UnityPlayerActivity / AppUIActivity (= UnityPlayerActivity の子) なら正しい
+#  UnityPlayerGameActivity だと、キーボードは出ない
+```
+
+Quest で端末のキーボードを出すのに要るもの (Meta SDK の仕様):
+
+- `AndroidManifest.xml` の `uses-feature oculus.software.overlay_keyboard`
+- `OVRProjectConfig.requiresSystemKeyboard = true` (SDK の `Editor/OVRProjectConfig.cs` にある本物の項目。
+  **OVRManager 側には無い** — 以前ここを reflection で触ろうとして、何の効果も無かった)
+
+どちらも Input 要素があるプロジェクトのときだけ自動で入る
+(`ProjectHasInputElement` → `QuestBuildPatcher.ConfigureSystemKeyboard` / `ConfigureOculusProjectConfigForQuest`)。
+ビルドした APK で確かめるには:
+
+```bash
+$ANDROID_SDK/build-tools/<版>/aapt2 dump xmltree <apk> --file AndroidManifest.xml | grep overlay_keyboard
+```
+
+なお Meta SDK には `OVRVirtualKeyboard` (ランタイムが描く VR 用キーボード) もあるが、
+入力源が Meta 独自の列挙 (`VirtualKeyboardInputSource`) 前提で Quest 専用になるため、使っていない。
+どの端末でも同じ動きにするほうを採っている。
+
+`Keyboard` 要素は、そのアプリ内キーボードを**最初から板として置く**もの (英数字のみ)。
+日本語を打たせたいなら `Input` を使う。
+
+どちらも、打った文字は `bind.key` (DataStore) に入り、確定すると `"<bindingId>:submit"` のイベントが鳴る。
+スクリプト側の書き方は同じなので、後から入れ替えられる。
+
+### 値の受け渡しは 1 か所 (ArsistDataStore) に集める
+
+キーボード・UI の bind・スクリプトの `store.*`・認識タスクは、**同じ入れ物**を指していなければならない。
+
+```
+キーボード / 入力欄 ──書く──▶ ArsistDataStore ──読む──▶ スクリプト (store.get)
+スクリプト (store.set) ──書く──▶ ArsistDataStore ──読む──▶ UI の bind (ArsistUIBinding が OnValueChanged で追従)
+認識タスク            ──書く──▶ ArsistDataStore ──読む──▶ 両方
+```
+
+2026-09 に、ここが 2 つに割れていた:
+
+- `store.*` (スクリプト) は**自前の Dictionary** を持っていて、DataStore と繋がっていなかった。
+  → スクリプトは打った文字を読めず、スクリプトが書いた答えは UI に出ない。
+- `SetValue("chat.input", …)` は「chat.input」という 1 つの名前で入れるのに、
+  `TryGetValueByPath("chat.input")` はドットを入れ子として辿っていた。→ 書いた値を自分で読めない。
+
+実機では「打っても入力欄に文字が出ない」「確定しても応答が無い」という形でしか見えない。
+いまは名前を**まずそのまま**引き、無ければ入れ子として辿る。両方とも
+`npm run test:perception` の `data store` で固定してある。
+
+**「まだ無い」と「空」を混同しない。** 入力欄・キーボードは、DataStore に値が無いときに
+「空だ」とみなすと、打った文字を毎フレーム自分で消してしまう (`TryReadStore` が bool を返すのはこのため)。
+
+`Input` に `TMP_InputField` は付けない。EventSystem のクリックで動く部品なので、ワールド空間のレイ
+(視線 / コントローラー / 手) では選ばれず、それでいて中の文字を自分で書き換えるため、打った文字を消してしまう。
+表示は `ArsistTextInput` が自分で持つ。

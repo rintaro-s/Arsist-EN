@@ -4,7 +4,7 @@
   "description": "Cross-Platform Development Engine for AR Glasses",
   "main": "dist/main/main/main.js",
   "scripts": {
-    "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev": "concurrently --kill-others \"npm run dev:main\" \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:renderer": "vite",
     "dev:electron": "wait-on dist/main/main/main.js http://localhost:5173 && node scripts/dev-electron.mjs",
@@ -24,6 +24,7 @@
     "verify:mcp:full": "node scripts/mcp-ir-full-test.mjs",
     "build:unity:test": "node scripts/run-unity-build.js",
     "test:perception": "dotnet run --project tools/perception-check/PerceptionCheck.csproj",
+    "make:sample-onnx": "npm run build:main && node scripts/make-sample-onnx.js",
     "spike:mlkit": "node scripts/run-mlkit-spike.mjs",
     "smoke:editor": "node tools/editor-smoke/smoke.mjs",
     "logs": "node scripts/arsist-logs.mjs"

@@ -11,6 +11,11 @@
 //
 // 画素はセンサーの向きのまま来る (多くの端末で 90° 回っている)。画面に映っている
 // 向きに回してから渡さないと、現実に重ねた絵が 90° 回った場所に出る。
+//
+// 読み出し: GetPixels32 (同期、フル解像度) ではなく GpuFrameReader を使う。
+//   - GPU で要る大きさに縮めてから読む (1280x720 → 640x360 なら運ぶ画素は 1/4)
+//   - 非同期なので描画を止めない (GetPixels32 は呼ぶたびに GPU の完了を待っていた)
+//   - 回転・輝度・色の変換はワーカースレッド
 // ==============================================
 
 using System;
@@ -24,11 +29,12 @@ namespace Arsist.Runtime.Perception.Sources
     public sealed class ArsistWebcamCameraSource : IArsistCameraFrameSource
     {
         private WebCamTexture _ownTexture;
-        private Color32[] _pixels;
         private Camera _camera;
+        private readonly GpuFrameReader _reader = new GpuFrameReader();
 
         public string Description =>
-            ArsistDeviceCamera.Instance != null ? "Device camera (phone, shared)" : "WebCamTexture (editor)";
+            (ArsistDeviceCamera.Instance != null ? "Device camera (phone, shared)" : "WebCamTexture (editor)") +
+            (_reader.AsyncSupported ? ", async GPU readback" : ", sync readback");
 
         public bool IsSupported =>
             ArsistDeviceCamera.Instance != null
@@ -36,6 +42,9 @@ namespace Arsist.Runtime.Perception.Sources
 
         /// <summary>色つきの画も作るか。Manager が必要なフレームだけ立てる。</summary>
         public bool CaptureColor { get; set; }
+
+        /// <summary>読み出す幅。0 はフル。Manager が FrameBudget で決める。</summary>
+        public int RequestedMaxWidth { get; set; }
 
         private WebCamTexture Texture =>
             ArsistDeviceCamera.Instance != null ? ArsistDeviceCamera.Instance.Texture : _ownTexture;
@@ -58,18 +67,22 @@ namespace Arsist.Runtime.Perception.Sources
             return true;
         }
 
-        // ---- ここから非同期化 ----
+        // ---- 非同期の流れ ----
         //
-        // 画素の並べ替え (回転) と、輝度・色の画への変換は 1280x720 で数十 ms かかる。
-        // これをメインスレッドでやると、画を取るたびに描画が止まってカクつく。
-        // Unity の API が要るのは GetPixels32 だけなので、それ以外はワーカーに出す。
-        // (Quest の供給も AsyncGPUReadback で同じ形にしてある。)
+        //   TryAcquire (メイン) → GpuFrameReader: Blit で縮小 → 非同期読み出し
+        //     → OnFrame (メイン、読み出し完了) → ワーカー: 回転 + 輝度 / 色の変換
+        //     → 次の TryAcquire で完成品を渡す
+        //
+        // Unity の API に触るのは Blit と読み出しだけで、それも非同期。
+        // 変換中 (_converting) は次を取らない。読み出しバッファは GpuFrameReader が使い回すため。
 
         private readonly object _gate = new object();
         private bool _converting;
         private bool _hasReady;
         private ArsistCameraFrame _ready;
         private bool _readyHasColor;
+
+        private int _lastLoggedWidth = -1;
 
         public bool TryAcquire(out ArsistCameraFrame frame)
         {
@@ -95,6 +108,7 @@ namespace Arsist.Runtime.Perception.Sources
                 }
                 if (_converting) return false;
             }
+            if (_reader.Busy) return false;
 
             var texture = Texture;
             if (texture == null || !texture.isPlaying || !texture.didUpdateThisFrame) return false;
@@ -102,10 +116,8 @@ namespace Arsist.Runtime.Perception.Sources
             int w = texture.width, h = texture.height;
             if (w <= 16 || h <= 16) return false;
 
-            // GetPixels32 だけはメインスレッドで。ワーカーが読んでいる間に次の GetPixels32 が
-            // 同じ配列を上書きしないよう、変換中は次を取らない (_converting)。
-            if (_pixels == null || _pixels.Length != w * h) _pixels = new Color32[w * h];
-            texture.GetPixels32(_pixels);
+            // GPU で縮めてから読む。フル解像度が要るとき (OCR) は RequestedMaxWidth が 0。
+            FrameBudget.ScaledSize(w, h, RequestedMaxWidth, out int readWidth, out int readHeight);
 
             // 撮った瞬間の値をまとめて持っていく。ワーカーから Unity の API は触れない。
             int turns = PhoneCameraMath.QuarterTurns(texture.videoRotationAngle);
@@ -115,67 +127,87 @@ namespace Arsist.Runtime.Perception.Sources
             var cam = _camera != null ? _camera : Camera.main;
             var pose = cam != null ? new Pose(cam.transform.position, cam.transform.rotation) : Pose.identity;
             double timestamp = Time.realtimeSinceStartupAsDouble;
-            var pixels = _pixels;
 
-            lock (_gate) _converting = true;
-
-            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            _reader.TryRequest(texture, readWidth, readHeight, (pixels, pw, ph, rowsTopDown) =>
             {
-                try
+                if (_lastLoggedWidth != pw)
                 {
-                    var oriented = Orient(pixels, w, h, turns, mirrored, out int ow, out int oh);
-                    var gray = GrayImageUnity.FromColor32(oriented, ow, oh);
-                    var color = wantColor ? ColorImageUnity.FromColor32(oriented, ow, oh) : null;
+                    _lastLoggedWidth = pw;
+                    PerceptionStats.SetPath(_reader.AsyncSupported ? "gpu-async" : "gpu-sync", w, h, pw, ph);
+                    Debug.Log($"[Arsist] Camera frames read back at {pw}x{ph} (native {w}x{h}, " +
+                              $"{(_reader.AsyncSupported ? "async" : "sync")}, rotation {turns * 90}°).");
+                }
 
-                    double focal = PhoneCameraMath.FocalFromHorizontalFov(ow, fov);
-                    var k = new CameraIntrinsics { Fx = focal, Fy = focal, Cx = (ow - 1) * 0.5, Cy = (oh - 1) * 0.5 };
-
-                    lock (_gate)
+                lock (_gate) _converting = true;
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    var started = DateTime.UtcNow;
+                    try
                     {
-                        _ready = new ArsistCameraFrame
+                        // 読み出しの行順 (上から下なら反転) と、映像自体の鏡写しは、どちらも回す前の画の上下反転。
+                        bool flip = rowsTopDown != mirrored;
+                        var oriented = Orient(pixels, pw, ph, turns, flip, out int ow, out int oh);
+                        var gray = GrayImageUnity.FromColor32(oriented, ow, oh);
+                        var color = wantColor ? ColorImageUnity.FromColor32(oriented, ow, oh) : null;
+
+                        double focal = PhoneCameraMath.FocalFromHorizontalFov(ow, fov);
+                        var k = new CameraIntrinsics { Fx = focal, Fy = focal, Cx = (ow - 1) * 0.5, Cy = (oh - 1) * 0.5 };
+
+                        lock (_gate)
                         {
-                            Image = gray,
-                            Color = color,
-                            Intrinsics = k,
-                            CameraPose = pose,
-                            TimestampSeconds = timestamp,
-                        };
-                        _readyHasColor = color != null;
-                        _hasReady = true;
+                            _ready = new ArsistCameraFrame
+                            {
+                                Image = gray,
+                                Color = color,
+                                Intrinsics = k,
+                                CameraPose = pose,
+                                TimestampSeconds = timestamp,
+                            };
+                            _readyHasColor = color != null;
+                            _hasReady = true;
+                        }
+                        PerceptionStats.Convert((DateTime.UtcNow - started).TotalMilliseconds);
                     }
-                }
-                catch (Exception e)
-                {
-                    // ワーカーの例外は握りつぶされやすいので必ず残す。
-                    Debug.LogWarning($"[Arsist] Camera frame conversion failed: {e.Message}");
-                }
-                finally
-                {
-                    lock (_gate) _converting = false;
-                }
+                    catch (Exception e)
+                    {
+                        // ワーカーの例外は握りつぶされやすいので必ず残す。
+                        Debug.LogWarning($"[Arsist] Camera frame conversion failed: {e.Message}");
+                    }
+                    finally
+                    {
+                        lock (_gate) _converting = false;
+                    }
+                });
             });
 
+            // 読み出しは非同期。完成品は次以降の TryAcquire で渡す。
             return false;
         }
 
         /// <summary>
         /// センサーの向きの画素を、画面に映っている向きに並べ替える。
-        /// ワーカーから呼ばれるので、共有の作業配列は使わず毎回確保する。
+        /// ワーカーから呼ばれるので、共有の作業配列は使わず毎回確保する
+        /// (source は GpuFrameReader の使い回しバッファなので、そのまま返してはいけない)。
         /// </summary>
-        private static Color32[] Orient(Color32[] source, int width, int height, int turns, bool mirrored,
+        private static Color32[] Orient(Color32[] source, int width, int height, int turns, bool flip,
                                         out int outWidth, out int outHeight)
         {
             PhoneCameraMath.RotatedSize(width, height, turns, out outWidth, out outHeight);
-            if (turns == 0 && !mirrored) return source;
 
-            var rotated = new Color32[source.Length];
+            var rotated = new Color32[width * height];
+            if (turns == 0 && !flip)
+            {
+                Array.Copy(source, rotated, rotated.Length);
+                return rotated;
+            }
+
             for (int y = 0; y < outHeight; y++)
             {
                 for (int x = 0; x < outWidth; x++)
                 {
                     PhoneCameraMath.SourceOf(x, y, width, height, turns, out int sx, out int sy);
-                    // 鏡写しは回す前の画での上下反転 (背景の uvRect と同じ扱い)。
-                    if (mirrored) sy = height - 1 - sy;
+                    // 鏡写し / 行順の反転は回す前の画での上下反転 (背景の uvRect と同じ扱い)。
+                    if (flip) sy = height - 1 - sy;
                     rotated[y * outWidth + x] = source[sy * width + sx];
                 }
             }
@@ -184,6 +216,7 @@ namespace Arsist.Runtime.Perception.Sources
 
         public void Shutdown()
         {
+            _reader.Dispose();
             // 借りたカメラは止めない。持ち主 (ArsistDeviceCamera) が止める。
             if (_ownTexture != null)
             {

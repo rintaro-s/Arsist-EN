@@ -13,8 +13,11 @@ export function MainLayout() {
     bottomPanelHeight,
     setLeftPanelWidth,
     setRightPanelWidth,
-    setBottomPanelHeight
+    setBottomPanelHeight,
+    currentView,
   } = useUIStore();
+  // 画像処理とモデルのタブは自前の一覧・設定を持つ全面の画面。左右の枠は空なので出さない。
+  const fullWidth = currentView === 'vision' || currentView === 'models';
 
   const isDraggingLeft = useRef(false);
   const isDraggingRight = useRef(false);
@@ -78,21 +81,25 @@ export function MainLayout() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel */}
-        <div style={{ width: leftPanelWidth }} className="flex-shrink-0 bg-arsist-surface">
-          <LeftPanel />
-        </div>
+        {!fullWidth && (
+          <>
+            {/* Left Panel */}
+            <div style={{ width: leftPanelWidth }} className="flex-shrink-0 bg-arsist-surface">
+              <LeftPanel />
+            </div>
 
-        {/* Left Resize Handle */}
-        <div
-          className="w-px cursor-col-resize hover:bg-arsist-accent/40 transition-colors hairline"
-          style={{ backgroundColor: 'rgb(var(--arsist-divider) / var(--arsist-divider-alpha))' }}
-          onMouseDown={() => {
-            isDraggingLeft.current = true;
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
-          }}
-        />
+            {/* Left Resize Handle */}
+            <div
+              className="w-px cursor-col-resize hover:bg-arsist-accent/40 transition-colors hairline"
+              style={{ backgroundColor: 'rgb(var(--arsist-divider) / var(--arsist-divider-alpha))' }}
+              onMouseDown={() => {
+                isDraggingLeft.current = true;
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+              }}
+            />
+          </>
+        )}
 
         {/* Center Content */}
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -124,21 +131,25 @@ export function MainLayout() {
           </div>
         </div>
 
-        {/* Right Resize Handle */}
-        <div
-          className="w-px cursor-col-resize hover:bg-arsist-accent/40 transition-colors"
-          style={{ backgroundColor: 'rgb(var(--arsist-divider) / var(--arsist-divider-alpha))' }}
-          onMouseDown={() => {
-            isDraggingRight.current = true;
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
-          }}
-        />
+        {!fullWidth && (
+          <>
+            {/* Right Resize Handle */}
+            <div
+              className="w-px cursor-col-resize hover:bg-arsist-accent/40 transition-colors"
+              style={{ backgroundColor: 'rgb(var(--arsist-divider) / var(--arsist-divider-alpha))' }}
+              onMouseDown={() => {
+                isDraggingRight.current = true;
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+              }}
+            />
 
-        {/* Right Panel */}
-        <div style={{ width: rightPanelWidth }} className="flex-shrink-0 bg-arsist-surface">
-          <RightPanel />
-        </div>
+            {/* Right Panel */}
+            <div style={{ width: rightPanelWidth }} className="flex-shrink-0 bg-arsist-surface">
+              <RightPanel />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

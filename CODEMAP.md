@@ -43,17 +43,21 @@ Build system: **npm + Vite + tsc + electron-builder** (no CMake/Cargo). Unity pr
 |------|----------------|
 | [main.ts](src/main/main.ts) | App lifecycle, IPC handlers, menu, MCP spawn, Unity path detection, OS tuning |
 | [preload.ts](src/main/preload.ts) | contextBridge IPC surface exposed to renderer |
-| [project/ProjectManager.ts](src/main/project/ProjectManager.ts) | IR create/load/save/export; AR defaults per template |
+| [project/ProjectManager.ts](src/main/project/ProjectManager.ts) | IR create/load/save/export; old-format projects open read-only until the user accepts an upgrade |
+| [project/migrations.ts](src/main/project/migrations.ts) | IR version migrations (`CURRENT_IR_VERSION` in `src/shared/irVersion.ts`); idempotent, tested |
+| `model/` | ONNX inspection without dependencies (`protobuf.ts` + `OnnxInspector.ts`), import into `Assets/Models/`, sample model builder |
 | [unity/UnityBuilder.ts](src/main/unity/UnityBuilder.ts) | **6-phase headless Unity build**; license retry; toolchain/SDK detection (largest file) |
 | [adapters/AdapterManager.ts](src/main/adapters/AdapterManager.ts) | Discover/apply device adapter folders |
 | `platform/` *(added in portability work)* | Centralized OS-dependent detection (Unity/JDK/Android SDK/license/config paths) |
 
 ### Renderer — `src/renderer/`
-Four editor views switched by `uiStore.currentView`: `scene` / `ui` / `dataflow` / `script`.
+Editor views switched by `uiStore.currentView`: `scene` / `ui` / `dataflow` / `script` / `vision`.
 - `stores/` — Zustand state: `projectStore.ts` (IR), `uiStore.ts` (editor UI), `dataStoreContext.ts` (runtime DataStore).
 - `components/viewport/` — `SceneViewport` (r3f 3D), `UIEditor`/`UICanvas` (2D), `DataFlowEditor`, `ScriptEditor`/`CodeEditor` (Monaco), `VRMViewer`.
 - `components/panels/` — Left (hierarchy), Right (inspector), Bottom.
-- `components/dialogs/` — Build, Settings, NewProject, Preview, MCP, **SetupWizard** (SDK/Unity path setup), Error.
+- `components/vision/` — the image-pipeline editor (its tab is hidden unless Settings turns it on; existing
+  projects keep building either way): start screen, storyboard (horizontal cards with each step's result picture, kind-coloured wires, drag, bypass), stage (overlay/raw/compare, legend, pixel readout, eyedropper for colour/threshold, drag-to-set viewing rect), timeline (video / photo sequences / device frames), add-step picker (every candidate tried on the current picture via `--probe`), step inspector, outputs (world / anchor / store / image), device import, ONNX model panel; `viewport/VisionEditor.tsx` just re-exports it. Editor-only state in `vision/visionStore.ts`; materials in `vision/testMedia.ts`; drafting/auto-wiring in `vision/draft.ts`; icons in `vision/opIcons.tsx`.
+- `components/dialogs/` — Build, Settings, NewProject, Preview, MCP, **SetupWizard** (SDK/Unity path setup), Error, **IrUpgradeDialog** (old project format).
 - `utils/uiCodeSync.ts` — IR ↔ HTML serialization.
 
 ### Unity runtime engine — `UnityBackend/ArsistBuilder/Assets/Arsist/`
@@ -61,7 +65,9 @@ Interprets the IR at runtime, by domain: `Runtime/Scripting/` (Jint JS host + wr
 `Runtime/UI/`, `Runtime/DataFlow/`, `Runtime/Data/`, `Runtime/VRM/`, `Runtime/Network/` (WebSocket for Python),
 `Runtime/Input/` (gaze), `Runtime/Events/`, `Runtime/Audio/`, `Runtime/Animation/`, `Runtime/Pooling/`,
 `Runtime/Perception/` (image anchors: `Vision/` = device-independent recogniser, `Sources/` = per-device camera
-frame supply; see `doc/11-perception.md`).
+frame supply through `GpuFrameReader` (GPU downscale + async readback, row order probed at runtime),
+`Pipeline/` = general image steps, `Models/` = ONNX pre/post-processing + the Inference Engine executor,
+`FrameBudget` = how much of the frame is read back; see `doc/11-perception.md`, `doc/14`, `doc/15`).
 `Editor/` holds the build pipeline + code generators. Key: [Editor/ArsistBuildPipeline.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs) (`BuildFromCLI` entry), [Runtime/XROriginSetup.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/XROriginSetup.cs) (runtime rig).
 
 ### Device adapters — `Adapters/<device>/`
@@ -173,6 +179,66 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   the real C# via `tools/vision-preview`; the editor/runtime contract is
   [opCatalog.ts](src/renderer/vision/opCatalog.ts). Adding a step touches VisionOps, opCatalog and a
   check in `tools/perception-check`. Worked example: `products/BlueSky/README.md`.
+- **Trained models (ONNX) in a pipeline** → `doc/15-models-and-ir-versions.md`. IR: `ModelDefinition` in
+  [types.ts](src/shared/types.ts) + the `infer` op (output type follows the model's task). Inspect/import in
+  `src/main/model/`; pre/post-processing in `Runtime/Perception/Models/` (UnityEngine-free, checked by
+  `ModelChecks`); on device `ArsistModelExecutor` (`Runtime/Inference/`, Unity Inference Engine, GPU compute when available);
+  in the editor preview `tools/vision-preview/OnnxModelRunner.cs` (ONNX Runtime). The package is added to
+  the Unity workspace only when the project has models (`UnityBuilder.ensureInferencePackage`).
+- **Trained models outside vision (language models, embeddings, any ONNX from scripts)** →
+  `doc/16-models-beyond-vision.md`. IR: `ModelDefinition.use` (`image` / `text` / `tensor`) + `text`
+  (IR v3). Runtime: `Runtime/Inference/` (UnityEngine-free: `HfTokenizer` reads HuggingFace
+  `tokenizer.json`, `TextGenerationSession` with KV cache, `TextEncoding`, `ChatFormat`, `InferenceService`;
+  checked by `InferenceChecks`), device runner `ArsistModelExecutor`, script API `model.*`
+  (`Scripting/ModelWrapper.cs`). Editor: the **Models** tab (`src/renderer/components/models/`) with a
+  Try panel that runs the same C# through `tools/vision-preview --model-try`. Unity's importer lacks
+  `If`/`Loop` and `com.microsoft` ops (`src/shared/unityOps.ts`), so such models are routed to the
+  **bundled ONNX Runtime** instead (`ArsistOrtRunner` + the Java bridge; StreamingAssets, unpacked on
+  first use) — that is what makes LLMs run on the device at all.
+- **UI created at runtime (keys, panels) → `Runtime/UI/ArsistUiLayers.cs`.** The always-on canvas is drawn by
+  a dedicated camera that renders only the `ArsistHUD` layer, on top of everything. `new GameObject()` does not
+  inherit its parent's layer, so runtime UI lands on `Default`, is drawn by the main camera and then painted
+  over by the HUD camera — pressable but invisible. Always create runtime UI through this helper. `doc/08`.
+- **No soft keyboard on device (Quest or phone)** → the Android entry point. Unity 6 defaults
+  `PlayerSettings.Android.applicationEntry` to **GameActivity**, which has no working `TouchScreenKeyboard` and
+  which Meta's keyboard overlay does not support. `ArsistBuildPipeline.UseClassicAndroidActivity()` forces
+  `Activity` on every Android build; check a built APK with
+  `aapt2 dump xmltree <apk> --file AndroidManifest.xml | grep "E: activity" -A2`. `doc/12`.
+- **Values shared between scripts, UI bindings and perception** → `Runtime/DataFlow/ArsistDataStore.cs`, and
+  **only** that. `store.*` in a script is a window onto it (`Scripting/StoreWrapper.cs`), `bind.key` on a UI
+  element reads it (`UI/ArsistUIBinding.cs`, live via `OnValueChanged`), text fields and keyboards write it.
+  Names may contain dots: a name is looked up **as written first**, then walked as a nested path, so
+  `store.set('chat.input', …)` and `bind.key: chat.input` are the same slot. Covered by
+  `npm run test:perception` (`tools/perception-check/DataStoreChecks.cs`). `doc/12`.
+- **Text input in an app** → `Input` (`Runtime/Input/ArsistTextInput.cs`) is the one to use. Selecting it
+  starts text entry through `Runtime/Input/ArsistTextEntry.cs`, which picks per device: the device's own
+  keyboard (`TouchScreenKeyboard` — Japanese, voice input, prediction) when there is one, otherwise (or if
+  it does not actually appear within 1.5 s) an in-app keyboard spawned at the bottom of the canvas.
+  `Keyboard` (`Runtime/UI/ArsistVirtualKeyboard.cs`) places that in-app keyboard explicitly; it is
+  ASCII-only. Both write to `bind.key` and fire `<bindingId>:submit`. Which keyboard is used can be forced per
+  project (`arSettings.interaction.textInput`: `auto` / `device` / `inApp`, Build dialog → the device keyboard
+  opens on the host phone on XREAL, so `inApp` exists for that). `doc/12`.
+- **What a build actually ships (models, perception, IR version)** → `generateBuildManifest` in
+  `src/bridge/UnityBridge.ts`. Both the Build dialog and `scripts/run-unity-build.js` must go through it; the
+  dialog used to hand-roll its own manifest and silently shipped **no models and no perception**.
+  `src/bridge/UnityBridge.buildManifest.test.ts` locks it. `doc/04`.
+- **Closing the editor / stray background processes** → `src/main/platform/childProcesses.ts`. Every spawned
+  process is tracked and killed as a group when the window closes (`shutdownBackgroundWork` in `main.ts`,
+  also on `before-quit` and Ctrl+C); a running build asks once before it is stopped. `doc/02`.
+- **Installing a build on a connected device** → `src/main/device/Adb.ts` (finds adb in Unity's bundled
+  Android SDK first, lists `adb devices -l`, installs with `-s <serial> install -r -d`) and the device
+  picker + "build and install" buttons in `BuildDialog`. `doc/04`.
+- **Pulling a model from Hugging Face** → `src/main/model/HuggingFace.ts` (lists a repo, groups the same
+  model by precision with real sizes including `*.onnx_data`, downloads one variant + tokenizer) and
+  `components/models/HuggingFaceDialog.tsx`. Token in Settings (`huggingFaceToken`). `doc/16` §3.1.
+- **Camera frames: how much is read back from the GPU, and on which thread** → `Runtime/Perception/FrameBudget.cs`
+  + `Sources/GpuFrameReader.cs`; the 5-second `Perception frames:` log line is the evidence. `doc/15` §2.
+- **IR format version / upgrading old projects** → `src/shared/irVersion.ts` + `src/main/project/migrations.ts`
+  + `IrUpgradeDialog`. Bump the version and add a migration whenever `project.json` changes shape. `doc/15` §3.
+- **Putting labels / objects where things were found, tracking across frames, events from vision** →
+  `anchor` output (`Overlay/ArsistWorldAnchors.cs`, ray from `ViewportMapping.RayFromNormalized`), ops
+  `track` / `stabilize` / `motion` / `event` (stateful via `VisionState`, checked in `TemporalChecks`),
+  `quads` / `rectify` for signs and screens. Samples: `products/CountAndLabel`, `products/MotionAlarm`.
 - **Drawing onto the real world** (not a Canvas) → `Overlay/ArsistWorldOverlay.cs`, fed by a pipeline's
   `world` output. Crop/downscale intrinsics: `Vision/ViewportMapping.cs` (half-pixel convention).
 - **Plain Android phones (no headset)** → `Adapters/Android_Phone/`. Gyro look (3DoF) via
@@ -234,12 +300,20 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   system-keyboard bridge, see below), and [products/QuestAIChat](products/QuestAIChat/README.md) (the
   same idea but standalone WebXR — no Unity, no dependency on this engine's runtime at all, with its own
   hand-tracking-driven virtual keyboard instead of the OS system keyboard).
-- **`Input` UI element → Quest system keyboard** → selecting an `Input` element (gaze/ray/hand, same path
-  as Button) calls `Arsist.Runtime.Input.ArsistSystemKeyboardTarget.OpenKeyboard()`, which opens Unity's
-  `TouchScreenKeyboard` — Quest's OS-level keyboard overlay, not a custom in-app keyboard. Requires the
+- **`Input` UI element → the device's keyboard** → selecting an `Input` element (gaze/ray/hand, same path
+  as Button) calls `ArsistTextInput.BeginEditing()` → `ArsistTextEntry.Begin()`, which opens Unity's
+  `TouchScreenKeyboard` (Quest's keyboard overlay, XREAL's / a phone's Android IME) and falls back to the
+  in-app keyboard when the device has none or it does not appear. On Quest this needs the
   `oculus.software.overlay_keyboard` manifest `uses-feature` (added automatically, only when a project has
   an `Input` element — `ArsistBuildPipeline.ProjectHasInputElement`/`QuestBuildPatcher.ConfigureSystemKeyboard`)
-  and (unconfirmed field name, best-effort) `OVRManager.requireSystemKeyboard`.
+  and (unconfirmed field name, best-effort) `OVRManager.requireSystemKeyboard`; the fallback is what keeps
+  the same project usable if either is missing.
+- **Pointing at UI (any device)** → one place: `Runtime/UI/ArsistUiPointer.cs`. `RaycastScene` checks
+  Physics colliders *and* the Canvas graphics themselves (rect intersection, topmost `Graphic.depth` wins
+  among coplanar hits) and is used by the controller ray (`XROriginSetup`), gaze (`ArsistGazeInput`) and
+  hand tracking (`ArsistHandInteraction`) alike — a device differs only in where the ray starts, never in
+  what it can hit. `ArsistScreenPointer` adds the same for touch/mouse (phones, desktop checks) and is
+  attached to every build. `doc/08`, `doc/12`.
 - **Script engine (Jint, JS) → UI selection wiring** → a UI element selected via gaze/controller-ray/hand
   (any of them; they all funnel through `ArsistGazeTarget.OnGazeDwellSelect`) fires
   `ArsistScriptEvent.Fire(bindingId)`, which a script with `trigger: {type: "event", value: bindingId}`

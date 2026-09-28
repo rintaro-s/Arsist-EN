@@ -1,24 +1,4 @@
-import {
-  Box,
-  Layout,
-  Move,
-  RotateCw,
-  Maximize2,
-  Grid3X3,
-  Axis3D,
-  Magnet,
-  PersonStanding,
-  Settings,
-  Download,
-  Eye,
-  Save,
-  FolderOpen,
-  Plus,
-  Server,
-  Zap,
-  Radar,
-  ScanEye,
-} from 'lucide-react';
+import { Box, Layout, Move, RotateCw, Maximize2, Grid3X3, Axis3D, Magnet, PersonStanding, Settings, Download, Eye, Save, FolderOpen, Plus, Server, Zap, Radar, ScanEye, Cpu } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
 import { useT } from '../i18n';
@@ -28,6 +8,7 @@ export function Toolbar() {
   const {
     currentView,
     setCurrentView,
+    showVisionTab,
     transformMode,
     setTransformMode,
     showGrid,
@@ -88,11 +69,19 @@ export function Toolbar() {
             active={currentView === 'script'}
             onClick={() => setCurrentView('script')}
           />
+          {showVisionTab && (
+            <ViewTab
+              icon={<ScanEye size={15} />}
+              label={t('toolbar.tabVision')}
+              active={currentView === 'vision'}
+              onClick={() => setCurrentView('vision')}
+            />
+          )}
           <ViewTab
-            icon={<ScanEye size={15} />}
-            label={t('toolbar.tabVision')}
-            active={currentView === 'vision'}
-            onClick={() => setCurrentView('vision')}
+            icon={<Cpu size={15} />}
+            label={t('toolbar.tabModels')}
+            active={currentView === 'models'}
+            onClick={() => setCurrentView('models')}
           />
         </div>
       </div>

@@ -10,6 +10,7 @@ import {
   Layout, Plus,
   FolderOpen, ChevronDown, ChevronRight,
   Database, Activity, Trash2, User, Image as ImageIcon, Pin, ScanText,
+  ScanEye,
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -94,8 +95,10 @@ function SceneHierarchy() {
     addObject({
       name: 'Canvas',
       type: 'canvas',
-      canvasSettings: { layoutId, widthMeters: 1.2, heightMeters: 0.7, pixelsPerUnit: 1000 },
-      transform: { position: { x: 0, y: 0, z: 2 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
+      // 原点 = 起動時のユーザーの視点 (doc/12)。目の高さの少し下、1.8m 先に出す。
+      // 大きさは 1920x1080 の下書きがそのまま収まる比 (1.6m x 0.9m, 1m あたり 1200px)。
+      canvasSettings: { layoutId, widthMeters: 1.6, heightMeters: 0.9, pixelsPerUnit: 1200 },
+      transform: { position: { x: 0, y: -0.05, z: 1.8 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
     });
   };
 
@@ -146,6 +149,19 @@ function SceneHierarchy() {
     });
   };
 
+  /** 画像処理パイプラインのタスク。中身は Vision タブで組むので、そこへ移る。 */
+  const addVisionTask = () => {
+    setMenuOpen(false);
+    addPerceptionTask({
+      name: t('vision.task.defaultName'),
+      type: 'vision',
+      source: { kind: 'viewport', rect: { x: 0, y: 0, width: 1, height: 1 } },
+      trigger: { type: 'interval', value: 500 },
+      storeAs: 'vision',
+    });
+    useUIStore.getState().setCurrentView('vision');
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="panel-header">
@@ -165,6 +181,7 @@ function SceneHierarchy() {
               <MenuItem icon={<Layout size={14} />} label={t('leftPanel.canvasUiSurface')} onClick={addCanvas} />
               <MenuItem icon={<ImageIcon size={14} />} label={t('perception.addTarget')} onClick={addImageAnchor} />
               <MenuItem icon={<ScanText size={14} />} label={t('perception.addTask')} onClick={addRecognitionTask} />
+              <MenuItem icon={<ScanEye size={14} />} label={t('perception.addVisionTask')} onClick={addVisionTask} />
             </div>
           )}
         </div>
@@ -302,7 +319,7 @@ function UIHierarchy() {
       {layout && (
         <div className="px-2 py-1.5 border-b border-arsist-border bg-arsist-hover flex items-center gap-1 flex-wrap">
           <span className="text-[10px] text-arsist-muted mr-1">{t('leftPanel.add')}</span>
-          {(['Panel', 'Text', 'Button', 'Image', 'Input', 'Slider', 'Gauge', 'Graph'] as const).map((t) => (
+          {(['Panel', 'Text', 'Button', 'Image', 'Input', 'Keyboard', 'Slider', 'Gauge', 'Graph'] as const).map((t) => (
             <button
               key={t}
               onClick={() => addUIElement(selectedUIElementId, { type: t })}

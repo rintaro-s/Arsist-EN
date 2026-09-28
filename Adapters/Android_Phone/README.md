@@ -85,3 +85,20 @@ AR か VR かは **背景モード (`arSettings.backgroundMode`)** で決まる�
 - 更新間隔が 2 秒 (下限 0.5 秒) で、塗ってから平均 1 秒反映されなかった
 
 いずれも Arsist 側の問題で、端末の性能のせいではなかった。
+
+その後さらに、カメラの画の運び方を変えた (`doc/15` §2)。以前は `GetPixels32` でフル解像度を
+**同期的に**読んでいて、画を取るたびに GPU の完了を待って引っかかっていた。今は GPU で要る大きさに
+縮めてから非同期に読み出す。5 秒ごとに次が出る:
+
+```
+[Arsist] Perception frames: gpu-async 1280x720->640x360, 25 readback(s) avg 1.8 ms (max 4.1), 25 convert(s) avg 3.2 ms (max 6.0) on worker, 10 still(s), 15 detection(s) in 5 s
+```
+
+| 見るところ | 目安 |
+|---|---|
+| `gpu-async` | 非同期読み出し。`gpu-sync` なら端末が対応しておらず、同期で読んでいる (遅いが動く) |
+| `1280x720->640x360` | ネイティブ → 読み出す大きさ。画像処理タスクが要る幅より大きければ、どこかがフル解像度を求めている (OCR は求める) |
+| readback / convert の ms | 読み出しは数 ms 以下、変換はワーカーなので描画には効かない |
+
+起動時の `GPU frame reader: … readback rows are top-down (will flip)` は、読み出した行の向きを測った結果。
+現実に重ねた絵が上下逆なら、まずこの行を見る。

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle, Eye, Cloud, Square, MousePointer2, Hand } from 'lucide-react';
+import { X, FolderOpen, Glasses, Play, AlertCircle, CheckCircle, Eye, Cloud, Square, MousePointer2, Hand, Smartphone, RefreshCw, Download } from 'lucide-react';
 import type { BackgroundMode, InteractionSettings, PhoneSettings } from '../../../shared/types';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ErrorDialog } from './ErrorDialog';
 import { useT } from '../../i18n';
+import { generateBuildManifest } from '../../../bridge/UnityBridge';
 
 interface BuildDialogProps {
   onClose: () => void;
@@ -49,6 +50,13 @@ const devices: DeviceOption[] = [
   { id: 'Rokid_Max', name: 'Rokid Max', available: false },
   { id: 'VITURE_One', name: 'VITURE One', available: false },
 ];
+
+/** つながっている端末 (adb devices)。 */
+interface ConnectedDevice {
+  serial: string;
+  state: string;
+  label: string;
+}
 
 export function BuildDialog({ onClose }: BuildDialogProps) {
   const t = useT();
@@ -109,7 +117,8 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
   const toggleInteraction = (patch: Partial<InteractionSettings>) => {
     updateARSettings({ interaction: { ...interaction, ...patch } });
   };
-  const noInteractionEnabled = !interaction.controllerRay && !interaction.handTracking;
+  const gazeDwell = interaction.gazeDwellSeconds ?? 0;
+  const noInteractionEnabled = !interaction.controllerRay && !interaction.handTracking && gazeDwell <= 0;
 
   const buildHelpfulErrorSummary = (text: string, logs: string[]) => {
     const combined = [text, ...logs].join('\n');
@@ -207,7 +216,70 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     }
   };
 
-  const executeBuild = async () => {
+  // ---- つながっている端末 (adb) ----
+  const [connectedDevices, setConnectedDevices] = useState<ConnectedDevice[]>([]);
+  const [selectedSerial, setSelectedSerial] = useState<string>('');
+  const [adbMissing, setAdbMissing] = useState(false);
+  const [listingDevices, setListingDevices] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [lastApkPath, setLastApkPath] = useState<string | null>(null);
+
+  const refreshDevices = async () => {
+    if (!window.electronAPI?.device) return;
+    setListingDevices(true);
+    try {
+      const result = await window.electronAPI.device.list();
+      setAdbMissing(Boolean(result.adbMissing));
+      const usable = (result.devices ?? []).map((d) => ({ serial: d.serial, state: d.state, label: d.label }));
+      setConnectedDevices(usable);
+      // 選んでいた端末が消えていたら、使える 1 台目に移す
+      setSelectedSerial((current) => {
+        if (current && usable.some((d) => d.serial === current && d.state === 'device')) return current;
+        return usable.find((d) => d.state === 'device')?.serial ?? '';
+      });
+    } finally {
+      setListingDevices(false);
+    }
+  };
+
+  // 開いたときに 1 回見る。抜き差しは「更新」で拾う。
+  useEffect(() => {
+    void refreshDevices();
+    if (!window.electronAPI?.device) return;
+    return window.electronAPI.device.onInstallLog((line) => addBuildLog(line));
+  }, []);
+
+  /** ビルドした APK を、選んだ端末に入れる。 */
+  const installToDevice = async (apkPath: string | null) => {
+    if (!window.electronAPI?.device) return;
+    const apk = apkPath ?? lastApkPath;
+    if (!apk) {
+      addNotification({ type: 'error', message: t('build.installNoApk') });
+      return;
+    }
+    const device = connectedDevices.find((d) => d.serial === selectedSerial);
+    if (!device) {
+      addNotification({ type: 'error', message: t('build.installNoDevice') });
+      return;
+    }
+
+    setInstalling(true);
+    addBuildLog(t('build.logInstalling', { device: device.label }));
+    try {
+      const result = await window.electronAPI.device.install(device.serial, apk);
+      if (result.success) {
+        addBuildLog(t('build.logInstalled', { device: device.label }));
+        addNotification({ type: 'success', message: t('build.installed', { device: device.label }) });
+      } else {
+        addBuildLog(t('build.logInstallFailed', { error: result.error ?? '' }));
+        addNotification({ type: 'error', message: t('build.installFailed', { error: result.error ?? '' }) });
+      }
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const executeBuild = async (installAfter = false) => {
     if (!window.electronAPI || !project) return;
     
     if (!unityPath || !outputPath) {
@@ -247,21 +319,10 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     try {
       const unityWorkDir = `${outputPath}/TempUnityProject`;
 
-      const { remoteInput, ...androidBuild } = (project.buildSettings as any) || {};
-      const manifestData = {
-        projectId: project.id,
-        projectName: project.name,
-        version: project.version,
-        appType: project.appType,
-        targetDevice: selectedDevice,
-        arSettings: project.arSettings,
-        designSystem: project.designSystem,
-        build: androidBuild,
-        buildSettings: project.buildSettings,
-        remoteInput,
-        scenes: project.scenes,
-        exportedAt: new Date().toISOString(),
-      };
+      // マニフェストは共通の組み立てを使う (ここで手書きしない)。
+      // 手書きにしていたせいで models / perception が抜け、エディタから作った APK には
+      // モデルが 1 つも入っていなかった。UnityBridge.generateBuildManifest を参照。
+      const manifestData = generateBuildManifest(project, { targetDevice: selectedDevice });
 
       // Start Unity build
       addBuildLog(t('build.logStarting'));
@@ -286,6 +347,13 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
           type: 'success',
           message: t('build.buildCompleted', { path: buildResult.outputPath })
         });
+        const apkPath = typeof buildResult.outputPath === 'string' ? buildResult.outputPath : null;
+        setLastApkPath(apkPath);
+        if (installAfter) {
+          // ここからは端末側の作業。選んだ端末は押した時点のもの (ビルド中に抜かれていれば adb が言う)。
+          setIsBuilding(false);
+          await installToDevice(apkPath);
+        }
       } else {
         const errorText = typeof buildResult.error === 'string' && buildResult.error
           ? buildResult.error
@@ -301,13 +369,17 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
     }
   };
 
-  const handleBuild = async () => {
+  /** 保存を挟むことがあるので、「この後インストールするか」を覚えておく。 */
+  const [installAfterBuild, setInstallAfterBuild] = useState(false);
+
+  const handleBuild = async (installAfter = false) => {
     if (isBuilding) return;
+    setInstallAfterBuild(installAfter);
     if (isDirty) {
       setShowUnsavedConfirm(true);
       return;
     }
-    await executeBuild();
+    await executeBuild(installAfter);
   };
 
   const handleSaveAndBuild = async () => {
@@ -317,12 +389,12 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
       return;
     }
     setShowUnsavedConfirm(false);
-    await executeBuild();
+    await executeBuild(installAfterBuild);
   };
 
   const handleBuildWithoutSave = async () => {
     setShowUnsavedConfirm(false);
-    await executeBuild();
+    await executeBuild(installAfterBuild);
   };
 
   const handleCancelBuild = async () => {
@@ -552,7 +624,41 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                     : t('build.interactionHandTrackingUnsupported')}
                 </p>
               </button>
+
+              <button
+                onClick={() => toggleInteraction({ gazeDwellSeconds: gazeDwell > 0 ? 0 : 1.2 })}
+                disabled={isBuilding}
+                className={`w-full p-3 rounded-lg border text-left text-sm ${
+                  gazeDwell > 0
+                    ? 'border-arsist-accent bg-arsist-accent/10'
+                    : 'border-arsist-primary/30 hover:border-arsist-primary'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Eye size={16} />
+                  <span>{t('build.interactionGazeDwell')}</span>
+                  {gazeDwell > 0 && <span className="ml-auto text-xs text-arsist-muted">{gazeDwell.toFixed(1)} s</span>}
+                </div>
+                <p className="text-xs text-arsist-muted mt-1">{t('build.interactionGazeDwellDesc')}</p>
+              </button>
             </div>
+
+            {gazeDwell > 0 && (
+              <label className="flex items-center gap-2 text-xs mt-2">
+                <span className="text-arsist-muted shrink-0">{t('build.interactionGazeDwellTime')}</span>
+                <input
+                  type="range"
+                  className="flex-1"
+                  min={0.4}
+                  max={3}
+                  step={0.1}
+                  value={gazeDwell}
+                  disabled={isBuilding}
+                  onChange={(e) => toggleInteraction({ gazeDwellSeconds: parseFloat(e.target.value) })}
+                />
+                <span className="font-mono w-10">{gazeDwell.toFixed(1)} s</span>
+              </label>
+            )}
 
             {noInteractionEnabled && (
               <p className="text-xs text-arsist-muted mt-2 flex items-center gap-1">
@@ -560,6 +666,25 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
                 {t('build.interactionNoneEnabledNote')}
               </p>
             )}
+
+            {/* 文字入力で出すキーボード。端末のキーボードが「どこに出るか」はエンジンからは
+                分からない (XREAL では手元のスマホ側に出る) ので、選べるようにしてある。 */}
+            <label className="flex items-center gap-2 text-xs mt-3">
+              <span className="text-arsist-muted shrink-0">{t('build.textInput')}</span>
+              <select
+                className="input flex-1 py-1"
+                value={interaction.textInput ?? 'auto'}
+                disabled={isBuilding}
+                onChange={(e) => toggleInteraction({ textInput: e.target.value as 'auto' | 'device' | 'inApp' })}
+              >
+                <option value="auto">{t('build.textInputAuto')}</option>
+                <option value="device">{t('build.textInputDevice')}</option>
+                <option value="inApp">{t('build.textInputInApp')}</option>
+              </select>
+            </label>
+            <p className="text-xs text-arsist-muted mt-1">
+              {t(`build.textInputDesc.${interaction.textInput ?? 'auto'}`)}
+            </p>
           </div>
 
           {/* Output Path */}
@@ -629,6 +754,59 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
             </div>
           )}
 
+          {/* つながっている端末 (adb) */}
+          <div className="mb-6">
+            <label className="input-label flex items-center gap-2">
+              <Smartphone size={14} />
+              {t('build.deviceSection')}
+              <button
+                className="btn-icon ml-auto"
+                title={t('build.refreshDevices')}
+                disabled={listingDevices}
+                onClick={() => { void refreshDevices(); }}
+              >
+                <RefreshCw size={14} className={listingDevices ? 'animate-spin' : ''} />
+              </button>
+            </label>
+
+            {adbMissing ? (
+              <p className="text-xs text-arsist-muted leading-relaxed">{t('build.adbMissing')}</p>
+            ) : connectedDevices.length === 0 ? (
+              <p className="text-xs text-arsist-muted leading-relaxed">{t('build.noDevices')}</p>
+            ) : (
+              <div className="space-y-1.5">
+                {connectedDevices.map((device) => {
+                  const usable = device.state === 'device';
+                  return (
+                    <label
+                      key={device.serial}
+                      className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
+                        usable ? 'bg-arsist-bg cursor-pointer hover:bg-arsist-hover' : 'bg-arsist-bg/50 opacity-60'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="adb-device"
+                        checked={selectedSerial === device.serial}
+                        disabled={!usable}
+                        onChange={() => setSelectedSerial(device.serial)}
+                      />
+                      <span className="flex-1 min-w-0 truncate">{device.label}</span>
+                      {!usable && (
+                        <span className="text-amber-400 shrink-0">
+                          {/* 知らない状態 (recovery / sideload など) は、そのまま出す */}
+                          {t(device.state === 'unauthorized' || device.state === 'offline'
+                            ? `build.deviceState.${device.state}`
+                            : 'build.deviceState.unknown', { state: device.state })}
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Build Log */}
           {buildLogs.length > 0 && (
             <div>
@@ -669,10 +847,31 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
               {t('common.close')}
             </button>
           )}
+          {/* 端末があるときだけ: 入れるところまで一息で */}
+          {lastApkPath && !isBuilding && (
+            <button
+              onClick={() => { void installToDevice(null); }}
+              className="btn btn-secondary"
+              disabled={installing || !selectedSerial}
+              title={t('build.installOnlyHint')}
+            >
+              {installing ? <div className="spinner" /> : <Download size={18} />}
+              {t('build.installOnly')}
+            </button>
+          )}
           <button
-            onClick={handleBuild}
+            onClick={() => { void handleBuild(true); }}
+            className="btn btn-secondary"
+            disabled={isBuilding || installing || !unityPath || !outputPath || !selectedSerial}
+            title={selectedSerial ? t('build.buildAndInstallHint') : t('build.installNoDevice')}
+          >
+            <Download size={18} />
+            {t('build.buildAndInstall')}
+          </button>
+          <button
+            onClick={() => { void handleBuild(false); }}
             className="btn btn-primary"
-            disabled={isBuilding || !unityPath || !outputPath}
+            disabled={isBuilding || installing || !unityPath || !outputPath}
           >
             {isBuilding ? (
               <>

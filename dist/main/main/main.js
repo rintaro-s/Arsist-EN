@@ -51,6 +51,7 @@ const UnityBuilder_1 = require("./unity/UnityBuilder");
 const ProjectManager_1 = require("./project/ProjectManager");
 const AdapterManager_1 = require("./adapters/AdapterManager");
 const assets_1 = require("../shared/assets");
+const childProcesses_1 = require("./platform/childProcesses");
 const paths_1 = require("./platform/paths");
 // fetch() でローカルアセットを読めるようにする（dev/prod共通）
 electron_1.protocol.registerSchemesAsPrivileged([
@@ -94,6 +95,33 @@ const softwareRenderRequested = process.env.ARSIST_SOFTWARE_RENDER === '1' ||
 let paintFallbackTried = softwareRenderRequested;
 let projectManager = null;
 let unityBuilder = null;
+/** 終了処理を始めたか (閉じる確認とニ重の後始末を防ぐ)。 */
+let quitting = false;
+/**
+ * 裏で走っているものを全部止める。
+ *
+ * ウィンドウを閉じてもエディタが起こしたプロセス (Unity のビルドとその Gradle / Java、
+ * MCP サーバー、dotnet のツール、adb) はそのまま走り続け、閉じたはずのアプリのせいで
+ * マシンが重いままになる。閉じる＝全部終わり、にする。
+ */
+function shutdownBackgroundWork() {
+    try {
+        unityBuilder?.cancel();
+    }
+    catch {
+        // 止められなくても、下の killAllChildren で木ごと落とす
+    }
+    try {
+        stopMCPServer();
+    }
+    catch {
+        // 同上
+    }
+    if ((0, childProcesses_1.trackedCount)() > 0) {
+        console.log(`[Arsist] Closing: stopping ${(0, childProcesses_1.trackedCount)()} background process(es): ${(0, childProcesses_1.trackedLabels)().join(', ')}`);
+    }
+    (0, childProcesses_1.killAllChildren)((message) => console.log(message));
+}
 let adapterManager = null;
 let currentProjectPathForAssets = null;
 let mcpServerProcess = null;
@@ -110,6 +138,9 @@ function getAppLang() {
     }
 }
 const MENU_STRINGS = {
+    'dialog.selectOnnx': { en: 'Choose an ONNX model', ja: 'ONNX モデルを選ぶ' },
+    'dialog.selectLabels': { en: 'Choose a labels file', ja: 'ラベルファイルを選ぶ' },
+    'dialog.selectTokenizer': { en: 'Choose the model\'s tokenizer.json', ja: 'モデルの tokenizer.json を選ぶ' },
     'menu.file': { en: 'File', ja: 'ファイル' },
     'menu.newProject': { en: 'New Project', ja: '新規プロジェクト' },
     'menu.openProject': { en: 'Open Project', ja: 'プロジェクトを開く' },
@@ -558,6 +589,21 @@ function createWindow() {
             showLoadErrorPage(win, `UI (${indexPath}) を読み込めません。\nnpm run build を実行してください。\n${String(err)}`);
         });
     }
+    // ✕ を押したら、裏で走っているものも全部止める。
+    //
+    // ここで確認ダイアログ (showMessageBoxSync) を出してはいけない。
+    // あれはメインスレッドを止めるので、出ている間はシグナルも IPC も一切通らず、
+    // 「閉じられない・Ctrl+C も効かない・端末を落とすしかない」状態を作る (実際に作った)。
+    // 閉じる = 全部終わり。止めたビルドはログに残す。
+    win.on('close', () => {
+        if (quitting)
+            return;
+        quitting = true;
+        if (unityBuilder?.isBuilding()) {
+            console.log('[Arsist] Closing while a build was running; the build is being stopped.');
+        }
+        shutdownBackgroundWork();
+    });
     win.on('closed', () => {
         if (paintWatchdog) {
             clearTimeout(paintWatchdog);
@@ -565,6 +611,16 @@ function createWindow() {
         }
         mainWindow = null;
     });
+    // 開発時の動作確認用: 指定ミリ秒後に、✕ と同じ閉じ方 (win.close) をする。
+    // 「閉じても終わらない」の確認を手作業に頼らないため (doc/02 の手順で使う)。
+    // 環境変数が無ければ何もしない。
+    const devCloseAfter = Number(process.env.ARSIST_DEV_CLOSE_AFTER || 0);
+    if (devCloseAfter > 0) {
+        setTimeout(() => {
+            console.error('[Arsist] dev: closing the window like the close button');
+            win.close();
+        }, devCloseAfter);
+    }
     // メニューバー設定
     createMenu();
 }
@@ -717,6 +773,112 @@ electron_1.ipcMain.handle('project:save', async (_, data) => {
         return { success: false, error: 'Project manager not initialized' };
     return await projectManager.saveProject(data);
 });
+// 古い版の IR を今の版で書き戻す (元の project.json は Backups/ に残る)。
+// loadProject が upgrade を返したときだけ意味がある。承諾されるまで保存は断られる。
+electron_1.ipcMain.handle('project:upgrade', async () => {
+    if (!projectManager)
+        return { success: false, error: 'Project manager not initialized' };
+    return await projectManager.upgradeProject();
+});
+// 学習済みモデル (ONNX) をプロジェクトに取り込み、定義の下書きを返す。
+electron_1.ipcMain.handle('model:import', async (_, params) => {
+    const { importModel } = await Promise.resolve().then(() => __importStar(require('./model/ModelImport')));
+    let sourcePath = params?.sourcePath;
+    if (!sourcePath) {
+        const picked = await electron_1.dialog.showOpenDialog({
+            title: mt('dialog.selectOnnx'),
+            properties: ['openFile'],
+            filters: [{ name: 'ONNX', extensions: ['onnx'] }],
+        });
+        if (picked.canceled || picked.filePaths.length === 0)
+            return { success: false, error: 'cancelled' };
+        sourcePath = picked.filePaths[0];
+    }
+    return await importModel(params.projectPath, sourcePath);
+});
+// 文章のモデルの分割器 (HuggingFace の tokenizer.json) を取り込む。隣の設定ファイルから書式なども読む。
+electron_1.ipcMain.handle('model:import-tokenizer', async (_, params) => {
+    const { importTokenizer } = await Promise.resolve().then(() => __importStar(require('./model/ModelImport')));
+    let sourcePath = params?.sourcePath;
+    if (!sourcePath) {
+        const picked = await electron_1.dialog.showOpenDialog({
+            title: mt('dialog.selectTokenizer'),
+            properties: ['openFile'],
+            filters: [{ name: 'tokenizer.json', extensions: ['json'] }],
+        });
+        if (picked.canceled || picked.filePaths.length === 0)
+            return { success: false, error: 'cancelled' };
+        sourcePath = picked.filePaths[0];
+    }
+    try {
+        const info = await importTokenizer(params.projectPath, sourcePath, params.modelName ?? 'model');
+        return { success: true, info };
+    }
+    catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+// Hugging Face のリポジトリを読んで、取り込める ONNX の候補 (精度違い) を返す。
+electron_1.ipcMain.handle('model:hf-inspect', async (_, params) => {
+    const { inspectRepo } = await Promise.resolve().then(() => __importStar(require('./model/HuggingFace')));
+    return await inspectRepo(params.repo, store.get('huggingFaceToken') || undefined);
+});
+// 選んだ 1 本を落として取り込む。進み具合は model:hf-progress で送る。
+const hfCancelled = new Set();
+electron_1.ipcMain.handle('model:hf-import', async (event, params) => {
+    const { downloadVariant } = await Promise.resolve().then(() => __importStar(require('./model/HuggingFace')));
+    const { importDownloadedModel } = await Promise.resolve().then(() => __importStar(require('./model/ModelImport')));
+    const projectPath = params.projectPath ?? currentProjectPathForAssets;
+    if (!projectPath)
+        return { success: false, error: 'noProject' };
+    hfCancelled.delete(params.runId);
+    const token = store.get('huggingFaceToken') || undefined;
+    const downloaded = await downloadVariant(projectPath, params.repo, params.variantPath, token, (progress) => {
+        if (!event.sender.isDestroyed())
+            event.sender.send('model:hf-progress', { runId: params.runId, progress });
+    }, () => hfCancelled.has(params.runId));
+    if (!downloaded.success)
+        return downloaded;
+    return await importDownloadedModel(projectPath, downloaded.modelFile, params.name);
+});
+electron_1.ipcMain.handle('model:hf-cancel', async (_, runId) => {
+    hfCancelled.add(runId);
+    return { success: true };
+});
+// モデルタブの「試す」。実機と同じ C# を ONNX Runtime で動かし、1 行ずつ (生成は書けたそばから) 返す。
+electron_1.ipcMain.handle('model:try', async (event, params) => {
+    const { runModelTry } = await Promise.resolve().then(() => __importStar(require('./model/ModelTry')));
+    const projectPath = params.projectPath ?? currentProjectPathForAssets ?? '';
+    return await runModelTry(params.runId, projectPath, params.request, (line) => {
+        if (!event.sender.isDestroyed())
+            event.sender.send('model:try-line', { runId: params.runId, line });
+    });
+});
+electron_1.ipcMain.handle('model:try-cancel', async (_, runId) => {
+    const { cancelModelTry } = await Promise.resolve().then(() => __importStar(require('./model/ModelTry')));
+    cancelModelTry(runId);
+    return { success: true };
+});
+electron_1.ipcMain.handle('model:inspect', async (_, params) => {
+    const { inspectProjectModel } = await Promise.resolve().then(() => __importStar(require('./model/ModelImport')));
+    return await inspectProjectModel(params.projectPath, params.file);
+});
+electron_1.ipcMain.handle('model:read-labels', async (_, params) => {
+    const { readLabelsFile } = await Promise.resolve().then(() => __importStar(require('./model/ModelImport')));
+    let labelsPath = params?.path;
+    if (!labelsPath) {
+        const picked = await electron_1.dialog.showOpenDialog({
+            title: mt('dialog.selectLabels'),
+            properties: ['openFile'],
+            filters: [{ name: 'Labels', extensions: ['txt', 'names', 'json'] }],
+        });
+        if (picked.canceled || picked.filePaths.length === 0)
+            return { success: false, error: 'cancelled' };
+        labelsPath = picked.filePaths[0];
+    }
+    const labels = await readLabelsFile(labelsPath);
+    return labels ? { success: true, labels } : { success: false, error: 'unreadable' };
+});
 electron_1.ipcMain.handle('project:export', async (_, options) => {
     if (!projectManager)
         return { success: false, error: 'Project manager not initialized' };
@@ -726,7 +888,27 @@ electron_1.ipcMain.handle('project:export', async (_, options) => {
 // 画像処理パイプラインのライブプレビュー。実機と同じ C# を呼ぶ。
 electron_1.ipcMain.handle('vision:preview', async (_, payload) => {
     const { runVisionPreview } = await Promise.resolve().then(() => __importStar(require('./vision/VisionPreview')));
-    return await runVisionPreview(payload.pipeline, payload.image);
+    return await runVisionPreview(payload.pipeline, payload.image, {
+        models: payload.models,
+        projectPath: payload.projectPath ?? currentProjectPathForAssets ?? undefined,
+        frames: payload.frames,
+        focus: payload.focus,
+        fps: payload.fps,
+        probe: payload.probe,
+    });
+});
+// つながっている端末を並べる (adb devices)。端末の状態には触らない。
+electron_1.ipcMain.handle('device:list', async () => {
+    const { listDevices } = await Promise.resolve().then(() => __importStar(require('./device/Adb')));
+    return await listDevices(store.get('unityPath'));
+});
+// ビルドした APK を、選んだ端末に入れる。進み具合は device:install-log で送る。
+electron_1.ipcMain.handle('device:install', async (event, params) => {
+    const { installApk } = await Promise.resolve().then(() => __importStar(require('./device/Adb')));
+    return await installApk(params.serial, params.apkPath, store.get('unityPath'), (line) => {
+        if (!event.sender.isDestroyed())
+            event.sender.send('device:install-log', line);
+    });
 });
 electron_1.ipcMain.handle('unity:set-path', async (_, unityPath) => {
     store.set('unityPath', unityPath);
@@ -1099,10 +1281,10 @@ function startMCPServer(projectPath) {
                 ...process.env,
                 MCP_PROJECT_PATH: projectPath,
             };
-            mcpServerProcess = (0, child_process_1.spawn)(nodePath, args, {
+            mcpServerProcess = (0, childProcesses_1.trackChild)((0, child_process_1.spawn)(nodePath, args, (0, childProcesses_1.longRunningOptions)({
                 env,
                 stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
-            });
+            })), 'MCP server', true);
             mcpServerProcess.on('error', (err) => {
                 mcpServerEnabled = false;
                 mcpServerProcess = null;
@@ -1299,9 +1481,31 @@ electron_1.app.whenReady().then(() => {
         }
     });
 });
+// 端末から Ctrl+C で止めたときも、裏のプロセスを置き去りにしない。
+//
+// ここで process.on を付けると、Node の既定の終了処理 (シグナルでそのまま死ぬ) が無くなる。
+// app.quit() は「閉じてよいか」の確認などで**止められることがある**ので、それに任せると
+// Ctrl+C で終われないアプリになる (実際にそうなった)。後始末をしたら app.exit で即座に終える。
+for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => {
+        quitting = true;
+        shutdownBackgroundWork();
+        electron_1.app.exit(0);
+        // app.exit が効かない状態 (初期化の途中など) でも必ず終わる
+        setTimeout(() => process.exit(0), 500).unref?.();
+    });
+}
+electron_1.app.on('before-quit', () => {
+    quitting = true;
+    shutdownBackgroundWork();
+});
 electron_1.app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-        electron_1.app.quit();
-    }
+    // macOS もここで終わらせる。Dock に残しても、裏で Unity のビルドが回り続けるだけで
+    // 得が無い (このエンジンの主な対象は Linux / Windows)。
+    quitting = true;
+    shutdownBackgroundWork();
+    electron_1.app.quit();
+    // 何かに引っかかって quit が終わらないときの保険。「閉じたのに終わらない」を作らない。
+    setTimeout(() => electron_1.app.exit(0), 2000).unref?.();
 });
 //# sourceMappingURL=main.js.map

@@ -173,21 +173,29 @@ html, body, #root {
   @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
 }
 
+/*
+ * 画面の高さに収める。縦の狭いモニターでは、中身が長い画面 (ビルドなど) が
+ * 画面外にはみ出して、下のボタンに手が届かなくなる。
+ * 高さの上限を決め、頭と足は残して、中身だけを送るようにする。
+ */
 .modal {
-  @apply bg-arsist-surface rounded-xl max-w-lg w-full mx-4 overflow-hidden;
+  @apply bg-arsist-surface rounded-xl max-w-lg w-full mx-4 overflow-hidden flex flex-col;
+  max-height: calc(100vh - 3rem);
   box-shadow: var(--arsist-modal-shadow);
 }
 
 .modal-header {
-  @apply px-6 py-4 font-semibold;
+  @apply px-6 py-4 font-semibold shrink-0;
 }
 
 .modal-body {
-  @apply px-6 py-4;
+  @apply px-6 py-4 overflow-y-auto;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .modal-footer {
-  @apply px-6 py-4 flex justify-end gap-3;
+  @apply px-6 py-4 flex justify-end gap-3 shrink-0;
 }
 
 /* Scrollbar styling */

@@ -12,3 +12,6 @@ BuildOutput/TempUnityProject/
 sdk.zip
 release/
 products/
+# .NET ツール (perception-check / vision-preview) のビルド成果物
+tools/**/bin/
+tools/**/obj/

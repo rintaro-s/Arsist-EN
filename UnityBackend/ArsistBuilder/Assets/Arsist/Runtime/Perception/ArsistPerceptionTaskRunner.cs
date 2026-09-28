@@ -21,6 +21,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using Arsist.Runtime.DataFlow;
+using Arsist.Runtime.Inference;
+using Arsist.Runtime.Perception.Models;
 using Arsist.Runtime.Perception.Text;
 using Arsist.Runtime.Perception.Vision;
 using Arsist.Runtime.Perception.Overlay;
@@ -69,6 +71,17 @@ namespace Arsist.Runtime.Perception
             /// <summary>色つきの静止画が要るか。画像処理は色を見る。</summary>
             public bool NeedsColor => Type == "vision";
 
+            /// <summary>
+            /// 静止画に要る幅 (px)。0 はフル解像度。
+            /// 画像処理タスクは「ビューポートの一部を切り出して maxWidth に縮める」ので、
+            /// 切り出した結果がちょうど maxWidth になる幅より大きな画は要らない。
+            /// OCR / 領域 / 取り込みは細かいほどよいのでフル。
+            /// </summary>
+            public int NeededWidth =>
+                Type == "vision" && SourceKind == "viewport" && Pipeline != null
+                    ? FrameBudget.WidthForViewport(Pipeline.MaxWidth, ViewportRect.width)
+                    : 0;
+
             public bool Running;
             public float NextRunTime;
             public TextResult LastResult;
@@ -76,9 +89,18 @@ namespace Arsist.Runtime.Perception
             public Texture2D PreviewTexture;
             public Sprite PreviewSprite;
             public Action EventHandler;
+
+            /// <summary>実行をまたいで残る状態 (track / stabilize / motion / event)。</summary>
+            public readonly VisionState State = new VisionState();
+            /// <summary>エディタの「実機から取り込む」用に、直近の入力画 (切り出し後) を残す。</summary>
+            public ColorImage LastCrop;
+            public double LastCropAt;
         }
 
         private readonly Dictionary<string, TaskDefinition> _tasks = new Dictionary<string, TaskDefinition>();
+
+        /// <summary>`infer` op が使うモデル定義 (id → 定義)。perception.json の models から。</summary>
+        private readonly Dictionary<string, ModelSpec> _models = new Dictionary<string, ModelSpec>();
 
         /// <summary>
         /// ワーカーで終わった仕事の後始末 (テクスチャの更新、DataStore、イベント) を
@@ -123,7 +145,9 @@ namespace Arsist.Runtime.Perception
             JArray tasks;
             try
             {
-                tasks = JObject.Parse(json)["tasks"] as JArray;
+                var root = JObject.Parse(json);
+                tasks = root["tasks"] as JArray;
+                LoadModels(root["models"] as JArray);
             }
             catch (Exception e)
             {
@@ -136,6 +160,13 @@ namespace Arsist.Runtime.Perception
             {
                 var task = Parse(entry);
                 if (task == null) continue;
+                if (task.Pipeline != null)
+                {
+                    // ビルド時にも同じ検証が走っているが、実機側でも一度だけ声に出す。
+                    // 特にモデルの参照 (消したモデルを指したまま) は、ここでしか見えないことがある。
+                    foreach (var problem in VisionPipelineRunner.Validate(task.Pipeline, _models))
+                        Debug.LogError($"[Arsist] Task '{task.Id}' pipeline: {problem}");
+                }
                 _tasks[task.Id] = task;
                 SetStatus(task, "idle", null);
                 RegisterTrigger(task);
@@ -144,6 +175,43 @@ namespace Arsist.Runtime.Perception
                           $"engine={task.EngineKind}, storeAs={task.StoreAs})");
             }
             _ready = true;
+        }
+
+        private void LoadModels(JArray models)
+        {
+            _models.Clear();
+            if (models == null) return;
+            foreach (var entry in models)
+            {
+                if (!(ToPlainTree(entry) is Dictionary<string, object> plain)) continue;
+                var spec = ModelSpec.FromPlain(plain);
+                if (spec == null || string.IsNullOrEmpty(spec.Id)) continue;
+                _models[spec.Id] = spec;
+                Debug.Log($"[Arsist] Model definition loaded: {spec.Id} ({spec.Task}, {spec.Input.Width}x{spec.Input.Height} " +
+                          $"{spec.Input.Layout}, backend={spec.Backend})");
+            }
+        }
+
+        /// <summary>JToken を入れ子ごと素の辞書 / リストにする (ModelSpec.FromPlain が読む形)。</summary>
+        private static object ToPlainTree(JToken token)
+        {
+            switch (token)
+            {
+                case JObject obj:
+                {
+                    var dict = new Dictionary<string, object>();
+                    foreach (var property in obj.Properties()) dict[property.Name] = ToPlainTree(property.Value);
+                    return dict;
+                }
+                case JArray array:
+                {
+                    var list = new List<object>();
+                    foreach (var item in array) list.Add(ToPlainTree(item));
+                    return list;
+                }
+                default:
+                    return ToPlain(token);
+            }
         }
 
         private static TaskDefinition Parse(JObject entry)
@@ -235,6 +303,7 @@ namespace Arsist.Runtime.Perception
                         Id = entry["id"]?.ToString(),
                         Op = entry["op"]?.ToString(),
                         Out = entry["out"]?.ToString(),
+                        Disabled = entry["disabled"]?.Value<bool>() ?? false,
                     };
 
                     if (entry["in"] is JArray inputs)
@@ -270,6 +339,10 @@ namespace Arsist.Runtime.Perception
                         Alpha = entry["alpha"]?.ToString(),
                         StoreAs = entry["storeAs"]?.ToString(),
                         BindingId = entry["bindingId"]?.ToString(),
+                        Distance = entry["distance"]?.Value<double>() ?? 2.0,
+                        Label = entry["label"]?.ToString() ?? "label",
+                        ObjectId = entry["objectId"]?.ToString(),
+                        MaxItems = entry["maxItems"]?.Value<int>() ?? 8,
                     });
                 }
             }
@@ -366,7 +439,7 @@ namespace Arsist.Runtime.Perception
             task.Running = true;
             SetStatus(task, "running", null);
 
-            manager.RequestStill((still) => OnStill(task, still, callback), task.NeedsColor);
+            manager.RequestStill((still) => OnStill(task, still, callback), task.NeedsColor, task.NeededWidth);
         }
 
         private void OnStill(TaskDefinition task, PerceptionStill still, Action<TextResult> callback)
@@ -449,6 +522,13 @@ namespace Arsist.Runtime.Perception
             var pipeline = task.Pipeline;
             var capturedStill = still;   // in 引数はラムダに持ち込めないので写す
             var started = DateTime.UtcNow;
+            // 推論器はメインスレッドで動く MonoBehaviour。ワーカーからは待ち合わせるだけ。
+            var models = _models;
+            IVisionModelRunner modelRunner = ArsistModelExecutor.Instance;
+            var state = task.State;
+            double frameTime = Time.realtimeSinceStartupAsDouble;
+            task.LastCrop = crop;
+            task.LastCropAt = frameTime;
 
             ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -457,7 +537,8 @@ namespace Arsist.Runtime.Perception
                 try
                 {
                     result = VisionPipelineRunner.Run(pipeline, crop,
-                        name => name != null && templates.TryGetValue(name, out var t) ? t : null);
+                        name => name != null && templates.TryGetValue(name, out var t) ? t : null,
+                        models, modelRunner, state, frameTime);
                 }
                 catch (Exception e)
                 {
@@ -490,9 +571,47 @@ namespace Arsist.Runtime.Perception
             task.LastPipelineResult = result;
             DrawOutputs(task, result, still, crop, cropX, cropY);
 
+            // event op が求めたイベント。UI のボタンと同じバスに流すので、スクリプトも他のタスクも拾える。
+            foreach (var eventName in result.Events)
+            {
+                ArsistScriptEvent.Fire(eventName, warnIfUnhandled: false);
+            }
+
             // 門が閉じた（「見つからなかった」）のは失敗ではない。測った値は返す。
             var summary = result.Gated ? $"gated: {result.GateReason}" : Summarise(result);
             Finish(task, TextResult.Success(summary, elapsedMs), callback);
+        }
+
+        /// <summary>
+        /// エディタの「実機から取り込む」用: 直近の入力画 (切り出し・縮小前) を JPEG にして返す。
+        /// 無ければ null。メインスレッドで呼ぶこと。
+        /// </summary>
+        public byte[] SnapshotJpeg(string taskId, out int width, out int height, out double ageSeconds)
+        {
+            width = height = 0;
+            ageSeconds = -1;
+            if (!_tasks.TryGetValue(taskId, out var task) || task.LastCrop == null) return null;
+            var crop = task.LastCrop;
+            var texture = new Texture2D(crop.Width, crop.Height, TextureFormat.RGBA32, false);
+            try
+            {
+                texture.LoadRawTextureData(crop.ToRgba());
+                texture.Apply(false);
+                width = crop.Width;
+                height = crop.Height;
+                ageSeconds = Time.realtimeSinceStartupAsDouble - task.LastCropAt;
+                return texture.EncodeToJPG(80);
+            }
+            finally
+            {
+                Destroy(texture);
+            }
+        }
+
+        /// <summary>タスクの id 一覧 (エディタの取り込み先の選択用)。</summary>
+        public List<string> TaskIds()
+        {
+            return new List<string>(_tasks.Keys);
         }
 
         /// <summary>
@@ -534,8 +653,49 @@ namespace Arsist.Runtime.Perception
                 {
                     DrawInCanvas(task, result, output, rgba);
                 }
+                else if (output.Kind == "anchor")
+                {
+                    PlaceAnchors(task, result, still, crop, cropX, cropY, output);
+                }
                 // "store" は SetStatus がまとめて DataStore に入れる。
             }
+        }
+
+        /// <summary>
+        /// 見つけた物の位置に、ラベルやシーンオブジェクトを置く。
+        /// 画素 → 光線は撮影時の内部パラメータと姿勢から。深度が無いので距離は指定値。
+        /// </summary>
+        private static void PlaceAnchors(
+            TaskDefinition task, VisionPipelineResult result, in PerceptionStill still,
+            ColorImage crop, int cropX, int cropY, VisionOutputSpec output)
+        {
+            var anchors = ArsistWorldAnchors.Instance;
+            if (anchors == null)
+            {
+                Debug.LogWarning($"[Arsist] No ArsistWorldAnchors in the scene; task '{task.Id}' cannot place anchors.");
+                return;
+            }
+            if (task.SourceKind != "viewport")
+            {
+                Debug.LogWarning($"[Arsist] Task '{task.Id}' anchors from a region source; use a viewport source.");
+                anchors.Clear(task.Id, output.Value);
+                return;
+            }
+            if (result.Gated || !result.Named.TryGetValue(output.Value, out var value) || value.Items == null)
+            {
+                anchors.Clear(task.Id, output.Value);
+                return;
+            }
+
+            // 項目の座標は「処理した画」(切り出し + 縮小後) の正規化座標。
+            // その画に対応する内部パラメータに換算してから光線にする。
+            int workWidth = result.Named.TryGetValue(VisionPipelineRunner.SourceName, out var src) && src.Color != null
+                ? src.Color.Width : crop.Width;
+            int workHeight = src?.Color != null ? src.Color.Height : crop.Height;
+            double scale = (double)workWidth / Math.Max(1, crop.Width);
+            var intrinsics = ViewportMapping.ForCrop(still.Intrinsics, cropX, cropY, scale);
+
+            anchors.Place(task.Id, output, value.Items, intrinsics, workWidth, workHeight, still.CameraPose);
         }
 
         /// <summary>

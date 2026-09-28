@@ -14,9 +14,10 @@ import type {
   ProjectTemplate,
   SceneData,
   UILayoutData,
-  ARSettings,
-  DataFlowDefinition,
 } from '../../shared/types';
+import { CURRENT_IR_VERSION } from '../../shared/irVersion';
+import { IrVersionError, migrateProject, type MigrationOutcome } from './migrations';
+import { createARSettings, createInitialDataFlow } from './defaults';
 
 // ========================================
 // Public Interfaces
@@ -37,6 +38,29 @@ export interface ExportOptions {
   includeAssets: boolean;
 }
 
+/**
+ * 古い版のプロジェクトを開いたときに、レンダラへ返す「アップグレードの提案」。
+ * ユーザーが承諾するまでファイルは書き換えない (Unity と同じ)。
+ */
+export interface PendingUpgrade {
+  from: number;
+  to: number;
+  /** 適用した移行の id (i18n: ir.migration.<id>) */
+  applied: string[];
+  /** 実際に変わった項目 */
+  changes: string[];
+}
+
+export interface LoadProjectResult {
+  success: boolean;
+  project?: ArsistProject;
+  error?: string;
+  /** error === 'irTooNew' のときの詳細 */
+  irVersion?: { found: number; supported: number };
+  /** 古い版だったとき。メモリ上は移行済みだが、承諾されるまで保存できない */
+  upgrade?: PendingUpgrade;
+}
+
 // ========================================
 // ProjectManager
 // ========================================
@@ -44,6 +68,13 @@ export interface ExportOptions {
 export class ProjectManager {
   private currentProject: ArsistProject | null = null;
   private projectPath: string | null = null;
+  /**
+   * 古い版を開いていて、まだアップグレードを承諾されていない間 true。
+   * この間は saveProject を断る。黙って新しい形で上書きすると、
+   * 古いエディタに戻れなくなるうえ、何が変わったかも残らない。
+   */
+  private readOnly = false;
+  private pendingUpgrade: PendingUpgrade | null = null;
 
   /* ------------------------------------------------
    * 新規プロジェクト作成
@@ -64,7 +95,7 @@ export class ProjectManager {
       await fs.ensureDir(path.join(projectDir, 'Scripts'));
       await fs.ensureDir(path.join(projectDir, 'Build'));
 
-      const arSettings = this.createARSettings(options.template);
+      const arSettings = createARSettings(options.template);
       const normalizedTarget = (options.targetDevice || '').toLowerCase();
       const isQuest = normalizedTarget.includes('quest') || normalizedTarget.includes('meta');
 
@@ -72,6 +103,7 @@ export class ProjectManager {
         id: uuidv4(),
         name: options.name,
         version: '1.0.0',
+        irVersion: CURRENT_IR_VERSION,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         appType: options.template,
@@ -84,9 +116,10 @@ export class ProjectManager {
           backgroundColor: '#1e1e1e',
           textColor: '#FFFFFF',
         },
-        dataFlow: this.createInitialDataFlow(),
+        dataFlow: createInitialDataFlow(),
         scenes: [],
         uiLayouts: [],
+        models: [],
         buildSettings: {
           packageName: `com.arsist.${options.name.toLowerCase().replace(/\s+/g, '')}`,
           version: '1.0.0',
@@ -120,6 +153,8 @@ export class ProjectManager {
 
       this.currentProject = project;
       this.projectPath = projectDir;
+      this.readOnly = false;
+      this.pendingUpgrade = null;
 
       return { success: true, project };
     } catch (error) {
@@ -129,8 +164,13 @@ export class ProjectManager {
 
   /* ------------------------------------------------
    * 既存プロジェクトを読み込み
+   *
+   * 版の扱いは Unity と同じ:
+   *   - 今の版より古い → メモリ上で移行して開き、`upgrade` を返す。
+   *     ユーザーが upgradeProject() で承諾するまで読み取り専用 (保存を断る)。
+   *   - 今の版より新しい → 開かない ('irTooNew')。壊すよりは断る方がよい。
    * ----------------------------------------------- */
-  async loadProject(projectPath: string): Promise<{ success: boolean; project?: ArsistProject; error?: string }> {
+  async loadProject(projectPath: string): Promise<LoadProjectResult> {
     try {
       const projectFile = path.join(projectPath, 'project.json');
 
@@ -138,40 +178,24 @@ export class ProjectManager {
         return { success: false, error: 'project.json not found' };
       }
 
-      const project: ArsistProject = await fs.readJSON(projectFile);
+      const raw = await fs.readJSON(projectFile);
 
-      // 後方互換: 旧テンプレート名を新名に変換
-      if (!['3d_ar_scene', '2d_floating_screen', 'head_locked_hud'].includes(project.appType as string)) {
-        project.appType = this.migrateAppType(project.appType as string);
+      let migration: MigrationOutcome;
+      try {
+        migration = migrateProject(raw);
+      } catch (e) {
+        if (e instanceof IrVersionError) {
+          return { success: false, error: 'irTooNew', irVersion: { found: e.found, supported: e.supported } };
+        }
+        throw e;
       }
+      const project = migration.project as ArsistProject;
+      const upgrade: PendingUpgrade | undefined = migration.from < migration.to
+        ? { from: migration.from, to: migration.to, applied: migration.applied, changes: migration.changes }
+        : undefined;
 
-      // 後方互換: AR設定が無ければ生成
-      if (!project.arSettings) {
-        project.arSettings = this.createARSettings(project.appType);
-      }
-
-      // 後方互換: 操作方法設定が無い旧プロジェクトには既定値（コントローラーレイのみ）を補う
-      if (!project.arSettings.interaction) {
-        project.arSettings.interaction = { controllerRay: true, handTracking: false };
-      }
-
-      // 後方互換: DataFlow が無ければ空で生成
-      if (!project.dataFlow) {
-        project.dataFlow = this.createInitialDataFlow();
-      }
-
-      // 後方互換: 旧フィールド削除
-      delete (project as any).logicGraphs;
-      delete (project as any).uiAuthoring;
-      delete (project as any).uiCode;
-
-      // 後方互換: scripts フィールドが無ければ空配列で初期化
-      if (!project.scripts) {
-        project.scripts = [];
-      }
-
-      // Scripts ディレクトリが存在しない場合は作成
-      await fs.ensureDir(path.join(projectPath, 'Scripts'));
+      // Scripts ディレクトリが存在しない場合は作成 (読み取り専用で開くときは触らない)
+      if (!upgrade) await fs.ensureDir(path.join(projectPath, 'Scripts'));
 
       // シーン、UIの詳細を読み込み
       project.scenes = await this.loadScenes(projectPath, project.scenes);
@@ -179,11 +203,59 @@ export class ProjectManager {
 
       this.currentProject = project;
       this.projectPath = projectPath;
+      this.readOnly = upgrade !== undefined;
+      this.pendingUpgrade = upgrade ?? null;
 
-      return { success: true, project };
+      return { success: true, project, upgrade };
     } catch (error) {
       return { success: false, error: (error as Error).message };
     }
+  }
+
+  /* ------------------------------------------------
+   * 古い版のプロジェクトを今の版で書き戻す (ユーザーの承諾後)。
+   *
+   * 元の project.json は Backups/ に残す。移行は自動で戻せないので、
+   * 古いエディタに戻りたくなったときの唯一の道がこれ。
+   * ----------------------------------------------- */
+  async upgradeProject(): Promise<{ success: boolean; error?: string; backupPath?: string }> {
+    if (!this.currentProject || !this.projectPath) {
+      return { success: false, error: 'No project loaded' };
+    }
+    const upgrade = this.pendingUpgrade;
+    if (!upgrade) return { success: true };
+
+    try {
+      const projectFile = path.join(this.projectPath, 'project.json');
+      const backupDir = path.join(this.projectPath, 'Backups');
+      await fs.ensureDir(backupDir);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupDir, `project.v${upgrade.from}.${stamp}.json`);
+      if (await fs.pathExists(projectFile)) await fs.copy(projectFile, backupPath);
+
+      this.readOnly = false;
+      this.pendingUpgrade = null;
+      this.currentProject.irVersion = CURRENT_IR_VERSION;
+
+      const saved = await this.saveProject({});
+      if (!saved.success) {
+        this.readOnly = true;
+        this.pendingUpgrade = upgrade;
+        return { success: false, error: saved.error };
+      }
+      return { success: true, backupPath };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /** 読み取り専用で開いたままにする (アップグレードを見送る)。 */
+  isReadOnly(): boolean {
+    return this.readOnly;
+  }
+
+  getPendingUpgrade(): PendingUpgrade | null {
+    return this.pendingUpgrade;
   }
 
   /* ------------------------------------------------
@@ -192,6 +264,10 @@ export class ProjectManager {
   async saveProject(data: Partial<ArsistProject>): Promise<{ success: boolean; error?: string }> {
     if (!this.currentProject || !this.projectPath) {
       return { success: false, error: 'No project loaded' };
+    }
+    if (this.readOnly) {
+      // 古い版のまま。アップグレードを承諾するまで書き換えない。
+      return { success: false, error: 'readOnly' };
     }
 
     try {
@@ -278,20 +354,6 @@ export class ProjectManager {
   // ========================================
   // Private Helpers
   // ========================================
-
-  /** 旧テンプレート名を新名に変換（後方互換） */
-  private migrateAppType(oldType: string): ProjectTemplate {
-    switch (oldType) {
-      case '3D_AR':
-        return '3d_ar_scene';
-      case '2D_Floating':
-        return '2d_floating_screen';
-      case '2D_HeadLocked':
-        return 'head_locked_hud';
-      default:
-        return '3d_ar_scene';
-    }
-  }
 
   private createInitialScene(template: ProjectTemplate): SceneData {
     const scene: SceneData = {
@@ -396,68 +458,6 @@ export class ProjectManager {
     return ui;
   }
 
-  private createInitialDataFlow(): DataFlowDefinition {
-    return {
-      dataSources: [],
-      transforms: [],
-    };
-  }
-
-  private createARSettings(template: ProjectTemplate): ARSettings {
-    switch (template) {
-      case '3d_ar_scene':
-        return {
-          trackingMode: '6dof',
-          presentationMode: 'world_anchored',
-          worldScale: 1,
-          defaultDepth: 2,
-          enableRemoteControl: false,
-          remoteControlPort: 8765,
-          remoteControlPassword: '',
-          interaction: { controllerRay: true, handTracking: false },
-        };
-      case '2d_floating_screen':
-        return {
-          trackingMode: '3dof',
-          presentationMode: 'floating_screen',
-          worldScale: 1,
-          defaultDepth: 2,
-          enableRemoteControl: false,
-          remoteControlPort: 8765,
-          remoteControlPassword: '',
-          interaction: { controllerRay: true, handTracking: false },
-          floatingScreen: {
-            width: 1.6,
-            height: 0.9,
-            distance: 2,
-            lockToGaze: true,
-          },
-        };
-      case 'head_locked_hud':
-        return {
-          trackingMode: 'head_locked',
-          presentationMode: 'head_locked_hud',
-          worldScale: 1,
-          defaultDepth: 1,
-          enableRemoteControl: false,
-          remoteControlPort: 8765,
-          remoteControlPassword: '',
-          interaction: { controllerRay: true, handTracking: false },
-        };
-      default:
-        return {
-          trackingMode: '6dof',
-          presentationMode: 'world_anchored',
-          worldScale: 1,
-          defaultDepth: 2,
-          enableRemoteControl: false,
-          remoteControlPort: 8765,
-          remoteControlPassword: '',
-          interaction: { controllerRay: true, handTracking: false },
-        };
-    }
-  }
-
   private async loadScenes(projectPath: string, sceneRefs: SceneData[]): Promise<SceneData[]> {
     const scenes: SceneData[] = [];
     for (const ref of sceneRefs) {
@@ -525,6 +525,7 @@ export class ProjectManager {
       projectId: this.currentProject.id,
       projectName: this.currentProject.name,
       version: this.currentProject.version,
+      irVersion: this.currentProject.irVersion ?? CURRENT_IR_VERSION,
       appType: this.currentProject.appType,
       targetDevice: this.currentProject.targetDevice,
       arSettings: this.currentProject.arSettings,
@@ -536,6 +537,7 @@ export class ProjectManager {
       scripting: {
         enabled: hasActiveScripts,
       },
+      models: this.currentProject.models ?? [],
       exportedAt: new Date().toISOString(),
     };
   }

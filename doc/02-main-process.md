@@ -203,3 +203,35 @@ Results are de-duplicated and sorted newest-version-first by parsing version str
 4. After 500 ms, if the process is still alive and no error appeared on stderr, `mcpServerEnabled` is set to `true` and the client configuration JSON is returned to the renderer.
 5. `mcp:stop` sends SIGTERM. The process's `exit` handler also clears `mcpServerProcess`.
 6. `mcp:get-client-config` returns the JSON snippet that the user pastes into Claude Desktop's `settings.json`.
+
+## Closing the window ends everything (`platform/childProcesses.ts`)
+
+The editor does most of its heavy work in other processes: the Unity build (which itself starts Gradle and
+Java), the MCP server, the `dotnet` tools behind the Vision/Models "Try" panels, and `adb`. None of them die
+just because the Electron window is gone — closing the app used to leave a full Unity build chewing CPU in
+the background, with no window left to stop it.
+
+- Every spawn goes through `trackChild(...)`, which remembers it until it exits. Long-running ones also pass
+  `longRunningOptions(...)`, which sets `detached: true` on Linux/macOS so the child becomes a process-group
+  leader — `process.kill(-pid)` then takes its Gradle/Java children with it. Windows has no process groups to
+  signal, so `killTree` shells out to `taskkill /pid <id> /T /F`.
+- `shutdownBackgroundWork()` in `main.ts` cancels the build, stops the MCP server and calls
+  `killAllChildren()` (SIGTERM, then SIGKILL 1.5 s later for anything still standing). It runs from the
+  window's `close` event, `before-quit`, `window-all-closed` and on `SIGINT`/`SIGTERM` (Ctrl+C in a terminal).
+- `window-all-closed` quits on macOS too. Staying in the Dock would only keep a build running with no way to
+  see it; Linux/Windows are the first-class targets here.
+- **Never open a modal dialog on the way out.** `dialog.showMessageBoxSync` blocks the main thread, so while it
+  is up nothing is processed — not IPC, not `SIGINT`, not `SIGTERM`. A "the build is still running, close
+  anyway?" confirmation on `close` turned the editor into something that could only be stopped by killing the
+  terminal. Closing now always stops everything and logs the cancelled build instead of asking.
+- **`npm run dev` uses `concurrently --kill-others`.** Without it, closing the window ends only Electron;
+  `vite` and `tsc --watch` keep running and the terminal never comes back — which is exactly what happened.
+  Any one of the three exiting now stops the other two.
+- To check this without clicking: `ARSIST_DEV_CLOSE_AFTER=25000 npm run dev` closes the window from the inside
+  after 25 s, the same way the window's close button does (`win.close()`), and the shell prompt must return with
+  no `vite` / `tsc` / `electron` left behind. (`xdotool windowclose` is **not** a valid substitute: it destroys
+  the X window without sending `WM_DELETE_WINDOW`, so Electron never sees a close and nothing shuts down.)
+- `scripts/dev-electron.mjs` starts the Electron **binary** (from `require('electron')`), not `npx electron`
+  through a shell: with `shell: true` the child is `sh`, so killing it left Electron running. It starts Electron
+  in its own process group and kills that group (SIGTERM, then SIGKILL) on `SIGINT`/`SIGTERM`/`SIGHUP`, which is
+  what makes Ctrl+C in `npm run dev` actually stop everything.

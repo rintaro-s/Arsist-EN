@@ -7,9 +7,10 @@
 // （Assembly-CSharp が丸ごとコンパイルエラーになる）。
 // ArsistBuildPipeline が OVR 型を扱うのと同じ方針。
 //
-// 画素の取り出しは PassthroughCameraAccess.GetColors() ではなく自前の
-// AsyncGPUReadback を使う。GetColors() は WaitForCompletion で GPU を待つため、
-// 呼ぶたびにフレームが止まる。
+// 画素の取り出しは PassthroughCameraAccess.GetColors() ではなく GpuFrameReader
+// (Blit で縮小 → AsyncGPUReadback)。GetColors() は WaitForCompletion で GPU を待つため、
+// 呼ぶたびにフレームが止まる。縮小を GPU でやるので、検出が 640 幅しか要らないときに
+// 1280x960 を CPU に運ばない。輝度・色の変換はワーカースレッド。
 // ==============================================
 
 using System;
@@ -17,7 +18,6 @@ using System.Reflection;
 using Arsist.Runtime.Perception.Vision;
 using Arsist.Runtime.Perception.Vision.Classic;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 namespace Arsist.Runtime.Perception.Sources
 {
@@ -31,24 +31,11 @@ namespace Arsist.Runtime.Perception.Sources
         private const string TypeName = "Meta.XR.PassthroughCameraAccess";
 
         /// <summary>
-        /// 要求する解像度。フル解像度のまま上位へ渡す。
-        /// 検出用の縮小は ArsistPerceptionManager 側で行う。
+        /// 要求する解像度。フル解像度で受け取り、読み出しの際に要る大きさへ縮める。
         /// OCR は「枠を切り出して正対化する」ので、元が細かいほど小さな文字が残る。
         /// </summary>
         private const int RequestWidth = 1280;
         private const int RequestHeight = 960;
-
-        /// <summary>
-        /// 読み出した画素の行順を反転するか。
-        ///
-        /// Unity のテクスチャは下から上（左下原点）で、MRUK の内部パラメータも
-        /// 左下原点のセンサー座標で表されているため、既定は反転なし。
-        /// ただし AsyncGPUReadback の行順はグラフィックス API 実装に依存する部分があり、
-        /// ここが逆だと「検出はできるのにアンカーが上下反転／鏡像で出る」という症状になる
-        /// （縦反転もホモグラフィで表せてしまうので、再投影誤差では検出できない）。
-        /// 実機でそうなったら、まずここを true にすること。
-        /// </summary>
-        private const bool FlipReadbackRows = false;
 
         private static Type _type;
         private static PropertyInfo _isSupported, _isPlaying, _currentResolution, _intrinsics, _isUpdatedThisFrame;
@@ -59,16 +46,25 @@ namespace Arsist.Runtime.Perception.Sources
         private GameObject _host;
         private Component _access;
         private bool _permissionRequested;
+        private readonly GpuFrameReader _reader = new GpuFrameReader();
 
-        private bool _readbackPending;
+        // 読み出し中に持ち越す値 (撮った瞬間のもの)
         private Pose _pendingPose;
         private double _pendingTimestamp;
-        private int _pendingWidth, _pendingHeight;
-        private Color32[] _pendingPixels;
+        private CameraIntrinsics _pendingNativeIntrinsics;
+        private int _pendingNativeWidth, _pendingNativeHeight;
+        private bool _pendingColor;
+
+        // ワーカーとの受け渡し
+        private readonly object _gate = new object();
+        private bool _converting;
         private ArsistCameraFrame _ready;
         private bool _hasReady;
+        private bool _readyHasColor;
+        private int _lastLoggedWidth = -1;
 
-        public string Description => "Meta Quest Passthrough Camera";
+        public string Description =>
+            "Meta Quest Passthrough Camera" + (_reader.AsyncSupported ? " (async GPU readback)" : " (sync readback)");
 
         public bool IsSupported
         {
@@ -148,6 +144,9 @@ namespace Arsist.Runtime.Perception.Sources
         /// <summary>色つきの画も作るか。Manager が必要なフレームだけ立てる。</summary>
         public bool CaptureColor { get; set; }
 
+        /// <summary>読み出す幅。0 はフル。Manager が FrameBudget で決める。</summary>
+        public int RequestedMaxWidth { get; set; }
+
         public bool Initialize()
         {
             if (!Resolve()) return false;
@@ -179,7 +178,7 @@ namespace Arsist.Runtime.Perception.Sources
                 Debug.LogWarning($"[Arsist] Could not set RequestedResolution: {e.Message}");
             }
 
-            Debug.Log($"[Arsist] Passthrough camera source initialized (flipReadbackRows={FlipReadbackRows}).");
+            Debug.Log("[Arsist] Passthrough camera source initialized (GPU downscale + async readback).");
             return true;
         }
 
@@ -197,15 +196,25 @@ namespace Arsist.Runtime.Perception.Sources
             frame = default;
             if (_access == null) return false;
 
-            if (_hasReady)
+            lock (_gate)
             {
-                frame = _ready;
-                _hasReady = false;
-                _ready = default;
-                return true;
+                if (_hasReady)
+                {
+                    if (CaptureColor && !_readyHasColor)
+                    {
+                        _hasReady = false; // 色が要るのに色なし: 撮り直す
+                    }
+                    else
+                    {
+                        frame = _ready;
+                        _hasReady = false;
+                        _ready = default;
+                        return true;
+                    }
+                }
+                if (_converting) return false;
             }
-
-            if (_readbackPending) return false;
+            if (_reader.Busy) return false;
 
             try
             {
@@ -221,57 +230,78 @@ namespace Arsist.Runtime.Perception.Sources
                 // 姿勢は「今この画像が撮られた時刻」のもの。読み出し完了まで持ち越す。
                 _pendingPose = (Pose)_getCameraPose.Invoke(_access, null);
                 _pendingTimestamp = Time.realtimeSinceStartupAsDouble;
-                _pendingWidth = resolution.x;
-                _pendingHeight = resolution.y;
-                _readbackPending = true;
+                _pendingNativeWidth = resolution.x;
+                _pendingNativeHeight = resolution.y;
+                _pendingNativeIntrinsics = ReadIntrinsics(resolution.x, resolution.y);
+                _pendingColor = CaptureColor;
 
-                AsyncGPUReadback.Request(texture, 0, TextureFormat.RGBA32, OnReadback);
+                FrameBudget.ScaledSize(resolution.x, resolution.y, RequestedMaxWidth, out int readWidth, out int readHeight);
+                _reader.TryRequest(texture, readWidth, readHeight, OnFrame);
             }
             catch (Exception e)
             {
                 Debug.LogWarning($"[Arsist] Passthrough camera read failed: {e.Message}");
-                _readbackPending = false;
                 return false;
             }
 
             return false;
         }
 
-        private void OnReadback(AsyncGPUReadbackRequest request)
+        /// <summary>読み出し完了 (メインスレッド)。変換はワーカーへ。</summary>
+        private void OnFrame(Color32[] pixels, int width, int height, bool rowsTopDown)
         {
-            _readbackPending = false;
-            if (request.hasError || _access == null) return;
+            if (_access == null) return;
 
-            try
+            if (_lastLoggedWidth != width)
             {
-                var data = request.GetData<Color32>();
-                int needed = _pendingWidth * _pendingHeight;
-                if (data.Length < needed) return;
+                _lastLoggedWidth = width;
+                PerceptionStats.SetPath(_reader.AsyncSupported ? "gpu-async" : "gpu-sync",
+                                        _pendingNativeWidth, _pendingNativeHeight, width, height);
+                Debug.Log($"[Arsist] Passthrough frames read back at {width}x{height} " +
+                          $"(native {_pendingNativeWidth}x{_pendingNativeHeight}, rows {(rowsTopDown ? "top-down" : "bottom-up")}).");
+            }
 
-                if (_pendingPixels == null || _pendingPixels.Length < needed)
-                    _pendingPixels = new Color32[needed];
-                data.GetSubArray(0, needed).CopyTo(_pendingPixels);
+            // 縮めた画に合わせて内部パラメータを換算する (半画素の規約は GrayImage.Scaled と同じ)。
+            var intrinsics = FrameBudget.ScaleIntrinsics(
+                _pendingNativeIntrinsics, _pendingNativeWidth, _pendingNativeHeight, width, height);
+            var pose = _pendingPose;
+            double timestamp = _pendingTimestamp;
+            bool wantColor = _pendingColor;
 
-                var gray = GrayImageUnity.FromColor32(_pendingPixels, _pendingWidth, _pendingHeight, FlipReadbackRows);
-                var color = CaptureColor
-                    ? ColorImageUnity.FromColor32(_pendingPixels, _pendingWidth, _pendingHeight, FlipReadbackRows)
-                    : null;
-                var intrinsics = ReadIntrinsics(_pendingWidth, _pendingHeight);
-
-                _ready = new ArsistCameraFrame
+            lock (_gate) _converting = true;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var started = DateTime.UtcNow;
+                try
                 {
-                    Image = gray,
-                    Color = color,
-                    Intrinsics = intrinsics,
-                    CameraPose = _pendingPose,
-                    TimestampSeconds = _pendingTimestamp,
-                };
-                _hasReady = true;
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[Arsist] Passthrough readback conversion failed: {e.Message}");
-            }
+                    // Unity のテクスチャは下から上。読み出した行が上から下なら (Vulkan など) ここで直す。
+                    var gray = GrayImageUnity.FromColor32(pixels, width, height, rowsTopDown);
+                    var color = wantColor ? ColorImageUnity.FromColor32(pixels, width, height, rowsTopDown) : null;
+
+                    lock (_gate)
+                    {
+                        _ready = new ArsistCameraFrame
+                        {
+                            Image = gray,
+                            Color = color,
+                            Intrinsics = intrinsics,
+                            CameraPose = pose,
+                            TimestampSeconds = timestamp,
+                        };
+                        _readyHasColor = color != null;
+                        _hasReady = true;
+                    }
+                    PerceptionStats.Convert((DateTime.UtcNow - started).TotalMilliseconds);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[Arsist] Passthrough readback conversion failed: {e.Message}");
+                }
+                finally
+                {
+                    lock (_gate) _converting = false;
+                }
+            });
         }
 
         /// <summary>
@@ -321,14 +351,18 @@ namespace Arsist.Runtime.Perception.Sources
 
         public void Shutdown()
         {
+            _reader.Dispose();
             if (_host != null)
             {
                 UnityEngine.Object.Destroy(_host);
                 _host = null;
                 _access = null;
             }
-            _hasReady = false;
-            _readbackPending = false;
+            lock (_gate)
+            {
+                _hasReady = false;
+                _ready = default;
+            }
         }
     }
 }

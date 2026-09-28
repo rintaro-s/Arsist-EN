@@ -12,6 +12,7 @@
 
 using System;
 using System.Collections.Generic;
+using Arsist.Runtime.Perception.Models;
 using Arsist.Runtime.Perception.Vision;
 using Arsist.Runtime.Perception.Vision.Classic;
 
@@ -35,6 +36,29 @@ namespace Arsist.Runtime.Perception.Pipeline
         /// <summary>テンプレート画像を名前で引く。実機では StreamingAssets から。</summary>
         public Func<string, GrayImage> TemplateLoader;
 
+        /// <summary>`infer` op が参照するモデル定義 (id → 定義)。</summary>
+        public IReadOnlyDictionary<string, ModelSpec> Models;
+
+        /// <summary>推論エンジン。null なら `infer` op は失敗する。</summary>
+        public IVisionModelRunner ModelRunner;
+
+        /// <summary>
+        /// 実行をまたいで残る状態 (track / stabilize / motion / event が使う)。
+        /// タスクごとにひとつ。op は自分の Id をキーにして読み書きする。
+        /// </summary>
+        public VisionState State = new VisionState();
+
+        /// <summary>このフレームの時刻 (秒)。速度や冷却時間の計算に使う。</summary>
+        public double TimeSeconds;
+
+        /// <summary>このフレームで発火するイベント (event op が積む)。ランタイムが順に発火する。</summary>
+        public readonly List<string> Events = new List<string>();
+
+        public void Emit(string eventName)
+        {
+            if (!string.IsNullOrEmpty(eventName) && !Events.Contains(eventName)) Events.Add(eventName);
+        }
+
         public VisionContext(Dictionary<string, VisionValue> values)
         {
             _values = values;
@@ -51,6 +75,21 @@ namespace Arsist.Runtime.Perception.Pipeline
             if (string.IsNullOrEmpty(name) || TemplateLoader == null) return null;
             return TemplateLoader(name);
         }
+    }
+
+    /// <summary>実行をまたいで残る、op ごとの状態。中身は op が決める。</summary>
+    public sealed class VisionState
+    {
+        private readonly Dictionary<string, object> _slots = new Dictionary<string, object>(StringComparer.Ordinal);
+
+        public T Get<T>(string key) where T : class
+        {
+            return _slots.TryGetValue(key, out var raw) ? raw as T : null;
+        }
+
+        public void Set(string key, object value) => _slots[key] = value;
+
+        public void Clear() => _slots.Clear();
     }
 
     public sealed class VisionPipelineResult
@@ -72,6 +111,9 @@ namespace Arsist.Runtime.Perception.Pipeline
         public bool Gated;
         public string GateReason = string.Empty;
 
+        /// <summary>event op が発火を求めたイベント名。</summary>
+        public List<string> Events = new List<string>();
+
         public static VisionPipelineResult Failure(string error) =>
             new VisionPipelineResult { Ok = false, Error = error };
     }
@@ -92,6 +134,15 @@ namespace Arsist.Runtime.Perception.Pipeline
         public string Alpha;
         public string StoreAs;
         public string BindingId;
+
+        // anchor 出力: 見つけた物の位置に置く
+        /// <summary>置く距離 (m)。深度が分からない端末では、この距離の球面上に置く。</summary>
+        public double Distance = 2.0;
+        /// <summary>ラベルとして出す項目名 ("label" / "score" / "id" / "" = 出さない)。</summary>
+        public string Label = "label";
+        /// <summary>最初の項目の位置へ動かすシーンオブジェクトの assetId (省略可)。</summary>
+        public string ObjectId;
+        public int MaxItems = 8;
     }
 
     public static class VisionPipelineRunner
@@ -103,7 +154,8 @@ namespace Arsist.Runtime.Perception.Pipeline
         /// 繋ぎ方が正しいかを見る。実行前に落とせる間違いは実行前に落とす。
         /// 返すのは人が読める問題の一覧で、空なら問題なし。
         /// </summary>
-        public static List<string> Validate(VisionPipelineSpec pipeline)
+        public static List<string> Validate(
+            VisionPipelineSpec pipeline, IReadOnlyDictionary<string, ModelSpec> models = null)
         {
             var problems = new List<string>();
             if (pipeline == null)
@@ -164,7 +216,34 @@ namespace Arsist.Runtime.Perception.Pipeline
                 }
                 if (!wired) continue;
 
-                types[op.Out] = signature.Output;
+                if (string.Equals(op.Op, "infer", StringComparison.OrdinalIgnoreCase))
+                {
+                    // モデルの参照は結線と同じくらい壊れやすい (消したモデルを指したまま残る)。
+                    // 型だけは登録しておく。しないと後ろの op まで「作っている一手が無い」と
+                    // 連鎖して、本当の原因 (モデルの参照) が埋もれる。
+                    var modelId = op.Text("model", null);
+                    if (modelId == null)
+                    {
+                        problems.Add($"op '{op.Id ?? op.Op}' has no model selected");
+                    }
+                    else if (models != null && !models.ContainsKey(modelId))
+                    {
+                        problems.Add($"op '{op.Id ?? op.Op}' uses model '{modelId}', which is not defined");
+                    }
+                    else if (models != null && models[modelId].Use != "image")
+                    {
+                        // 文章・テンソルのモデルに画を流しても意味が無い (スクリプトの model.* で使うもの)
+                        problems.Add($"op '{op.Id ?? op.Op}' uses model '{modelId}', which is a {models[modelId].Use} model, not an image model");
+                    }
+                }
+
+                if (op.Disabled && !VisionOps.CanBypass(op, models))
+                {
+                    problems.Add($"op '{op.Id ?? op.Op}' is disabled but cannot be bypassed (its output type differs from its input)");
+                }
+
+                // 外した op は素通し: 出力は最初の入力そのもの
+                types[op.Out] = op.Disabled && VisionOps.CanBypass(op, models) ? types[inputs[0]] : VisionOps.OutputKindOf(op, models);
                 previous = op.Out;
             }
 
@@ -183,6 +262,13 @@ namespace Arsist.Runtime.Perception.Pipeline
 
                 switch (output.Kind)
                 {
+                    case "anchor":
+                        if (kind != VisionValueKind.Blobs && kind != VisionValueKind.Quads)
+                        {
+                            problems.Add($"output '{output.Value}' must be a list of found things (blobs / quads) to be anchored, but it is {kind}");
+                        }
+                        break;
+
                     case "world":
                     case "image":
                         if (kind != VisionValueKind.Color)
@@ -219,13 +305,17 @@ namespace Arsist.Runtime.Perception.Pipeline
         }
 
         /// <summary>パイプラインを流す。</summary>
+        /// <param name="state">前回までの状態。null なら毎回まっさら (追跡や平滑化は効かない)。</param>
+        /// <param name="timeSeconds">このフレームの時刻。</param>
         public static VisionPipelineResult Run(
-            VisionPipelineSpec pipeline, ColorImage source, Func<string, GrayImage> templateLoader = null)
+            VisionPipelineSpec pipeline, ColorImage source, Func<string, GrayImage> templateLoader = null,
+            IReadOnlyDictionary<string, ModelSpec> models = null, IVisionModelRunner modelRunner = null,
+            VisionState state = null, double timeSeconds = 0)
         {
             if (source == null || source.Width < 8 || source.Height < 8)
                 return VisionPipelineResult.Failure("noImage");
 
-            var problems = Validate(pipeline);
+            var problems = Validate(pipeline, models);
             if (problems.Count > 0)
                 return VisionPipelineResult.Failure(problems[0]);
 
@@ -240,6 +330,10 @@ namespace Arsist.Runtime.Perception.Pipeline
                 Width = work.Width,
                 Height = work.Height,
                 TemplateLoader = templateLoader,
+                Models = models,
+                ModelRunner = modelRunner,
+                State = state ?? new VisionState(),
+                TimeSeconds = timeSeconds,
             };
 
             var result = new VisionPipelineResult { Ok = true };
@@ -254,13 +348,21 @@ namespace Arsist.Runtime.Perception.Pipeline
                 for (int i = 0; i < inputs.Length; i++) inputs[i] = values[inputNames[i]];
 
                 VisionValue produced;
-                try
+                if (op.Disabled)
                 {
-                    produced = VisionOps.Apply(op, inputs, context);
+                    // 外した op: 最初の入力をそのまま出力に (Validate が型の一致を確かめている)
+                    produced = inputs[0];
                 }
-                catch (Exception e)
+                else
                 {
-                    return VisionPipelineResult.Failure($"{op.Id ?? op.Op}: {e.Message}");
+                    try
+                    {
+                        produced = VisionOps.Apply(op, inputs, context);
+                    }
+                    catch (Exception e)
+                    {
+                        return VisionPipelineResult.Failure($"{op.Id ?? op.Op}: {e.Message}");
+                    }
                 }
 
                 values[op.Out] = produced;
@@ -277,6 +379,7 @@ namespace Arsist.Runtime.Perception.Pipeline
             }
 
             result.Named = values;
+            result.Events = new List<string>(context.Events);
             CollectOutputs(pipeline, values, result);
             if (!result.Gated) PrepareDrawings(pipeline, values, result);
             return result;
@@ -317,7 +420,8 @@ namespace Arsist.Runtime.Perception.Pipeline
                 {
                     case VisionValueKind.Record: payload = value.Record; break;
                     case VisionValueKind.Blobs:
-                    case VisionValueKind.Contours: payload = value.Items; break;
+                    case VisionValueKind.Contours:
+                    case VisionValueKind.Quads: payload = value.Items; break;
                     default:
                         // 画そのものは DataStore に入れても意味が無いので、大きさだけ残す。
                         payload = new Dictionary<string, object>

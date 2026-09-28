@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { Image as ImageIcon, Pin, Trash2, RefreshCw, ScanText, Frame } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
+import { useUIStore } from '../../stores/uiStore';
 import { toArsistFileUrl } from '../../utils/assetUrl';
 import { scoreImageFromUrl, type ImageQualityResult } from '../../perception/imageQuality';
 import { defaultPlacement } from '../../../shared/placement';
@@ -541,7 +542,18 @@ export function PerceptionTaskInspector() {
                   : t('perception.taskPipelineSteps', { count: task.pipeline!.ops.length })}
               </p>
             </Field>
-            <p className="text-[9px] text-arsist-muted leading-tight -mt-2">
+            <button
+              className="btn btn-primary text-xs w-full justify-center"
+              onClick={() => {
+                // 画像処理タブは普段隠してあるので、ここから開くときは出す
+                useUIStore.getState().setShowVisionTab(true);
+                void window.electronAPI?.store.set('showVisionTab', true);
+                useUIStore.getState().setCurrentView('vision');
+              }}
+            >
+              {t('perception.taskOpenVision')}
+            </button>
+            <p className="text-[9px] text-arsist-muted leading-tight">
               {t('perception.taskPipelineHint')}
             </p>
           </>

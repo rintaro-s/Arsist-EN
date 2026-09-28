@@ -113,10 +113,21 @@ namespace Arsist.Runtime.Perception
         private volatile bool _running;
         private ArsistCameraFrame _pendingFrame;
         private bool _hasPendingFrame;
-        private readonly List<Action<PerceptionStill>> _stillRequests = new List<Action<PerceptionStill>>();
-        /// <summary>いま待っている静止画の要求の中に、色つきを求めたものがあるか。</summary>
-        private bool _colorWanted;
+
+        /// <summary>静止画の要求。誰が、色つきか、どの幅で欲しいか。</summary>
+        private struct StillRequest
+        {
+            public Action<PerceptionStill> Callback;
+            public bool WantColor;
+            /// <summary>要る幅 (px)。0 はフル解像度。</summary>
+            public int MaxWidth;
+        }
+
+        private readonly List<StillRequest> _stillRequests = new List<StillRequest>();
         private readonly List<PendingResult> _results = new List<PendingResult>();
+        private readonly List<int> _widthWants = new List<int>();
+        private float _nextStatsTime;
+        private const float StatsIntervalSeconds = 5f;
 
         private struct PendingResult
         {
@@ -329,6 +340,8 @@ namespace Arsist.Runtime.Perception
 
                 try
                 {
+                    // 縮小はここ (ワーカー)。以前はメインスレッドで縮めていて、1280 幅の画で 1〜3 ms 止めていた。
+                    frame = Downscale(frame, DetectionMaxWidth);
                     var detections = _recognizer.Detect(frame.Image, frame.Intrinsics, _references);
                     if (detections.Count > 0)
                     {
@@ -369,28 +382,51 @@ namespace Arsist.Runtime.Perception
             lock (_gate) workerBusy = _hasPendingFrame;
 
             bool wantDetection = _referencesReady && !workerBusy && Time.time >= _nextDetectionTime;
+            LogStats();
             if (!wantStill && !wantDetection) return;
 
             // 色の変換は静止画を求められたフレームだけ。追跡は輝度で足りる。
-            _source.CaptureColor = wantStill && _colorWanted;
+            bool colorWanted = false;
+            _widthWants.Clear();
+            foreach (var request in _stillRequests)
+            {
+                if (request.WantColor) colorWanted = true;
+                _widthWants.Add(request.MaxWidth);
+            }
+            if (wantDetection) _widthWants.Add(DetectionMaxWidth);
+            _source.CaptureColor = wantStill && colorWanted;
+
+            // 要る幅の中で一番大きいものだけを GPU から読む。OCR (0 = フル) が待っていればフル。
+            // 供給側が「拡大はしない」を守るので、ここでネイティブ解像度を知らなくてよい。
+            _source.RequestedMaxWidth = FrameBudget.TargetWidth(int.MaxValue, _widthWants);
 
             if (!_source.TryAcquire(out var frame) || frame.Image == null) return;
 
-            // 静止画は縮める前のフル解像度で渡す。OCR は枠を切り出して拡大するので、
-            // ここで縮めると小さい文字が先に潰れてしまう。
+            // 静止画はこのフレームの解像度のまま渡す (要求した幅で読み出されている)。
+            // OCR はフルを要求しているので、細かい文字が潰れる前の画が来る。
             if (wantStill) DeliverStill(frame);
 
             if (!wantDetection) return;
 
             _nextDetectionTime = Time.time + 1f / Mathf.Max(0.2f, CurrentDetectionRate());
+            PerceptionStats.Detection();
 
-            var detectionFrame = Downscale(frame, DetectionMaxWidth);
+            // 検出用の縮小はワーカーで行う (WorkerLoop)。読み出しが既に DetectionMaxWidth 以下なら何もしない。
             lock (_gate)
             {
-                _pendingFrame = detectionFrame;
+                _pendingFrame = frame;
                 _hasPendingFrame = true;
                 Monitor.Pulse(_gate);
             }
+        }
+
+        /// <summary>読み出しと変換に掛かった時間を 5 秒ごとに出す。「GPU を活かせているか」の証拠。</summary>
+        private void LogStats()
+        {
+            if (Time.time < _nextStatsTime) return;
+            _nextStatsTime = Time.time + StatsIntervalSeconds;
+            var line = PerceptionStats.Flush(StatsIntervalSeconds);
+            if (line != null) Debug.Log("[Arsist] " + line);
         }
 
         /// <summary>検出用に縮める。内部パラメータも同じ写像で換算する。</summary>
@@ -413,25 +449,26 @@ namespace Arsist.Runtime.Perception
         /// 必要とするときに使う。検出用のフレームを使い回さないのは、
         /// 落ち着いた後は 1Hz まで落ちていて内容が古いことがあるため。
         /// </summary>
-        public void RequestStill(Action<PerceptionStill> callback, bool wantColor = false)
+        /// <param name="maxWidth">
+        /// 要る幅 (px)。0 はフル解像度。画像処理のタスクは「切り出し後に縮める幅」が決まっているので、
+        /// それより大きな画を GPU から読まなくて済む (FrameBudget.WidthForViewport)。
+        /// </param>
+        public void RequestStill(Action<PerceptionStill> callback, bool wantColor = false, int maxWidth = 0)
         {
             if (callback == null) return;
-            // 色の変換は安くないので、要求している間だけ立てる。
-            if (wantColor) _colorWanted = true;
             // ここでは可否を判断しない。カメラの用意はこの後 Update が行うので、
             // 早すぎる呼び出しでも次にフレームが取れた時点で応える。
-            _stillRequests.Add(callback);
+            _stillRequests.Add(new StillRequest { Callback = callback, WantColor = wantColor, MaxWidth = maxWidth });
         }
 
         private void FailPendingStills()
         {
             if (_stillRequests.Count == 0) return;
-            var pending = new List<Action<PerceptionStill>>(_stillRequests);
+            var pending = new List<StillRequest>(_stillRequests);
             _stillRequests.Clear();
-            _colorWanted = false;
-            foreach (var callback in pending)
+            foreach (var request in pending)
             {
-                try { callback(new PerceptionStill { Valid = false }); }
+                try { request.Callback(new PerceptionStill { Valid = false }); }
                 catch (Exception e) { Debug.LogError($"[Arsist] Still callback failed: {e}"); }
             }
         }
@@ -447,12 +484,12 @@ namespace Arsist.Runtime.Perception
                 Valid = true,
             };
 
-            var pending = new List<Action<PerceptionStill>>(_stillRequests);
+            var pending = new List<StillRequest>(_stillRequests);
             _stillRequests.Clear();
-            _colorWanted = false;
-            foreach (var callback in pending)
+            PerceptionStats.Still();
+            foreach (var request in pending)
             {
-                try { callback(still); }
+                try { request.Callback(still); }
                 catch (Exception e) { Debug.LogError($"[Arsist] Still callback failed: {e}"); }
             }
         }

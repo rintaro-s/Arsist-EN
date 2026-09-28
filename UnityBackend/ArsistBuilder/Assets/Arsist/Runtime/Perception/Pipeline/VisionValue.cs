@@ -26,6 +26,8 @@ namespace Arsist.Runtime.Perception.Pipeline
         Contours,
         /// <summary>数値の集まり。DataStore にそのまま入る。</summary>
         Record,
+        /// <summary>四角形の一覧 (看板・画面・紙)。角の順序は左下・右下・右上・左上。</summary>
+        Quads,
     }
 
     public sealed class VisionValue
@@ -54,6 +56,8 @@ namespace Arsist.Runtime.Perception.Pipeline
             new VisionValue { Kind = VisionValueKind.Blobs, Items = v };
         public static VisionValue OfContours(List<object> v) =>
             new VisionValue { Kind = VisionValueKind.Contours, Items = v };
+        public static VisionValue OfQuads(List<object> v) =>
+            new VisionValue { Kind = VisionValueKind.Quads, Items = v };
         public static VisionValue OfRecord(Dictionary<string, object> v) =>
             new VisionValue { Kind = VisionValueKind.Record, Record = v };
 

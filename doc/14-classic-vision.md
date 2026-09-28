@@ -1,7 +1,8 @@
 # 14. 画像処理パイプライン (`doc/14-classic-vision.md`)
 
-`UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/{Vision/Classic,Pipeline,Overlay}/`
-・ エディタ: `src/renderer/components/viewport/VisionEditor.tsx` ・ 契約: `src/renderer/vision/opCatalog.ts`
+`UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Perception/{Vision/Classic,Pipeline,Models,Overlay}/`
+・ エディタ: `src/renderer/components/vision/` ・ 契約: `src/renderer/vision/opCatalog.ts`
+・ 学習済みモデル (ONNX) と GPU の使い方は `doc/15-models-and-ir-versions.md`
 
 ## 1. 方針 — エンジンは「一手」だけを持つ
 
@@ -21,9 +22,11 @@
 
 ```
 カメラ → [op] → [op] → … → 出力
-                              ├ store : DataStore に値を入れる（UI から bind）
-                              ├ world : 現実に重ねて描く（AR）
-                              └ image : Canvas の Image に描く（確認用）
+                              ├ store  : DataStore に値を入れる（UI から bind）
+                              ├ world  : 現実に重ねて描く（AR）
+                              ├ anchor : 見つけた物の位置に札やオブジェクトを置く（AR）
+                              └ image  : Canvas の Image に描く（確認用）
+              └ event op → ArsistScriptEvent（スクリプトや他のタスクが反応）
 ```
 
 | 層 | 場所 | UnityEngine |
@@ -31,6 +34,7 @@
 | 演算子 | `Vision/Classic/*.cs` | 使わない |
 | パイプライン | `Pipeline/{VisionValue,VisionOps,VisionPipelineRunner}.cs` | 使わない |
 | 現実に描く | `Overlay/ArsistWorldOverlay.cs` | 使う |
+| 見つけた物に置く | `Overlay/ArsistWorldAnchors.cs` | 使う |
 | タスクから呼ぶ | `ArsistPerceptionTaskRunner.RunPipeline` | 使う |
 
 UnityEngine を使わない層は `tools/perception-check` (数値検証) と
@@ -71,6 +75,23 @@ UnityEngine を使わない層は `tools/perception-check` (数値検証) と
 | `recolor` | color, mask → color | 明暗を残して塗り替える |
 | `dominantColor` | color → record | 多数派の色相と、その色の名前 |
 | `templateMatch` | gray → record | 参照画像の位置（NCC） |
+| `infer` | color → record / blobs / mask | 学習済みモデル (ONNX) を流す。**出力の型はモデルの task で決まる** (classify → record, detect → blobs, segment → mask)。`doc/15` |
+| `select` | blobs → blobs | ラベル・スコア・大きさで絞り、並べ替え、数を絞る |
+| `countItems` | blobs → record | 件数、ラベルごとの数、一番確かな物 |
+| `track` | blobs → blobs | **フレームをまたいで**同じ物に ID、位置の平滑化、速度。状態を持つ |
+| `annotate` | color, blobs → color | 枠を描く |
+| `boxMask` | blobs → mask | 枠 (か塗り潰し) のマスク。`world` の alpha に |
+| `stabilize` | record → record | 数は指数平滑、文字と真偽は多数決。状態を持つ |
+| `motion` | gray → mask | 前のフレームとの差。状態を持つ |
+| `event` | record → record | 条件を満たしたらイベントを発火 (止めない)。onChange / always、冷却時間。状態を持つ |
+| `quads` | mask → quads | 四角形 (看板・画面・紙)。角は左下・右下・右上・左上 |
+| `rectify` | color, quads → color | 四角形の中を正対した長方形に起こす |
+
+「状態を持つ」op はタスクごとの `VisionState` に前回までの情報を残す (`VisionContext.State`)。
+エディタのプレビューも同じ: 動画や連続した写真を順に流し、状態を引き継ぐ。
+
+一手は `disabled` で一時的に外せる (素通し)。**入力と出力の型が同じ op だけ**。型が変わる op を
+外すと後ろが受け取るものを失うので、両方の検証が弾く。
 
 新しい op を足すときは **3 か所** を直す:
 
@@ -82,13 +103,52 @@ UnityEngine を使わない層は `tools/perception-check` (数値検証) と
 **二重実装**。片方だけ直すと、エディタでは繋げるのにビルドで落ちる（またはその逆）になる。
 両者を同じケースで叩くテストが `PipelineChecks.cs` と `validate.test.ts` にある。
 
-## 4. エディタ
+## 4. エディタ (`src/renderer/components/vision/`)
 
-`画像処理` タブ。一手ずつ縦に積み、**各段の結果をその場でサムネイルで見る**形にしてある。
+`Vision` タブ。上に**絵コンテ** (カメラ → 一手 → … → 出しどころ を、**各段の結果の絵つき**で横に)、
+中央に選んだ一手の大きな絵、右に設定。
 
-ノードを線で繋ぐ形にしなかったのは、画像処理は途中経過が見えないと当てずっぽうになるから。
-流れはほぼ一本道で、たまに合流するだけなので、縦に並べて各段の絵を出す方が早く目的に着く。
-合流は各段の入力欄で名前を選ぶ。
+ノードを線で繋ぐ形にも、文字の一覧にもしなかったのは、画像処理は途中経過が**絵で**見えないと
+当てずっぽうになるから。「ぼかす → 色で拾う → 塊にする」と文字で並んでいても、人はどこで何が
+変わったか想像できない (二度作り直した。最初の版は道具箱と生のパラメータ欄を並べただけ、
+二つ目は縦の文字の一覧に小さなサムネイルを添えただけで、どちらも文字を読まないと分からなかった)。
+
+絵で分かるようにするための決め事:
+
+- **一手を足す前に、候補を今の画で全部試す。** 「一手を足す」画面は、候補ごとに「受け取る画 → 結果」の
+  絵を並べる。名前と説明から結果を想像しなくて済む。試すのは実機と同じ C# (`--probe`、下記)
+- **設定は画をクリックして決める。** 「色で拾う」は画の色をクリックすると、その色の周り (色相 ±20°) を
+  拾う設定になる。「しきい値」は画をクリックした明るさが境目になる。カメラのカードでは、切り出す前の
+  画に「見る枠」を重ね、ドラッグで描き直せる
+- **どの一手でも「左が前・右が後」の比較**ができ、画の上に凡例 (緑 = 拾った所、青の枠 = 見つけた物 …) を出す
+- 一手ごとにアイコン (`opIcons.tsx`) と結果の一言 (「拾った所 12%」「3 個」) を付ける
+
+
+| 部品 | 何をするか |
+|---|---|
+| `TaskBar` | どのタスクか、タスク設定 (いつ走るか・どこを見るか・保存先) の吹き出し、素材の読み込み (写真・写真の束・動画)、実機、モデル |
+| `GuideBanner` | 初回だけ 4 行の案内 |
+| `StartScreen` | 一手も無いときの画面。ひな型 / 取り込んだモデル / 「ONNX を取り込む」/ 白紙 を選ぶだけで動くパイプラインが置かれる |
+| `Storyboard` (上) | 絵コンテ。カメラ → 各手 (アイコン・名前・**結果の絵**・一言) → 「結果の出しどころ」を横に。カードの間の線は流れる値の種類の色、前の手以外から受け取る手には「受け取る: …」の札。ドラッグで並べ替え、目のアイコンで一時的に外す、「+」で挿入 |
+| `Stage` (中央) | 選んだ一手の結果を大きく。マスクは元の画に色を被せ、塊・四角形は枠、境界線は折れ線。どの一手でも前後の比較スライダーと凡例。マウスで画素の値。raw / 全体 / 100% / 200%。スポイト (色・明るさ) と見る枠のドラッグ |
+| `Timeline` (中央下) | 動画や連続した写真のフレーム。合否の帯、イベントの印、件数の折れ線。←→ と再生 |
+| `AddStepPicker` | 候補を**今の画で全部試した絵** (前 → 後) で並べる (`useProbe`)。繋げない一手は薄く出し「先にマスクが要る」と書く。検索と ↑↓ Enter |
+| `StepInspector` (右) | 選んだ一手: 説明、受け取るもの (人が読めるラベルで)、設定。色で拾う手には「画から色を拾う」と色相の帯、しきい値には「画から境目を拾う」と入力の明るさの分布。出力の名前は普段隠す |
+| `OutputsInspector` (右) | 「見つけた [物] のそれぞれに札を置く。距離 1.5 m」のように**文として読める**出力 |
+| `DevicePanel` | 実機で動いているアプリから、直近に処理した画を取り込む (`query.getPerceptionSnapshot`)。1 秒ごとの取り込みも |
+| (モデルタブ) | ONNX の取り込みと定義は画像処理タブの外、「モデル」タブにある (`doc/15`、`doc/16`)。ここでは画像のモデルだけが選べる |
+
+素材は `src/renderer/vision/testMedia.ts`: 写真、名前順の写真の束、動画 (1 秒 2 枚、最大 40 枚)、実機の JPEG。
+実機と同じく、タスクの見る枠で**切り出してから**流す (`cropToTask`)。ここを揃えないと閾値が実機とずれる。
+
+入力の自動結線 (`src/renderer/vision/draft.ts`): 一手を足すと、直前までにある値から**型の合う一番新しいもの**を
+繋ぐ。出力の名前は型から自動で付ける (`mask`, `mask2`, …)。人が名前を決めるのは、スクリプトが
+参照するときだけ。「一手を足す」画面で試す下書きと、実際に挿入する一手は同じ関数で作る。
+
+候補を試す (`--probe`): `tools/vision-preview --probe probe.json` に `{ index, ops: [候補…] }` を渡すと、
+挿入位置までの値を一度作り、各候補をまっさらな `VisionState` で当てて `probe_<k>.rgba` (幅 200 に縮小) と
+被覆率・件数を返す。候補が 30 個あっても 1 回の呼び出しで済む。主のプレビューとは別の呼び出しにして、
+候補が多くても主の絵を待たせない。
 
 ### ライブプレビューは実物を呼ぶ
 
@@ -97,10 +157,15 @@ TypeScript で op を書き直すと三重実装になり、エディタで見�
 いずれ食い違う。画像は生の RGBA でやり取りするので、PNG の符号化・復号をどちらの側でも書いていない。
 
 `.NET SDK` が無い環境でも編集はできる。サムネイルが出ないだけ。
+ツールは一度ビルドして DLL を直接動かす (`src/main/vision/VisionPreview.ts`)。以前は毎回 `dotnet run`
+していて、パラメータを一つ動かすたびに 1〜2 秒待たされた。
 
 ### ひな型
 
-「曇り空を青空にする」「同じ色のものを数える」「形を見分ける」「色を測る」。
+「色で物を数えて、それぞれに札を置く」(`products/CountAndLabel`)、「動いたら知らせる」
+(`products/MotionAlarm`)、「看板・画面を見つけて正対させる」、「曇り空を青空にする」(`products/BlueSky`、
+塗りの例)、「形を見分ける」、「色を測る」。学習済みモデルからは task に応じた流れが組まれる
+(検出なら 追跡 → 絞り込み → 数える → 札を置く → 枠を重ねる)。
 **これはエンジンの機能ではない。** ただの op の並びで、置いたあとは自由に変えられる。
 
 ## 5. 現実に重ねる (`world` 出力)
@@ -117,6 +182,19 @@ AR なので、結果は Canvas ではなく**現実の上**に出す。
 
 ビューポートソースのタスクでだけ使える。写真の枠（region）は正対化で幾何が変わるので、
 現実の向きに戻せない。
+
+### 見つけた物の位置に置く (`anchor` 出力)
+
+検出の AR 版。`blobs` (か `quads`) の各項目について:
+
+1. 正規化した中心 (x, y) → 処理した画の内部パラメータで光線に (`ViewportMapping.RayFromNormalized`)
+2. 撮影時のカメラ姿勢で回し、指定の距離 (m) だけ進めた点に置く (深度は測れないので距離は設定)
+3. 札 (`TextMesh` + 板、常にユーザーの方を向く) を出す。`track` の ID があれば同じ物に同じ札を使い回す
+4. `objectId` があれば、最初の項目の位置へそのシーンオブジェクトを動かす (`scene.setPosition` と同じ経路)
+
+`Overlay/ArsistWorldAnchors.cs`。札の文字は TextMeshPro (UI と同じ既定フォント)。組み込みの
+`GUI/Text Shader` を Always Included に足してはいけない: BuildPlayer が `unity_builtin_extra` の
+書き出しで落ちる (実際に踏んだ)。
 
 ## 6. 実装で実際に踏んだもの
 
@@ -142,8 +220,8 @@ AR なので、結果は Canvas ではなく**現実の上**に出す。
 ## 7. 検証
 
 ```bash
-npm run test:perception   # 演算子・パイプライン・結線チェック・現実への重ね方・ジャイロ
-npx vitest run            # エディタ側の結線チェック（C# と同じケース）
+npm run test:perception   # 演算子・パイプライン・結線チェック・現実への重ね方・ジャイロ・モデルの前後処理・読み出しの幅
+npx vitest run            # エディタ側の結線チェック（C# と同じケース）、ONNX の読み取り、IR の移行
 ```
 
 **しきい値や符号を触ったら必ず通すこと。** 間違っていてもコンパイルは通り、

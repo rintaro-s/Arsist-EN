@@ -17,9 +17,6 @@ namespace Arsist.Runtime.Input
         [Tooltip("視線の最大検出距離")]
         [SerializeField] private float maxDistance = 100f;
         
-        [Tooltip("検出対象のレイヤーマスク")]
-        [SerializeField] private LayerMask raycastMask = -1;
-        
         [Tooltip("視線カーソルのビジュアル（オプション）")]
         [SerializeField] private GameObject gazeCursorPrefab;
         
@@ -88,18 +85,20 @@ namespace Arsist.Runtime.Input
                 Debug.DrawRay(ray.origin, ray.direction * maxDistance, Color.cyan);
             }
 
-            RaycastHit hit;
-            if (Physics.Raycast(ray, out hit, maxDistance, raycastMask))
+            // 当たり判定は 3D の物と UI の両方 (UI をコライダー任せにすると、大きさが後から
+            // 決まる要素で素通りする)。視線・コントローラー・手で同じ判定を使う ―
+            // 端末ごとに入り口が違うだけで、押せる/押せないが変わってはいけない。
+            if (UI.ArsistUiPointer.RaycastScene(ray, maxDistance, out var hitTarget, out var hitPoint))
             {
-                CurrentTarget = hit.collider.gameObject;
-                CurrentHitPoint = hit.point;
+                CurrentTarget = hitTarget;
+                CurrentHitPoint = hitPoint;
 
                 // カーソル更新
                 if (_gazeCursor != null)
                 {
                     _gazeCursor.SetActive(true);
-                    _gazeCursor.transform.position = hit.point;
-                    _gazeCursor.transform.rotation = Quaternion.LookRotation(hit.normal);
+                    _gazeCursor.transform.position = hitPoint;
+                    _gazeCursor.transform.rotation = Quaternion.LookRotation(ray.direction);
                 }
 
                 // Enter/Exit判定
@@ -111,15 +110,15 @@ namespace Arsist.Runtime.Input
                         SendGazeMessage(_previousTarget, "OnGazeExit");
                     }
 
-                    OnGazeEnter?.Invoke(CurrentTarget, hit.point);
-                    SendGazeMessage(CurrentTarget, "OnGazeEnter", hit.point);
+                    OnGazeEnter?.Invoke(CurrentTarget, hitPoint);
+                    SendGazeMessage(CurrentTarget, "OnGazeEnter", hitPoint);
                     
                     _dwellTimer = 0f;
                 }
                 else
                 {
                     // Stay
-                    OnGazeStay?.Invoke(CurrentTarget, hit.point);
+                    OnGazeStay?.Invoke(CurrentTarget, hitPoint);
                     
                     // Dwell選択
                     if (dwellTimeToSelect > 0)
@@ -129,8 +128,8 @@ namespace Arsist.Runtime.Input
                         
                         if (_dwellTimer >= dwellTimeToSelect)
                         {
-                            OnGazeDwellSelect?.Invoke(CurrentTarget, hit.point);
-                            SendGazeMessage(CurrentTarget, "OnGazeDwellSelect", hit.point);
+                            OnGazeDwellSelect?.Invoke(CurrentTarget, hitPoint);
+                            SendGazeMessage(CurrentTarget, "OnGazeDwellSelect", hitPoint);
                             _dwellTimer = 0f; // リセット（連続発火防止）
                         }
                     }

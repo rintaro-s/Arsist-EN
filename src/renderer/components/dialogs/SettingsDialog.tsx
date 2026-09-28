@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, FolderOpen, Sun, Moon } from 'lucide-react';
+import { X, FolderOpen, Sun, Moon, Eye, EyeOff } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { useI18n } from '../../i18n';
 import { useTheme } from '../../theme';
@@ -20,6 +20,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     setRightPanelWidth,
     setBottomPanelHeight,
     addNotification,
+    showVisionTab,
+    setShowVisionTab,
   } = useUIStore();
 
   const [unityPath, setUnityPath] = useState('');
@@ -33,6 +35,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [xrealSdkStatus, setXrealSdkStatus] = useState<{ exists: boolean; path?: string; version?: string; error?: string } | null>(null);
   const [questSdkStatus, setQuestSdkStatus] = useState<{ exists: boolean; path?: string; corePackage?: string; mrukPackage?: string; error?: string } | null>(null);
   const [bundledDeps, setBundledDeps] = useState<Array<{ name: string; path: string; exists: boolean; description: string }>>([]);
+  const [huggingFaceToken, setHuggingFaceToken] = useState('');
+  const [showToken, setShowToken] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -52,6 +56,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       if (storedManualLicense) {
         setUnityManualLicenseFile(storedManualLicense);
       }
+
+      const storedToken = await window.electronAPI.store.get('huggingFaceToken');
+      if (typeof storedToken === 'string') setHuggingFaceToken(storedToken);
 
       const storedOutputPath = await window.electronAPI.store.get('defaultOutputPath');
       if (storedOutputPath) {
@@ -560,6 +567,44 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   <FolderOpen size={16} />
                 </button>
               </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-xs font-medium text-arsist-primary mb-3">{t('settings.models')}</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="input-label">{t('settings.hfToken')}</label>
+                <div className="flex gap-2">
+                  <input
+                    type={showToken ? 'text' : 'password'}
+                    value={huggingFaceToken}
+                    onChange={(e) => setHuggingFaceToken(e.target.value)}
+                    onBlur={() => { void window.electronAPI?.store.set('huggingFaceToken', huggingFaceToken.trim()); }}
+                    className="input flex-1 font-mono"
+                    placeholder="hf_..."
+                  />
+                  <button className="btn btn-secondary" onClick={() => setShowToken(!showToken)}>
+                    {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-arsist-muted mt-1 leading-snug">{t('settings.hfTokenHint')}</p>
+              </div>
+              <label className="flex items-start gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={showVisionTab}
+                  onChange={(e) => {
+                    setShowVisionTab(e.target.checked);
+                    void window.electronAPI?.store.set('showVisionTab', e.target.checked);
+                  }}
+                />
+                <span>
+                  {t('settings.showVisionTab')}
+                  <span className="block text-[11px] text-arsist-muted leading-snug">{t('settings.showVisionTabHint')}</span>
+                </span>
+              </label>
             </div>
           </section>
 

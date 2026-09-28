@@ -9,6 +9,7 @@ import { SettingsDialog } from './components/dialogs/SettingsDialog';
 import { PreviewDialog } from './components/dialogs/PreviewDialog';
 import { MCPDialog } from './components/dialogs/MCPDialog';
 import { SetupWizard } from './components/dialogs/SetupWizard';
+import { IrUpgradeDialog } from './components/dialogs/IrUpgradeDialog';
 import { useProjectStore } from './stores/projectStore';
 import { useUIStore } from './stores/uiStore';
 import { DataStoreProvider } from './stores/dataStoreContext';
@@ -21,17 +22,102 @@ declare global {
         load: (path: string) => Promise<any>;
         save: (data: any) => Promise<any>;
         export: (options: any) => Promise<any>;
+        upgrade: () => Promise<{ success: boolean; error?: string; backupPath?: string }>;
+      };
+      model: {
+        import: (projectPath: string, sourcePath?: string) => Promise<{
+          success: boolean;
+          error?: string;
+          model?: import('../shared/types').ModelDefinition;
+          warnings?: string[];
+        }>;
+        inspect: (projectPath: string, file: string) => Promise<
+          { success: true; inspection: import('../shared/types').ModelInspection & { warnings: string[] } }
+          | { success: false; error: string }
+        >;
+        readLabels: (path?: string) => Promise<{ success: boolean; labels?: string[]; error?: string }>;
+        importTokenizer: (projectPath: string, modelName?: string, sourcePath?: string) => Promise<{
+          success: boolean;
+          error?: string;
+          info?: {
+            tokenizer: string;
+            kind?: string;
+            chatFormat?: import('../shared/types').ChatFormatName;
+            eosTokens?: string[];
+            labels?: string[];
+            warnings: string[];
+          };
+        }>;
+        hfInspect: (repo: string) => Promise<
+          { success: true; info: import('../main/model/HuggingFace').HfRepoInfo }
+          | { success: false; error: string }
+        >;
+        hfImport: (runId: string, repo: string, variantPath: string, projectPath?: string, name?: string) => Promise<{
+          success: boolean;
+          error?: string;
+          model?: import('../shared/types').ModelDefinition;
+          warnings?: string[];
+        }>;
+        hfCancel: (runId: string) => Promise<{ success: boolean }>;
+        onHfProgress: (callback: (payload: { runId: string; progress: import('../main/model/HuggingFace').HfDownloadProgress }) => void) => () => void;
+        try: (runId: string, projectPath: string | undefined, request: unknown) => Promise<{
+          ok: boolean;
+          error?: string;
+          unavailable?: string;
+          cancelled?: boolean;
+          signature?: Record<string, unknown>;
+          result?: Record<string, unknown>;
+        }>;
+        cancelTry: (runId: string) => Promise<{ success: boolean }>;
+        onTryLine: (callback: (payload: { runId: string; line: Record<string, unknown> & { type: string } }) => void) => () => void;
       };
       vision: {
         preview: (
           pipeline: unknown,
           image: { width: number; height: number; rgba: Uint8Array },
+          options?: {
+            models?: unknown[];
+            projectPath?: string;
+            frames?: Array<{ width: number; height: number; rgba: Uint8Array }>;
+            focus?: number;
+            fps?: number;
+            probe?: { index: number; ops: unknown[] };
+          },
         ) => Promise<{
           ok: boolean;
           error?: string;
           gated?: boolean;
           gateReason?: string;
           unavailable?: string;
+          events?: string[];
+          probes?: Array<{
+            id: string;
+            op: string;
+            kind?: string;
+            width?: number;
+            height?: number;
+            rgba?: Uint8Array;
+            record?: Record<string, unknown>;
+            items?: unknown[];
+            count?: number;
+            boundary?: number[];
+            coverage?: number;
+            stopped?: string;
+            error?: string;
+          }>;
+          focus?: number;
+          frames?: Array<{
+            index: number;
+            ok: boolean;
+            error?: string;
+            gated?: boolean;
+            gateReason?: string;
+            events?: string[];
+            values?: Record<string, unknown>;
+            counts?: Record<string, number>;
+          }>;
+          notes?: string[];
+          values?: Record<string, unknown>;
           steps: {
             name: string;
             kind: string;
@@ -44,6 +130,17 @@ declare global {
             boundary?: number[];
           }[];
         }>;
+      };
+      device: {
+        list: () => Promise<{
+          success: boolean;
+          error?: string;
+          adbMissing?: boolean;
+          adbPath?: string;
+          devices: Array<{ serial: string; state: string; model?: string; label: string }>;
+        }>;
+        install: (serial: string, apkPath: string) => Promise<{ success: boolean; error?: string; adbMissing?: boolean }>;
+        onInstallLog: (callback: (line: string) => void) => () => void;
       };
       unity: {
         setPath: (path: string) => Promise<any>;
@@ -128,8 +225,17 @@ export default function App() {
     setShowMCPDialog,
     setShowSetupWizard,
     setCurrentView,
+    setShowVisionTab,
     appMode,
   } = useUIStore();
+
+  // 画像処理タブは既定で隠す (設定で出せる)
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    void window.electronAPI.store.get('showVisionTab').then((show: unknown) => {
+      if (show === true) setShowVisionTab(true);
+    });
+  }, [setShowVisionTab]);
 
   // Auto-show wizard on first launch (no Unity path configured yet)
   useEffect(() => {
@@ -222,6 +328,7 @@ export default function App() {
           <MCPDialog onClose={() => setShowMCPDialog(false)} />
         )}
 
+        <IrUpgradeDialog />
         {showSetupWizard && (
           <SetupWizard onClose={() => setShowSetupWizard(false)} />
         )}

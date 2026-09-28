@@ -5,11 +5,12 @@ import { useDataValue } from '../../stores/dataStoreContext';
 import { useT } from '../../i18n';
 import {
   Type,
-  Square, 
-  Image, 
-  ToggleLeft, 
+  Square,
+  Image,
+  ToggleLeft,
   TextCursor,
-  MousePointer
+  MousePointer,
+  Keyboard,
 } from 'lucide-react';
 
 export function UICanvas() {
@@ -88,7 +89,8 @@ export function UICanvas() {
         <ToolButton icon={<Type size={16} />} label={t('uiCanvas.text')} onClick={() => handleAddElement('Text')} />
         <ToolButton icon={<MousePointer size={16} />} label={t('uiCanvas.button')} onClick={() => handleAddElement('Button')} />
         <ToolButton icon={<Image size={16} />} label={t('uiCanvas.image')} onClick={() => handleAddElement('Image')} />
-        <ToolButton icon={<TextCursor size={16} />} label={t('uiCanvas.input')} onClick={() => handleAddElement('Input')} />
+        <ToolButton icon={<TextCursor size={16} />} label={t('uiCanvas.input')} title={t('uiCanvas.inputTitle')} onClick={() => handleAddElement('Input')} />
+        <ToolButton icon={<Keyboard size={16} />} label={t('uiCanvas.keyboard')} title={t('uiCanvas.keyboardTitle')} onClick={() => handleAddElement('Keyboard')} />
         <ToolButton icon={<ToggleLeft size={16} />} label={t('uiCanvas.slider')} onClick={() => handleAddElement('Slider')} />
 
         <div className="ml-auto flex items-center gap-2 text-xs text-arsist-muted">
@@ -150,15 +152,17 @@ export function UICanvas() {
 interface ToolButtonProps {
   icon: React.ReactNode;
   label: string;
+  /** ホバーで出す説明。無ければ label。 */
+  title?: string;
   onClick: () => void;
 }
 
-function ToolButton({ icon, label, onClick }: ToolButtonProps) {
+function ToolButton({ icon, label, title, onClick }: ToolButtonProps) {
   return (
     <button
       onClick={onClick}
       className="flex items-center gap-1 px-2 py-1 rounded hover:bg-arsist-hover text-xs text-arsist-muted hover:text-arsist-text transition-colors"
-      title={label}
+      title={title ?? label}
     >
       {icon}
       <span>{label}</span>
@@ -302,7 +306,7 @@ export function UIElementRenderer({
         return (
           <input
             type="text"
-            placeholder={t('uiCanvas.inputField')}
+            placeholder={element.content || t('uiCanvas.inputField')}
             className="w-full px-3 py-2 bg-arsist-bg/50 border border-arsist-primary/50 rounded text-white"
             style={{ fontSize: element.style.fontSize || 14 }}
             readOnly
@@ -317,6 +321,9 @@ export function UIElementRenderer({
             disabled
           />
         );
+
+      case 'Keyboard':
+        return <KeyboardPreview rows={element.content} />;
       
       default:
         return null;
@@ -344,6 +351,28 @@ export function UIElementRenderer({
   return (
     <div style={getContainerStyle()} onClick={handleClick}>
       {renderContent()}
+    </div>
+  );
+}
+
+/** キーボード要素の見た目 (実機ではキーは実行時に作られる)。 */
+function KeyboardPreview({ rows }: { rows?: string }) {
+  const lines = (rows && rows.trim() ? rows : '1234567890|qwertyuiop|asdfghjkl|zxcvbnm').split('|').filter(Boolean);
+  return (
+    <div className="w-full h-full flex flex-col justify-center gap-[3px] p-1 select-none">
+      {lines.map((line, i) => (
+        <div key={i} className="flex gap-[3px] justify-center">
+          {[...line].map((key, j) => (
+            <span key={j} className="flex-1 max-w-[9%] text-center rounded-sm bg-white/15 text-white/80 text-[9px] leading-[14px]">{key}</span>
+          ))}
+        </div>
+      ))}
+      <div className="flex gap-[3px] justify-center">
+        <span className="w-[8%] text-center rounded-sm bg-white/15 text-white/80 text-[9px] leading-[14px]">⇧</span>
+        <span className="flex-1 text-center rounded-sm bg-white/15 text-white/80 text-[9px] leading-[14px]">␣</span>
+        <span className="w-[8%] text-center rounded-sm bg-white/15 text-white/80 text-[9px] leading-[14px]">⌫</span>
+        <span className="w-[12%] text-center rounded-sm bg-arsist-accent/70 text-white text-[9px] leading-[14px]">⏎</span>
+      </div>
     </div>
   );
 }

@@ -12,13 +12,76 @@ const electronAPI = {
     load: (projectPath: string) => ipcRenderer.invoke('project:load', projectPath),
     save: (data: any) => ipcRenderer.invoke('project:save', data),
     export: (options: any) => ipcRenderer.invoke('project:export', options),
+    /** 古い版の IR を今の版で書き戻す (承諾後)。元のファイルは Backups/ に残る */
+    upgrade: () => ipcRenderer.invoke('project:upgrade'),
+  },
+
+  // 学習済みモデル (ONNX)
+  model: {
+    /** ファイル選択 → Assets/Models へコピー → 入出力を読んで定義の下書きを返す */
+    import: (projectPath: string, sourcePath?: string) =>
+      ipcRenderer.invoke('model:import', { projectPath, sourcePath }),
+    inspect: (projectPath: string, file: string) => ipcRenderer.invoke('model:inspect', { projectPath, file }),
+    readLabels: (path?: string) => ipcRenderer.invoke('model:read-labels', { path }),
+    /** 文章のモデルの tokenizer.json を取り込む (隣の tokenizer_config.json なども読む) */
+    importTokenizer: (projectPath: string, modelName?: string, sourcePath?: string) =>
+      ipcRenderer.invoke('model:import-tokenizer', { projectPath, modelName, sourcePath }),
+    /** Hugging Face のリポジトリにある ONNX の候補 (精度違い) を読む */
+    hfInspect: (repo: string) => ipcRenderer.invoke('model:hf-inspect', { repo }),
+    /** 選んだ 1 本を落として取り込む。進み具合は onHfProgress に届く */
+    hfImport: (runId: string, repo: string, variantPath: string, projectPath?: string, name?: string) =>
+      ipcRenderer.invoke('model:hf-import', { runId, repo, variantPath, projectPath, name }),
+    hfCancel: (runId: string) => ipcRenderer.invoke('model:hf-cancel', runId),
+    onHfProgress: (callback: (payload: { runId: string; progress: any }) => void) => {
+      const handler = (_: unknown, payload: { runId: string; progress: any }) => callback(payload);
+      ipcRenderer.on('model:hf-progress', handler);
+      return () => {
+        ipcRenderer.removeListener('model:hf-progress', handler);
+      };
+    },
+    /** 「試す」: 実機と同じ C# を ONNX Runtime で動かす。途中経過は onTryLine に届く */
+    try: (runId: string, projectPath: string | undefined, request: unknown) =>
+      ipcRenderer.invoke('model:try', { runId, projectPath, request }),
+    cancelTry: (runId: string) => ipcRenderer.invoke('model:try-cancel', runId),
+    onTryLine: (callback: (payload: { runId: string; line: any }) => void) => {
+      const handler = (_: unknown, payload: { runId: string; line: any }) => callback(payload);
+      ipcRenderer.on('model:try-line', handler);
+      return () => {
+        ipcRenderer.removeListener('model:try-line', handler);
+      };
+    },
   },
 
   // Unity連携
   vision: {
     /** パイプラインを1枚の画像に流し、各ステップの結果を返す */
-    preview: (pipeline: unknown, image: { width: number; height: number; rgba: Uint8Array }) =>
-      ipcRenderer.invoke('vision:preview', { pipeline, image }),
+    preview: (
+      pipeline: unknown,
+      image: { width: number; height: number; rgba: Uint8Array },
+      options?: {
+        models?: unknown[];
+        projectPath?: string;
+        frames?: Array<{ width: number; height: number; rgba: Uint8Array }>;
+        focus?: number;
+        fps?: number;
+        probe?: { index: number; ops: unknown[] };
+      },
+    ) => ipcRenderer.invoke('vision:preview', { pipeline, image, ...(options ?? {}) }),
+  },
+
+  // 端末への配布 (adb)
+  device: {
+    /** つながっている端末を並べる */
+    list: () => ipcRenderer.invoke('device:list'),
+    /** ビルドした APK を入れる */
+    install: (serial: string, apkPath: string) => ipcRenderer.invoke('device:install', { serial, apkPath }),
+    onInstallLog: (callback: (line: string) => void) => {
+      const handler = (_: unknown, line: string) => callback(line);
+      ipcRenderer.on('device:install-log', handler);
+      return () => {
+        ipcRenderer.removeListener('device:install-log', handler);
+      };
+    },
   },
 
   unity: {

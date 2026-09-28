@@ -220,6 +220,15 @@ The editor provides four main views:
 - Connect data sources to UI elements
 - Event handling and state management
 
+#### 5. Vision Editor
+Build image-recognition behaviour from general steps (colour, edges, masks, blobs, tracking across frames,
+events, rectangles, repaint, …) or from a trained **ONNX model** (classification / detection / segmentation),
+watching each step on photos, a video, or frames pulled from the running device. Results go onto the real
+world: labels or objects placed where things were found, painted overlays, events for scripts, values for UI.
+Models run on the device GPU through the Unity Inference Engine; the editor preview runs the same C# code
+through ONNX Runtime. See `doc/14-classic-vision.md`, `doc/15-models-and-ir-versions.md`, and the samples
+`products/CountAndLabel`, `products/MotionAlarm`.
+
 ### Adding Assets
 
 #### Import 3D Models

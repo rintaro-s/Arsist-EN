@@ -245,6 +245,19 @@ const API_SECTIONS = [
     ],
   },
   {
+    label: 'model',
+    color: '#c586c0',
+    items: [
+      { sig: "model.generate(name, prompt, { onToken }, cb)", desc: "script.modelGenerateDesc" },
+      { sig: "model.embed(name, text, cb)", desc: "script.modelEmbedDesc" },
+      { sig: "model.similarity(a, b)", desc: "script.modelSimilarityDesc" },
+      { sig: "model.classifyText(name, text, cb)", desc: "script.modelClassifyDesc" },
+      { sig: "model.runImage(name, cb)", desc: "script.modelRunImageDesc" },
+      { sig: "model.run(name, inputs, cb)", desc: "script.modelRunDesc" },
+      { sig: "model.stop(name) / model.list()", desc: "script.modelStopDesc" },
+    ],
+  },
+  {
     label: 'log / error',
     color: '#9e9e9e',
     items: [

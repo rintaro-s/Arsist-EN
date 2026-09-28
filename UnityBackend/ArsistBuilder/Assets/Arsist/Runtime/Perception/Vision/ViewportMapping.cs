@@ -56,6 +56,22 @@ namespace Arsist.Runtime.Perception.Vision
         /// ここを width/2 で済ませると、画の端が半画素ぶんずれる。
         /// 返す値はカメラ座標 (右 +x, 上 +y, 前 +z)。
         /// </summary>
+        /// <summary>
+        /// 正規化した画素位置 (0..1、原点左下、blobs / infer の x, y) を、カメラ座標の方向にする。
+        /// 画素の中心が 0..width-1 にあり、正規化は centroid / width なので u = nx * width。
+        /// 返す方向は正規化しない (z = 1)。呼び出し側が距離を掛ける。
+        /// </summary>
+        public static void RayFromNormalized(
+            CameraIntrinsics k, int width, int height, double nx, double ny,
+            out double dx, out double dy, out double dz)
+        {
+            double u = nx * width;
+            double v = ny * height;
+            dx = (u - k.Cx) / k.Fx;
+            dy = (v - k.Cy) / k.Fy;
+            dz = 1.0;
+        }
+
         public static void PlaneExtents(
             CameraIntrinsics k, int width, int height, double distance,
             out double left, out double right, out double bottom, out double top)

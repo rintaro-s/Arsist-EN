@@ -3,10 +3,10 @@ const path = require('path');
 
 // Use the same compiled entrypoint Electron uses (dist/main/main/*)
 const { UnityBuilder } = require(path.join('..', 'dist', 'main', 'main', 'unity', 'UnityBuilder'));
-// perception ブロックは自前で組まず、エディタと同じ generateUnityManifest から取る。
-// ここに写しを置くと必ず本体から取り残される (実際、ターゲット0個+タスクありの
-// プロジェクトを丸ごと落とす古いゲートが残っていた)。
-const { generateUnityManifest } = require(path.join('..', 'dist', 'main', 'bridge', 'UnityBridge'));
+// マニフェストは自前で組まず、エディタのビルド画面と同じ generateBuildManifest を使う。
+// ここに写しを置くと必ず本体から取り残される (ターゲット0個+タスクありのプロジェクトを
+// 丸ごと落とす古いゲートや、models が抜けた写しが実際にあった)。
+const { generateBuildManifest } = require(path.join('..', 'dist', 'main', 'bridge', 'UnityBridge'));
 const { getConfigStorePath } = require(path.join(__dirname, 'lib', 'config-path'));
 
 function readJson(p) {
@@ -65,28 +65,16 @@ function pickFirstExisting(paths) {
   const unityWorkDir = path.join(outputPath, 'TempUnityProject');
   const manualLicenseFile = process.env.ARSIST_MANUAL_LICENSE_FILE;
 
-  const { remoteInput, ...androidBuild } = project.buildSettings || {};
   const selectedTargetDevice = process.env.ARSIST_TARGET_DEVICE || project.targetDevice || 'XREAL_One';
   const scripts = project.scripts || [];
   const hasActiveScripts = scripts.some((sc) => sc.enabled);
+  // マニフェストはエディタのビルド画面と同じ組み立てを使う。写しを置くと必ず取り残される
+  // (実際、ビルド画面の写しから models と perception が抜けていた)。
   const manifestData = {
-    projectId: project.id,
-    projectName: project.name,
-    version: project.version,
-    appType: project.appType,
-    targetDevice: selectedTargetDevice,
-    arSettings: project.arSettings,
+    ...generateBuildManifest(project, { targetDevice: selectedTargetDevice }),
     uiAuthoring: project.uiAuthoring,
     uiCode: project.uiCode,
-    designSystem: project.designSystem,
-    build: androidBuild,
-    buildSettings: project.buildSettings,
-    remoteInput,
     scripting: { enabled: hasActiveScripts },
-    // 画像アンカーと認識タスク。ビューポートだけを見るタスクは追跡対象を必要としないので、
-    // ターゲットの有無でゲートしてはいけない。判断は generateUnityManifest 側に任せる。
-    perception: generateUnityManifest(project).perception,
-    exportedAt: new Date().toISOString(),
   };
   const scriptsData = {
     version: '1.0',

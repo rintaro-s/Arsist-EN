@@ -665,6 +665,37 @@ namespace Arsist.Runtime.Network
                 case "ping":
                     return new { pong = true, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
 
+                // エディタの Vision タブ用: 実機が直近に処理した画を取り込む
+                case "getperceptiontasks":
+                {
+                    var runner = Perception.ArsistPerceptionTaskRunner.Instance;
+                    return new { tasks = runner != null ? runner.TaskIds() : new List<string>() };
+                }
+
+                case "getperceptionsnapshot":
+                {
+                    var runner = Perception.ArsistPerceptionTaskRunner.Instance;
+                    if (runner == null) { errorMsg = "No perception tasks in this app"; return null; }
+                    var taskId = p.taskId ?? p.id;
+                    if (string.IsNullOrEmpty(taskId))
+                    {
+                        var ids = runner.TaskIds();
+                        if (ids.Count == 0) { errorMsg = "No perception tasks"; return null; }
+                        taskId = ids[0];
+                    }
+                    var jpeg = runner.SnapshotJpeg(taskId, out int width, out int height, out double age);
+                    if (jpeg == null) { errorMsg = $"Task '{taskId}' has not captured a frame yet"; return null; }
+                    return new
+                    {
+                        taskId,
+                        width,
+                        height,
+                        ageSeconds = age,
+                        jpegBase64 = Convert.ToBase64String(jpeg),
+                        values = DataFlow.ArsistDataStore.Instance != null ? DataFlow.ArsistDataStore.Instance.GetValue(taskId) : null,
+                    };
+                }
+
                 default:
                     errorMsg = $"Unknown query method: {cmd.method}";
                     return null;
@@ -940,6 +971,7 @@ namespace Arsist.Runtime.Network
             public float? distance;       // viewer.placeInFront 用: ユーザーからの距離[m]
             public bool? faceUser;        // viewer.placeInFront 用: ユーザーに正対させるか
             public string code;
+            public string taskId;         // query.getPerceptionSnapshot 用
             /// <summary>type="batch" のときに実行するサブコマンド列。</summary>
             public List<RemoteCommand> commands;
         }

@@ -8,8 +8,8 @@
  * 実機に持っていく前に落とせる間違いは、ここで落としたい。ビルドは通るのに
  * 何も起きないアプリが出来上がるのが、一番デバッグしにくい。
  */
-import type { VisionPipeline } from '../../shared/types';
-import { OP_BY_NAME, SOURCE_NAME, type VisionValueKind } from './opCatalog';
+import type { ModelDefinition, VisionPipeline } from '../../shared/types';
+import { OP_BY_NAME, SOURCE_NAME, canBypass, outputKindOf, type VisionValueKind } from './opCatalog';
 
 export interface PipelineProblem {
   /** 問題のある op / output の id。全体の問題なら undefined */
@@ -18,7 +18,7 @@ export interface PipelineProblem {
 }
 
 /** 各値名がその時点で何型かを返す。UI の結線候補にも使う。 */
-export function inferTypes(pipeline: VisionPipeline): Map<string, VisionValueKind> {
+export function inferTypes(pipeline: VisionPipeline, models: ModelDefinition[] = []): Map<string, VisionValueKind> {
   const types = new Map<string, VisionValueKind>([[SOURCE_NAME, 'color']]);
   let previous = SOURCE_NAME;
 
@@ -33,13 +33,14 @@ export function inferTypes(pipeline: VisionPipeline): Map<string, VisionValueKin
     }
     if (!wired) continue;
 
-    types.set(op.out, definition.output);
+    // 外した op は素通し: 出力は最初の入力そのもの
+    types.set(op.out, op.disabled && canBypass(op, models) ? types.get(inputs[0])! : outputKindOf(op, models));
     previous = op.out;
   }
   return types;
 }
 
-export function validatePipeline(pipeline: VisionPipeline): PipelineProblem[] {
+export function validatePipeline(pipeline: VisionPipeline, models: ModelDefinition[] = []): PipelineProblem[] {
   const problems: PipelineProblem[] = [];
   if (!pipeline.ops || pipeline.ops.length === 0) {
     return [{ message: 'empty' }];
@@ -90,7 +91,26 @@ export function validatePipeline(pipeline: VisionPipeline): PipelineProblem[] {
     }
     if (!wired) continue;
 
-    types.set(op.out, definition.output);
+    if (op.op === 'infer') {
+      // モデルの参照は結線と同じくらい壊れやすい (消したモデルを指したまま残る)。
+      // 型だけは登録して、後ろの op まで連鎖して赤くならないようにする。
+      const id = op.params?.model;
+      if (typeof id !== 'string' || !id) {
+        problems.push({ opId: op.id, message: 'modelNotSet' });
+      } else if (!models.some((m) => m.id === id)) {
+        problems.push({ opId: op.id, message: `modelMissing:${id}` });
+      } else if ((models.find((m) => m.id === id)?.use ?? 'image') !== 'image') {
+        // 文章・テンソルのモデルはスクリプト (model.*) で使うもの。画は流せない。
+        problems.push({ opId: op.id, message: `modelNotImage:${models.find((m) => m.id === id)?.name ?? id}` });
+      }
+    }
+
+    if (op.disabled && !canBypass(op, models)) {
+      // 型が変わる op は外せない (後ろの一手が受け取るものが無くなる)
+      problems.push({ opId: op.id, message: 'cannotBypass' });
+    }
+
+    types.set(op.out, op.disabled && canBypass(op, models) ? types.get(inputs[0])! : outputKindOf(op, models));
     seen.add(op.out);
     previous = op.out;
   }
@@ -106,7 +126,11 @@ export function validatePipeline(pipeline: VisionPipeline): PipelineProblem[] {
       continue;
     }
 
-    if (output.kind === 'world' || output.kind === 'image') {
+    if (output.kind === 'anchor') {
+      if (kind !== 'blobs' && kind !== 'quads') {
+        problems.push({ message: `outputNotAnchorable:${output.value}:${kind}` });
+      }
+    } else if (output.kind === 'world' || output.kind === 'image') {
       if (kind !== 'color') {
         problems.push({ message: `outputNotDrawable:${output.value}:${kind}` });
       }

@@ -458,6 +458,11 @@ internal static class Program
         _failures += GyroChecks.Run();
         _failures += PhoneCameraChecks.Run();
         _failures += FramePacingChecks.Run();
+        _failures += ModelChecks.Run();
+        _failures += FrameBudgetChecks.Run();
+        _failures += TemporalChecks.Run();
+        _failures += InferenceChecks.Run();
+        _failures += DataStoreChecks.Run();
 
         Console.WriteLine(_failures == 0 ? "\nALL CHECKS PASSED" : $"\n{_failures} CHECK(S) FAILED");
         return _failures == 0 ? 0 : 1;
