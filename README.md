@@ -1,476 +1,199 @@
 # Arsist Engine
 
-Arsist is a cross-platform development engine for AR glasses. Built with Electron and React, the editor provides integrated editing of scenes, UI, and logic, generating device-ready applications through Unity batch builds.
+**AR グラス向けのアプリを、コードを書かずに作って、そのまま実機に流し込むための開発環境です。**
 
-## Table of Contents
+令和八年度AKATSUKIに採択され、開発しているプロジェクトです。
+基礎的な部分は[こちら](https://github.com/rintaro-s/Arsist) で定義され、それの英語バージョンで作成したこちらがどんどん発展している状況です。
+基本、**新機能はブランチ切って開発し、一段落するまでmainに戻さないため**最新を置いたい場合は[ブランチ一覧](https://github.com/rintaro-s/Arsist-EN/branches) を見て下さい。
 
-- [Requirements](#requirements)
-- [Quick Start](#quick-start)
-- [SDK Setup](#sdk-setup)
-- [Project Structure](#project-structure)
-- [Usage Guide](#usage-guide)
-- [Building Applications](#building-applications)
-- [Device Adapters](#device-adapters)
-- [Scripting](#scripting)
-- [Troubleshooting](#troubleshooting)
+画面を並べ、動きを決め、ビルドを押す。出てくるのは Unity 製のネイティブ APK です。
+XREAL でも Meta Quest でも Android スマホでも、**同じプロジェクト 1 つ**から同じ動きのアプリが出ます。
 
-## Requirements
+```
+    デスクトップのエディタ                    実機
+ ┌──────────────────────┐          ┌──────────────────┐
+ │ 空間に UI を置く       │          │  Meta Quest      │
+ │ 3D / VRM を置く        │  ビルド  │  XREAL One       │
+ │ 動きをスクリプトで書く  │ ───────► │  Android スマホ   │
+ │ AI モデルを載せる       │   APK    │                  │
+ └──────────────────────┘          └──────────────────┘
+          ▲                                  │
+          └──────── 実機のログがその場で返る ───┘
+```
 
-### Development Environment
+---
 
-- **Node.js**: 18 or higher
-- **Unity**: **6000.0.40f1** (the version the Unity template is pinned to — see `UnityBackend/ArsistBuilder/ProjectSettings/ProjectVersion.txt`). Newer Unity 6 patch releases generally work; older LTS lines (2022.3 etc.) may require opening/upgrading the template project first.
-- **XREAL SDK**: 3.1.0 or higher
-- **Meta Quest SDK**: Core package (`com.meta.xr.sdk.core-*.tgz`)
-- **UniVRM**: 0.131.0 or higher (for VRM avatar support)
+## 何ができるのか
 
+### 空間に UI を置ける
 
-### Supported Target Devices
+パネル・文字・ボタン・スライダー・ゲージ・グラフ・入力欄を並べるだけ。置き方は 2 つあります。
 
-- XREAL One / One Pro
-- Meta Quest (Quest 2, Quest 3, Quest Pro)
+- **空間に固定** — その場に留まる板。近づける・横から覗ける
+- **視界に固定 (HUD)** — 頭を動かしても同じ位置
 
-## Quick Start
+**コントローラーのレイ / ハンドトラッキングのピンチ / 視線で見つめて押す / 画面タッチ** のどれでも操作できます。
+当たり判定はエンジン内で 1 本化されているので、「Quest では押せるのにスマホでは押せない」が起きません。
 
-### 1. Clone and Install
+### 文字が打てる
+
+入力欄を押すと、**その端末が持っているキーボード**が開きます。Quest ならシステムキーボードのオーバーレイ、
+XREAL やスマホなら Android の入力方式 — つまり**日本語入力・音声入力・予測変換がそのまま使えます**。
+持っていない端末では、アプリの中のキーボードが自動で出ます。
+
+### AI モデルを載せられる (ローカル推論)
+
+ONNX を取り込めば、そのままアプリに同梱されます。**Hugging Face から直接引っ張ってこられます**
+(リポジトリを指定 → q4 / fp16 などの精度を選ぶ → ダウンロード)。
+
+| 用途 | できること |
+|---|---|
+| `text` | **LLM をヘッドセット上で動かす**。チャット、要約、分類。トークナイザ・KV キャッシュ・生成まで内蔵 |
+| `image` | 物体検出・分類を画像処理のパイプラインに差し込む |
+| `tensor` | 入出力を自分で組み立てて叩く |
+
+実機では **2 つの推論系**を自動で使い分けます。Unity の Inference Engine (GPU) と、**APK に同梱する ONNX Runtime** (CPU)。
+最近の LLM の書き出しは Unity のインポータが受け付けない演算子を使うため、そういうモデルは自動で後者に回ります。
+**Qwen3.5-0.8B (q4) を Quest 3 の実機で動かして、日本語で返答するところまで確認済みです。**
+
+スクリプトからは 1 行です。
+
+```js
+model.generate(found.id, question, {
+  onToken: function (piece, textSoFar) { store.set('chat.answer', textSoFar); }
+}, function (r) { store.set('chat.answer', r.text); });
+```
+
+### 現実を見て反応できる (画像認識)
+
+写真を 1 枚登録すれば**画像アンカー**になり、その上に UI や 3D を貼れます。
+さらに、カメラ映像に対する処理を**一手ずつ積む**形で組み立てられます。
+
+```
+grayscale → canny → contours → quads → rectify → infer → track → countitems → event
+```
+
+使える手は 40 種類以上。色で抜く (`hsvrange`)、輪郭を拾う (`contours`)、四角形を正対化する (`rectify`)、
+テンプレートで探す (`templatematch`)、動きを拾う (`motion`)、見つけた物を追う (`track`)、数える (`countitems`)、
+ちらつきを抑える (`stabilize`)、立ち上がりでイベントを鳴らす (`event`) など。
+**端末内 OCR** (日本語/英数) も入っています。クラウドには一切送りません。
+
+エンジンは汎用の手だけを用意します。「空を検出するモード」のような特定アプリ専用の機能は入れません
+— **ユーザーが自分で組めることが前提**です。
+
+### 動きはスクリプトで
+
+JavaScript (Jint) が実機で走ります。ボタンや入力欄の確定、起動時、一定間隔、認識イベントで発火します。
+
+```js
+api      // HTTP (GET/POST, ヘッダ付き)
+ui       // UI の操作・表示切り替え
+store    // 値の置き場。UI の bind と双方向につながる
+scene    // 3D オブジェクトの出し入れ・移動
+vrm      // VRM アバターの表情・ポーズ
+model    // ローカル推論 (生成・分類・テンソル)
+perception // 認識結果の読み取り
+remote   // 外部からの遠隔操作
+log      // 実機ログ (PC で受け取れる)
+```
+
+### 3D / アバター
+
+GLB / glTF をそのまま置けます。**VRM** も読み込めて、表情やポーズをスクリプトから動かせます。
+
+---
+
+## 作ってすぐ実機に入れる
+
+- **ビルドしてインストール** — ボタン 1 つ。つないである端末を一覧から選べます (`adb` は Unity 同梱のものを自動で探します)
+- **実機ログが LAN で返る** — `npm run logs`。`adb` のケーブルも不要。`log()` の出力もエンジンの診断もここに流れます
+- **ビルドは完全に自動** — Unity のヘッドレス起動、XR 設定、マニフェスト、必要なパッケージの出し入れまでエンジンがやります
+
+```bash
+npm run logs        # 実機のログを受ける
+npm run logs -- --for 20
+```
+
+---
+
+## 作例
+
+`products/` に、このエンジンで実際に組んだものが入っています。
+
+| | 何をするか |
+|---|---|
+| **ArsistAIChat** | パススルー + ハンドトラッキングで AI と話す。Quest 向け |
+| **CountAndLabel** | 見つける → 追いかける → 数える → 現実に札を置く → 知らせる |
+| **MotionAlarm** | 動いたところを拾って、動き始めに鳴らす |
+| **BlueSky** | マスクを作って塗り、現実に重ねる (技術デモ) |
+| **VirtualReal** | VRChat で動いているアバターを、AR グラス側で VRM として同じように動かす |
+
+---
+
+## 使い始める
+
+### 必要なもの
+
+- **Node.js** 18 以上
+- **Unity 6000.0.40f1** (テンプレートが固定している版。Unity 6 の新しいパッチ版でもおおむね動きます)
+- **XREAL SDK** 3.1.0 以上 / **Meta Quest SDK** (`com.meta.xr.sdk.core-*.tgz`) / **UniVRM** 0.131.0 以上
+  — 使う端末のものだけでかまいません
+- 端末: XREAL One / One Pro、Meta Quest 2 / 3 / 3S / Pro、Android スマホ
+
+SDK はライセンス上このリポジトリに含められないので、リポジトリ直下の `sdk/` に自分で置きます。
+使う端末のものだけ入れればよく、入っていないものは自動で飛ばします。
+
+```
+sdk/
+├── com.xreal.xr/package/              XREAL SDK (XREAL を使うなら)
+├── quest/com.meta.xr.sdk.core-*.tgz   Meta Quest SDK (Quest を使うなら)
+├── nupkg/jint.*.nupkg                 スクリプトエンジン (必須)
+├── UniVRM-*.unitypackage              VRM を使うなら
+└── JKG-M3.unitypackage / JKG-M_3.ttf  日本語フォント (日本語を表示するなら)
+```
+
+### 起動
 
 ```bash
 git clone https://github.com/rintaro-s/Arsist-EN.git
 cd Arsist-EN
 npm install
-```
-
-### 2. Set Up SDKs (see [SDK Setup](#sdk-setup) below)
-
-### 3. Launch the Editor
-
-```bash
 npm run dev
 ```
 
-The Arsist Editor will open. You can now create your first AR project!
+エディタが開きます。新規プロジェクトを作って、UI を置いて、ビルドを押すだけです。
 
-## SDK Setup
+---
 
-The `sdk/` directory at the repository root must contain all required SDKs and dependencies. Follow these steps carefully:
+## 設計の方針
 
-### Directory Structure
+- **プロジェクトは 1 つの IR (`project.json`)**。端末ごとの差は「アダプタ」が吸収します。同じプロジェクトを
+  Quest に出してもスマホに出しても、同じ動きになることを前提に作っています
+- **IR には版がある**。形が変わるときは版を上げて移行を書きます。古いプロジェクトは勝手に書き換えません
+  (読み取り専用で開き、アップグレードを訊きます)
+- **頭の追跡や描画は自分で作らない**。XREAL と Meta のそれぞれの Unity SDK に任せます。エンジンが持つのは
+  「作る仕組み」です
+- **実機でしか分からない失敗を、机の上で捕まえる**。姿勢推定・画像処理・トークナイザ・生成は UnityEngine に
+  依存しない形で書いてあり、Unity 無しで数値検証できます
 
-Your `sdk/` folder should look like this:
-
-```
-sdk/
-├── com.xreal.xr/
-│   └── package/
-│       ├── package.json
-│       ├── Runtime/
-│       ├── Editor/
-│       └── ...
-├── quest/
-│   ├── com.meta.xr.sdk.core-XX.X.X.tgz
-│   ├── com.meta.xr.mrutilitykit-XX.X.X.tgz (optional)
-│   └── Unity-InteractionSDK-Samples/ (optional, for bootstrap)
-├── nupkg/
-│   ├── jint.X.X.X.nupkg
-│   └── esprima.X.X.X.nupkg
-├── UniVRM-0.131.0_3b99.unitypackage
-├── JKG-M3.unitypackage
-└── JKG-M_3.ttf
-```
-
-### 1. XREAL SDK Setup
-
-**For XREAL One / XREAL Air 2 development:**
-
-1. Download XREAL SDK 3.1.0+ from [XREAL Developer Portal](https://developer.xreal.com/)
-2. Extract the UPM package to `sdk/com.xreal.xr/package/`
-3. Verify `sdk/com.xreal.xr/package/package.json` exists
-
-**Verification:**
-- Open Arsist Editor → Settings (Ctrl+,) → SDK (XREAL) section
-- Status should show "OK" with detected version
-
-### 2. Meta Quest SDK Setup
-
-**For Meta Quest development:**
-
-1. Download Meta XR All-in-One SDK from [Meta Developer Portal](https://developer.oculus.com/)
-2. Extract and locate these `.tgz` files:
-   - `com.meta.xr.sdk.core-XX.X.X.tgz` (required)
-   - `com.meta.xr.mrutilitykit-XX.X.X.tgz` (optional)
-3. Place them in `sdk/quest/`
-
-(Downloading in .tgz format may be difficult.)
-
-**Optional - Quest Sample Bootstrap:**
-- If you have Unity-InteractionSDK-Samples, place the entire folder in `sdk/quest/`
-- This provides XR settings and configurations that will be auto-applied
-
-**Verification:**
-- Open Arsist Editor → Settings → SDK (Quest) section
-- Core package status should show "OK"
-
-### 3. UniVRM Setup
-
-**For VRM avatar support:**
-
-1. Download UniVRM from [VRM Consortium](https://github.com/vrm-c/UniVRM/releases)
-2. Place `UniVRM-0.131.0_3b99.unitypackage` in `sdk/`
-
-### 4. Font Package Setup
-
-**For Japanese text rendering (optional):**
-
-https://font.cutegirl.jp/jk-font-medium.html
-
-1. Place `JKG-M3.unitypackage` in `sdk/`
-2. Place `JKG-M_3.ttf` in `sdk/`
-
-### 5. Jint Scripting Engine Setup
-
-**For JavaScript runtime in Unity:**
-
-1. Download Jint and Esprima NuGet packages
-2. Place in `sdk/nupkg/`:
-   - `jint.X.X.X.nupkg`
-   - `esprima.X.X.X.nupkg`
-
-**How to get NuGet packages:**
 ```bash
-# Using NuGet CLI
-nuget install Jint -OutputDirectory sdk/nupkg
-nuget install Esprima -OutputDirectory sdk/nupkg
+npm test                 # エディタ側 (183 件)
+npm run test:perception  # 幾何・画像処理・ジャイロ・推論 (Unity 不要)
+npm run build            # エディタのビルド
 ```
 
-### SDK Status Check
+---
 
-After setup, verify all SDKs in the editor:
-1. Launch Arsist: `npm run dev`
-2. Open Settings (Ctrl+, or File → Settings)
-3. Check SDK status sections for green "OK" indicators
+## 状態
 
-## Project Structure
+動作確認済み: Quest 3 実機でのローカル LLM 応答、端末キーボードでの日本語入力、空間 Canvas の表示、
+コントローラー / 視線 / タッチでの操作、画像認識パイプライン、OCR、ビルドから実機インストールまで。
 
-```
-Arsist-EN/
-├── src/
-│   ├── main/              # Electron main process
-│   │   ├── main.ts        # Application entry point
-│   │   ├── unity/         # Unity build integration
-│   │   ├── adapters/      # Device adapter management
-│   │   └── preload.ts     # IPC bridge
-│   ├── renderer/          # React UI (Editor)
-│   │   ├── components/    # UI components
-│   │   ├── stores/        # State management (Zustand)
-│   │   └── App.tsx        # Main application
-│   ├── bridge/            # Unity conversion layer
-│   └── shared/            # Shared type definitions
-├── UnityBackend/          # Unity project template
-│   ├── Assets/
-│   │   ├── Arsist/        # Core runtime scripts
-│   │   ├── Scripts/       # Generated scripts
-│   │   └── Resources/     # Runtime resources
-│   └── ProjectSettings/
-├── Adapters/              # Device adapters
-│   ├── XREAL_One/         # XREAL One adapter
-│   └── Meta_Quest/        # Meta Quest adapter
-├── sdk/                   # SDKs (see SDK Setup)
-├── docs/                  # Documentation
-├── package.json           # Node.js dependencies
-└── README.md              # This file
-```
+開発中: 一部のアダプタ機能 (XREAL の 6DoF 周り)、大きなモデルの速度、UI の作り込み。
+うまく動かないときは `npm run logs` に理由が出るようにしてあります。
 
-## Usage Guide
+詳しい作りは [CODEMAP.md](CODEMAP.md) と [`doc/`](doc/) にあります (`00-overview` … `16-models-beyond-vision`)。
 
-### Creating a New Project
+## ライセンス
 
-1. Launch Arsist Editor: `npm run dev`
-2. Click "New Project" or press Ctrl+N
-3. Choose a template:
-   - **3D AR Scene**: 6DoF tracking, spatial 3D objects
-   - **2D Floating Screen**: 3DoF tracking, fixed 2D display
-   - **Head-Locked HUD**: Head-locked UI overlay
-4. Configure project name and location
-5. Select target device (XREAL One or Meta Quest)
-6. Click "Create Project"
-
-### Editor Interface
-
-The editor provides four main views:
-
-#### 1. Scene View (3D)
-- Place and manipulate 3D objects in AR space
-- Configure object properties (position, rotation, scale)
-- Set up AR tracking features (planes, images)
-
-#### 2. UI Editor (2D)
-- Figma-like visual UI editor
-- Drag-and-drop UI components
-- Real-time preview
-- Responsive layout tools
-
-#### 3. Script Editor
-- Write JavaScript logic for your app
-- Syntax highlighting with Monaco Editor
-- Auto-completion and IntelliSense
-- Access to Arsist API
-
-#### 4. Data Flow Editor
-- Visual programming with node graph
-- Connect data sources to UI elements
-- Event handling and state management
-
-#### 5. Vision Editor
-Build image-recognition behaviour from general steps (colour, edges, masks, blobs, tracking across frames,
-events, rectangles, repaint, …) or from a trained **ONNX model** (classification / detection / segmentation),
-watching each step on photos, a video, or frames pulled from the running device. Results go onto the real
-world: labels or objects placed where things were found, painted overlays, events for scripts, values for UI.
-Models run on the device GPU through the Unity Inference Engine; the editor preview runs the same C# code
-through ONNX Runtime. See `doc/14-classic-vision.md`, `doc/15-models-and-ir-versions.md`, and the samples
-`products/CountAndLabel`, `products/MotionAlarm`.
-
-### Adding Assets
-
-#### Import 3D Models
-1. File → Import Asset → 3D Model
-2. Supported formats: `.glb`, `.gltf`, `.fbx`, `.obj`
-3. Models appear in Assets panel
-
-#### Import VRM Avatars
-1. File → Import Asset → VRM Avatar
-2. Select `.vrm` file
-3. Avatar appears in Assets panel with animation controls
-
-#### Import Textures/Images
-1. File → Import Asset → Texture
-2. Supported formats: `.png`, `.jpg`, `.jpeg`
-
-### Scripting Your App
-
-Arsist uses JavaScript for application logic. Scripts run in Unity via Jint.
-
-**Example: Button Click Handler**
-
-```javascript
-// In Script Editor
-function onButtonClick() {
-  console.log("Button clicked!");
-  UI.setText("statusText", "Hello AR World!");
-}
-
-// Bind to UI button
-UI.onClick("myButton", onButtonClick);
-```
-
-**Example: Update Loop**
-
-```javascript
-function update(deltaTime) {
-  // Rotate object continuously
-  var rotation = Scene.getRotation("myObject");
-  rotation.y += 45 * deltaTime;
-  Scene.setRotation("myObject", rotation);
-}
-
-// Register update callback
-Scene.onUpdate(update);
-```
-
-See `docs/scripting-api.md` for complete API reference.
-
-### Saving Your Project
-
-- Auto-save: Enabled by default (every 2 minutes)
-- Manual save: Ctrl+S or File → Save
-- Save As: Ctrl+Shift+S or File → Save As
-
-## Building Applications
-
-> **Packaging the editor itself** (`npm run package`) bundles the `sdk/` directory as an extra resource
-> (see `package.json` → `build.extraResources`). Because `sdk/` is gitignored and user-supplied, it **must exist**
-> before you run `npm run package`, otherwise electron-builder will fail or ship an empty resource. Populate `sdk/`
-> per [SDK Setup](#sdk-setup) first.
-
-### Build Configuration
-
-1. Open Build Dialog: Ctrl+B or Build → Build Settings
-2. Configure:
-   - **Unity Path**: Path to the Unity 6000.0.40f1 executable (matches the pinned template)
-   - **Target Device**: XREAL One or Meta Quest
-   - **Output Path**: Where to save the APK
-   - **Development Build**: Enable for debugging
-
-### Build Process
-
-1. Click "Start Build" in Build Dialog
-2. Arsist will:
-   - Export your project to Unity format
-   - Embed required SDKs (XREAL or Quest)
-   - Apply device-specific patches
-   - Invoke Unity batch build
-   - Generate APK file
-
-**Build Output:**
-```
-OutputPath/
-├── TempUnityProject/      # Temporary Unity project
-├── YourApp.apk            # Final APK (Android)
-└── build.log              # Build log
-```
-
-### Installing on Device
-
-**XREAL One (via Beam Pro):**
-```bash
-adb install YourApp.apk
-```
-
-**Meta Quest:**
-```bash
-adb install YourApp.apk
-# Enable developer mode on Quest first
-```
-
-### Build Troubleshooting
-
-**Unity License Error:**
-- Open Unity Hub and sign in
-- Activate license for this PC
-- Launch Unity Editor once manually (for first-time activation)
-
-**SDK Not Found:**
-- Check Settings → SDK status
-- Verify `sdk/` directory structure
-- Restart Arsist Editor
-
-**Build Fails:**
-- Check Build Log in Build Dialog
-- Verify Unity version (6000.0.40f1, matching `ProjectVersion.txt`)
-- Ensure Android SDK/NDK configured in Unity
-
-## Device Adapters
-
-Adapters are located in `Adapters/` and provide device-specific configurations.
-
-### XREAL One Adapter
-
-**Location:** `Adapters/XREAL_One/`
-
-**Features:**
-- 6DoF tracking
-- Plane detection
-- Image tracking
-- Spatial mapping
-- Gesture recognition
-
-**Configuration:**
-- Graphics API: OpenGLES3 only
-- Architecture: ARM64
-- Scripting Backend: IL2CPP
-- Target FPS: 60
-
-See `Adapters/XREAL_One/README.md` for details.
-
-### Meta Quest Adapter
-
-**Location:** `Adapters/Meta_Quest/`
-
-**Features:**
-- 6DoF tracking
-- Hand tracking
-- Passthrough AR
-- Guardian system integration
-
-**Configuration:**
-- Graphics API: Vulkan (preferred) or OpenGLES3
-- Architecture: ARM64
-- Scripting Backend: IL2CPP
-
-See `Adapters/Meta_Quest/README.md` for details.
-
-## Scripting
-
-### Arsist JavaScript API
-
-Arsist provides a JavaScript API for controlling your AR app:
-
-**Scene API:**
-```javascript
-Scene.createObject("cube", "myCube");
-Scene.setPosition("myCube", {x: 0, y: 1, z: 2});
-Scene.setRotation("myCube", {x: 0, y: 45, z: 0});
-Scene.setScale("myCube", {x: 1, y: 1, z: 1});
-Scene.destroy("myCube");
-```
-
-**UI API:**
-```javascript
-UI.setText("label1", "Hello World");
-UI.getText("label1");
-UI.setVisible("panel1", true);
-UI.onClick("button1", handleClick);
-```
-
-**Data API:**
-```javascript
-Data.set("score", 100);
-Data.get("score");
-Data.increment("score", 10);
-```
-
-**Network API:**
-```javascript
-Network.get("https://api.example.com/data", function(response) {
-  console.log(response);
-});
-
-Network.post("https://api.example.com/submit", {
-  name: "John",
-  score: 100
-}, function(response) {
-  console.log(response);
-});
-```
-
-See `docs/scripting-api.md` for complete documentation.
-
-## Troubleshooting
-
-### Editor Won't Start
-- Check Node.js version: `node --version` (should be 18+)
-- Delete `node_modules/` and run `npm install` again
-- Check console for errors
-
-### Build Fails with "SDK Not Found"
-- Verify SDK directory structure matches [SDK Setup](#sdk-setup)
-- Check Settings → SDK status in editor
-- Ensure `package.json` exists in SDK folders
-
-### App Crashes on Device
-- Enable Development Build for debugging
-- Check `adb logcat` for crash logs
-- Verify device firmware is up to date
-- Ensure APK is signed properly
-
-### Performance Issues
-- Reduce polygon count (< 100k per scene)
-- Use texture compression (ASTC)
-- Limit draw calls (< 100)
-- Enable Single Pass Stereo Rendering
-- Reduce dynamic lights
-
-### VRM Avatars Not Loading
-- Verify UniVRM package in `sdk/`
-- Check VRM file version compatibility
-- Ensure VRM file is not corrupted
-
-## Documentation
-
-Comprehensive documentation is available in the `docs/` folder:
-
-- `docs/architecture.md` - System architecture overview
-- `docs/scripting-api.md` - Complete JavaScript API reference
-- `docs/scripting-guide.md` - Scripting tutorials and examples
-- `docs/vrm-integration-guide.md` - VRM avatar integration
-- `docs/samples/` - Sample projects and tutorials
-- `docs/complete-usage-guide.md` - Detailed usage guide
+[LICENSE](LICENSE) を参照。同梱する第三者のソフトウェアについては [ThirdPartyLicenses.txt](ThirdPartyLicenses.txt)。
