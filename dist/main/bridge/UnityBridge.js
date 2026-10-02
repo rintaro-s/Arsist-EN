@@ -295,6 +295,9 @@ function generateBuildManifest(project, overrides = {}) {
         remoteInput,
         designSystem: project.designSystem,
         scenes: project.scenes,
+        // 有効にした拡張機能とその設定 (IR のまま)。どれが実際にビルドに入るかは、端末のタグと
+        // sdk/ の中身を見て UnityBuilder.planExtensions が決め、manifest.json の extensions に書く。
+        projectExtensions: project.extensions ?? {},
         exportedAt: new Date().toISOString(),
     };
 }

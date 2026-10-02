@@ -11,11 +11,7 @@ interface BuildDialogProps {
   onClose: () => void;
 }
 
-interface DeviceOption {
-  id: string;
-  name: string;
-  available: boolean;
-}
+import { useDeviceOptions, type DeviceOption } from '../../extensions/useDeviceOptions';
 
 /**
  * 背景モードを選べるのはビデオシースルー機だけ。
@@ -42,7 +38,7 @@ function supportsHandTracking(deviceId: string): boolean {
 
 const DEFAULT_INTERACTION: InteractionSettings = { controllerRay: true, handTracking: false };
 
-const devices: DeviceOption[] = [
+const BASE_DEVICES: DeviceOption[] = [
   { id: 'XREAL_One', name: 'XREAL One (Beam Pro)', available: true },
   { id: 'Meta_Quest', name: 'Meta Quest', available: true },
   { id: 'Android_Phone', name: 'Android スマホ (ジャイロ)', available: true },
@@ -60,6 +56,8 @@ interface ConnectedDevice {
 
 export function BuildDialog({ onClose }: BuildDialogProps) {
   const t = useT();
+  // 同梱の端末 + 拡張機能が足した端末
+  const devices = useDeviceOptions(BASE_DEVICES);
   const { project, projectPath, exportScriptBundle, saveProject, isDirty, updateARSettings } = useProjectStore();
   const { 
     isBuilding, 

@@ -1,264 +1,133 @@
-import { useState, useEffect } from 'react';
+/**
+ * 外部の AI エージェントに Arsist の MCP サーバーを登録する画面。
+ *
+ * 旧版はエディタの中で MCP サーバーを起動していたが、stdio の MCP サーバーはエージェントの側が起動するもの
+ * (そのうえ Electron を Node として起こせていなかった)。今は:
+ *   - エージェントごとに、その設定ファイルへワンクリックで登録 / 更新 / 削除 (src/main/mcp/agentTargets.ts)
+ *   - どのクライアントにも貼れる JSON と、起動コマンドをコピー
+ *   - エージェントと同じ起動の仕方で、サーバーが動くかを試す
+ */
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Server, Power, Copy, X, CheckCircle2, AlertCircle } from 'lucide-react';
-import { useProjectStore } from '../../stores/projectStore';
+import { X, Server, Copy, Check, Play, CheckCircle2, AlertCircle, Circle } from 'lucide-react';
 import { useT } from '../../i18n';
+import { useProjectStore } from '../../stores/projectStore';
+import type { McpAgentsInfo } from '../../ai/types';
 
-interface MCPDialogProps {
-  onClose: () => void;
-}
-
-interface MCPStatus {
-  enabled: boolean;
-  running: boolean;
-  config?: {
-    transport: string;
-    projectPath: string;
-    tools: number;
-  };
-}
-
-interface MCPClientConfig {
-  success: boolean;
-  message?: string;
-  config?: {
-    description: string;
-    json: any;
-  };
-}
-
-export function MCPDialog({ onClose }: MCPDialogProps) {
+export function MCPDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
-  const { project } = useProjectStore();
-  const [status, setStatus] = useState<MCPStatus>({ enabled: false, running: false });
-  const [clientConfig, setClientConfig] = useState<MCPClientConfig | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { project, projectPath } = useProjectStore();
+  const [includeProject, setIncludeProject] = useState(Boolean(projectPath));
+  const [info, setInfo] = useState<McpAgentsInfo | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; warn?: boolean } | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const api = window.electronAPI?.mcp;
 
-  const refreshStatus = async () => {
-    if (!window.electronAPI?.mcp) return;
-    try {
-      const result = await window.electronAPI.mcp.getStatus();
-      setStatus(result);
+  const refresh = async () => setInfo((await api?.agents(includeProject)) ?? null);
+  useEffect(() => { void refresh(); }, [includeProject]);
 
-      if (result.enabled && result.running) {
-        const configResult = await window.electronAPI.mcp.getClientConfig();
-        setClientConfig(configResult);
-      } else {
-        setClientConfig(null);
-      }
-    } catch (error) {
-      console.error('Failed to get MCP status:', error);
-    }
+  const act = async (id: string, action: 'register' | 'unregister') => {
+    if (!api) return;
+    setBusy(id);
+    const r = action === 'register' ? await api.register(id, includeProject) : await api.unregister(id);
+    setMessage({ text: r.message, warn: !r.ok });
+    setBusy(null);
+    await refresh();
   };
 
-  useEffect(() => {
-    refreshStatus();
-  }, []);
-
-  const handleStart = async () => {
-    if (!window.electronAPI?.mcp || !project?.path) {
-      setMessage({ type: 'error', text: t('mcp.projectNotLoaded') });
-      return;
-    }
-
-    setIsLoading(true);
-    setMessage(null);
-
-    try {
-      const result = await window.electronAPI.mcp.start(project.path);
-      if (result.success) {
-        setMessage({ type: 'success', text: t('mcp.serverStarted') });
-        await refreshStatus();
-      } else {
-        setMessage({ type: 'error', text: result.message || t('mcp.startFailed') });
-      }
-    } catch (error) {
-      setMessage({ type: 'error', text: t('mcp.errorPrefix', { error: (error as Error).message }) });
-    } finally {
-      setIsLoading(false);
-    }
+  const copy = async (key: string, text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1500);
   };
 
-  const handleStop = async () => {
-    if (!window.electronAPI?.mcp) return;
-
-    setIsLoading(true);
-    setMessage(null);
-
-    try {
-      const result = await window.electronAPI.mcp.stop();
-      if (result.success) {
-        setMessage({ type: 'success', text: t('mcp.serverStopped') });
-        await refreshStatus();
-      } else {
-        setMessage({ type: 'error', text: result.message || t('mcp.stopFailed') });
-      }
-    } catch (error) {
-      setMessage({ type: 'error', text: t('mcp.errorPrefix', { error: (error as Error).message }) });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCopyConfig = () => {
-    if (!clientConfig?.config?.json) return;
-
-    const configText = JSON.stringify(clientConfig.config.json, null, 2);
-    navigator.clipboard.writeText(configText).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  const selfTest = async () => {
+    if (!api) return;
+    setBusy('self-test');
+    const r = await api.selfTest(includeProject);
+    setBusy(null);
+    setMessage(r.ok
+      ? { text: t('mcp2.selfTestOk', { tools: r.tools ?? 0, ms: r.ms ?? 0 }) }
+      : { text: t('mcp2.selfTestFailed', { error: [r.error, r.stderr].filter(Boolean).join(' — ') }), warn: true });
   };
 
   const dialog = (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-arsist-surface border border-arsist-border rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-arsist-border">
-          <div className="flex items-center gap-2">
-            <Server size={18} className="text-arsist-accent" />
-            <h2 className="text-base font-semibold text-arsist-text">{t('mcp.title')}</h2>
-          </div>
-          <button onClick={onClose} className="p-1 hover:bg-arsist-hover rounded transition-colors text-arsist-muted">
-            <X size={18} />
-          </button>
+    <div className="modal-overlay" style={{ zIndex: 1000 }}>
+      <div className="modal max-w-2xl w-full">
+        <div className="modal-header flex items-center gap-2">
+          <Server size={18} className="text-arsist-accent" />
+          <span className="flex-1">{t('mcp2.title')}</span>
+          <button className="btn btn-ghost p-1" onClick={onClose}><X size={16} /></button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* Status */}
-          <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-arsist-text">{t('mcp.serverStatus')}</h3>
-              <div className={`flex items-center gap-2 text-xs font-medium px-2 py-1 rounded ${
-                status.running ? 'bg-green-500/10 text-green-400' : 'bg-arsist-hover text-arsist-muted'
-              }`}>
-                <div className={`w-2 h-2 rounded-full ${status.running ? 'bg-green-400' : 'bg-arsist-muted'}`} />
-                {status.running ? t('mcp.running') : t('mcp.stopped')}
-              </div>
-            </div>
+        <div className="modal-body space-y-4 max-h-[70vh] overflow-y-auto">
+          <p className="text-xs text-arsist-muted leading-relaxed">{t('mcp2.intro')}</p>
 
-            {status.config && (
-              <div className="space-y-2 text-xs text-arsist-muted">
-                <div className="flex items-center justify-between">
-                  <span>{t('mcp.transport')}</span>
-                  <span className="text-arsist-text font-mono">{status.config.transport}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>{t('mcp.tools')}</span>
-                  <span className="text-arsist-text font-mono">{status.config.tools}</span>
-                </div>
-                <div className="flex items-start justify-between gap-2">
-                  <span className="flex-shrink-0">{t('mcp.project')}</span>
-                  <span className="text-arsist-text font-mono text-right break-all">{status.config.projectPath}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Control Buttons */}
-            <div className="mt-4 flex gap-2">
-              {!status.running ? (
-                <button
-                  onClick={handleStart}
-                  disabled={isLoading || !project}
-                  className="btn btn-success text-xs px-3 py-1.5 flex items-center gap-1.5"
-                >
-                  <Power size={14} />
-                  {t('mcp.start')}
-                </button>
-              ) : (
-                <button
-                  onClick={handleStop}
-                  disabled={isLoading}
-                  className="btn btn-danger text-xs px-3 py-1.5 flex items-center gap-1.5"
-                >
-                  <Power size={14} />
-                  {t('mcp.stop')}
-                </button>
-              )}
-            </div>
-
-            {/* Message */}
-            {message && (
-              <div className={`mt-3 p-2 rounded-lg text-xs flex items-start gap-2 ${
-                message.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-              }`}>
-                {message.type === 'success' ? <CheckCircle2 size={14} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />}
-                <span>{message.text}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Client Configuration */}
-          {status.running && clientConfig?.config && (
-            <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-arsist-text">{t('mcp.clientConfiguration')}</h3>
-                <button
-                  onClick={handleCopyConfig}
-                  className="text-xs px-2 py-1 bg-arsist-hover hover:bg-arsist-active rounded transition-colors flex items-center gap-1.5 text-arsist-muted hover:text-arsist-text"
-                >
-                  {copied ? <CheckCircle2 size={12} className="text-green-400" /> : <Copy size={12} />}
-                  {copied ? t('mcp.copied') : t('common.copy')}
-                </button>
-              </div>
-
-              <p className="text-xs text-arsist-muted mb-3">{clientConfig.config.description}</p>
-
-              <div className="bg-arsist-surface border border-arsist-border rounded p-3 font-mono text-xs text-arsist-text overflow-x-auto">
-                <pre>{JSON.stringify(clientConfig.config.json, null, 2)}</pre>
-              </div>
-            </div>
+          {projectPath ? (
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" className="accent-arsist-accent" checked={includeProject} onChange={(e) => setIncludeProject(e.target.checked)} />
+              {t('mcp2.includeProject', { name: project?.name ?? projectPath })}
+            </label>
+          ) : (
+            <p className="text-xs text-arsist-muted">{t('mcp2.noProject')}</p>
           )}
 
-          {/* Tools List */}
-          {status.running && (
-            <div className="bg-arsist-bg border border-arsist-border rounded-lg p-4">
-              <h3 className="text-sm font-medium text-arsist-text mb-3">{t('mcp.availableTools', { count: 17 })}</h3>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {[
-                  'ir_get_project',
-                  'ir_import_model_asset',
-                  'ir_place_model',
-                  'ir_list_scene_objects',
-                  'ir_update_object_transform',
-                  'ir_remove_scene_object',
-                  'ir_add_canvas_object',
-                  'ir_add_ui_element',
-                  'ir_update_ui_element',
-                  'ir_remove_ui_element',
-                  'ir_list_ui_layouts',
-                  'ir_add_datasource',
-                  'ir_update_datasource',
-                  'ir_remove_datasource',
-                  'ir_add_transform',
-                  'ir_update_transform',
-                  'ir_remove_transform',
-                ].map((tool) => (
-                  <div key={tool} className="bg-arsist-surface border border-arsist-border rounded px-2 py-1 font-mono text-arsist-muted">
-                    {tool}
+          <div className="rounded-lg bg-arsist-bg/50 divide-y divide-arsist-border/30">
+            {(info?.agents ?? []).map((a) => (
+              <div key={a.id} className="flex items-center gap-3 px-3 py-2">
+                {a.status === 'registered' ? <CheckCircle2 size={15} className="text-arsist-success shrink-0" />
+                  : a.status === 'outdated' || a.status === 'unreadable' ? <AlertCircle size={15} className="text-arsist-warning shrink-0" />
+                  : <Circle size={15} className="text-arsist-muted shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm">
+                    {a.name}
+                    <span className={`ml-2 text-[10px] ${a.detected ? 'text-arsist-success' : 'text-arsist-muted'}`}>{a.detected ? t('mcp2.detected') : t('mcp2.notDetected')}</span>
                   </div>
-                ))}
+                  <div className="text-[10px] text-arsist-muted truncate" title={a.detail ?? a.configPath ?? ''}>
+                    {t(`mcp2.status.${a.status}`)} · {a.via === 'cli' ? 'claude mcp' : a.configPath}
+                  </div>
+                </div>
+                {a.status !== 'notRegistered' && a.status !== 'unreadable' && (
+                  <button className="btn btn-ghost text-xs py-1" disabled={busy !== null} onClick={() => { void act(a.id, 'unregister'); }}>{t('mcp2.remove')}</button>
+                )}
+                <button className="btn btn-secondary text-xs py-1" disabled={busy !== null || a.status === 'unreadable'} onClick={() => { void act(a.id, 'register'); }}>
+                  {a.status === 'registered' || a.status === 'outdated' ? t('mcp2.update') : t('mcp2.add')}
+                </button>
               </div>
-            </div>
-          )}
-
-          {/* Info */}
-          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
-            <p className="font-medium mb-1">{t('mcp.aboutTitle')}</p>
-            <p className="text-blue-200/80">
-              {t('mcp.aboutBody')}
-            </p>
+            ))}
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="border-t border-arsist-border px-4 py-3 flex justify-end">
-          <button onClick={onClose} className="btn btn-secondary text-xs px-4 py-1.5">
-            {t('common.close')}
-          </button>
+          {message && <p className={`text-xs break-all ${message.warn ? 'text-arsist-warning' : 'text-arsist-success'}`}>{message.text}</p>}
+
+          <div className="space-y-2">
+            <p className="text-xs text-arsist-muted">{t('mcp2.otherAgents')}</p>
+            <pre className="text-[10px] font-mono bg-arsist-bg/60 rounded-lg p-2 max-h-40 overflow-auto whitespace-pre-wrap break-all">{info?.json}</pre>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn btn-secondary text-xs py-1" onClick={() => { if (info) void copy('json', info.json); }}>
+                {copied === 'json' ? <Check size={12} /> : <Copy size={12} />}{copied === 'json' ? t('mcp2.copied') : t('mcp2.copyJson')}
+              </button>
+              <button className="btn btn-secondary text-xs py-1" onClick={() => { if (info) void copy('cmd', info.commandLine); }}>
+                {copied === 'cmd' ? <Check size={12} /> : <Copy size={12} />}{copied === 'cmd' ? t('mcp2.copied') : t('mcp2.copyCommand')}
+              </button>
+              <button className="btn btn-secondary text-xs py-1" disabled={busy !== null} onClick={() => { void selfTest(); }}>
+                <Play size={12} />{t('mcp2.selfTest')}
+              </button>
+            </div>
+          </div>
+
+          <details className="text-xs">
+            <summary className="cursor-pointer text-arsist-muted">{t('mcp2.toolsTitle', { count: info?.tools.length ?? 0 })}</summary>
+            <ul className="mt-2 space-y-1">
+              {(info?.tools ?? []).map((tool) => (
+                <li key={tool.name} className="text-[11px]">
+                  <span className="font-mono text-arsist-text">{tool.name}</span>
+                  {tool.readOnly && <span className="ml-1 text-[10px] text-arsist-muted">({t('mcp2.readOnlyTool')})</span>}
+                  <span className="block text-arsist-muted">{tool.description}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
         </div>
       </div>
     </div>

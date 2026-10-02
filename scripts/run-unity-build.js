@@ -89,6 +89,9 @@ function pickFirstExisting(paths) {
   ]);
 
   const builder = new UnityBuilder(unityPath);
+  // 自分で入れた拡張機能 (エディタの「インポート」の入れ先 = <ユーザーデータ>/extensions)。
+  // ARSIST_EXTENSIONS_DIR で別の場所を指せる (検証用の隔離した置き場など)。
+  builder.setExtensionUserDir(process.env.ARSIST_EXTENSIONS_DIR || path.join(path.dirname(storePath), 'extensions'));
   builder.on('progress', (p) => console.log(`[progress] ${p.phase} ${p.progress}% ${p.message}`));
   builder.on('log', (l) => console.log(l));
 

@@ -1,3 +1,9 @@
+/** アダプターがどこから来たか */
+export interface AdapterOrigin {
+    folder: string;
+    source: 'builtin' | 'extension';
+    extensionId?: string;
+}
 export interface DeviceAdapter {
     id: string;
     name: string;
@@ -39,13 +45,15 @@ export declare class AdapterManager {
     constructor();
     private static resolveAdaptersDir;
     /**
-     * 利用可能なすべてのアダプターを取得
+     * 利用可能なすべてのアダプター (エンジン同梱 + 拡張機能が足した端末)。
+     * adapter.json の中身に、どこから来たか (folder / source / extensionId) を添えて返す。
      */
-    listAdapters(): Promise<DeviceAdapter[]>;
+    listAdapters(): Promise<Array<DeviceAdapter & AdapterOrigin>>;
     /**
-     * 特定のアダプターを取得
+     * 特定のアダプターを取得 (名前は targetDevice。型番付きでも当たる: src/shared/adapterNames.ts)。
+     * 拡張機能の端末は入れ替わることがあるので、覚えておかずに毎回探す。
      */
-    getAdapter(adapterId: string): Promise<DeviceAdapter | null>;
+    getAdapter(adapterId: string): Promise<(DeviceAdapter & AdapterOrigin) | null>;
     /**
      * 新しいアダプターを登録
      */

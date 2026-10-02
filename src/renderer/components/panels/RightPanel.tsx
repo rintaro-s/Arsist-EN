@@ -11,6 +11,7 @@ import type { Vector3, UIElement, UIStyle, DataSourceDefinition, TransformDefini
 import { Box, Compass, Layout, Database, Activity, Wifi, User } from 'lucide-react';
 import { ScriptInspector } from '../viewport/ScriptEditor';
 import { PerceptionTargetInspector, PerceptionTaskInspector, ObjectAnchorSection } from './PerceptionInspector';
+import { ObjectExtensionsSection, ProjectExtensionsSection } from './ExtensionsSection';
 import { useT } from '../../i18n';
 
 export function RightPanel() {
@@ -107,6 +108,9 @@ function ProjectARSettings() {
             </p>
           </div>
         )}
+
+        {/* Extensions (Extensions/<id>/extension.json) */}
+        <ProjectExtensionsSection />
 
       </div>
     </div>
@@ -254,6 +258,9 @@ function ObjectInspector() {
 
         {/* Image anchor */}
         <ObjectAnchorSection object={obj} />
+
+        {/* Extensions: per-object options (ext.<id>) */}
+        <ObjectExtensionsSection object={obj} />
 
         {/* VRM Capabilities (shown only for VRM type) */}
         {obj.type === 'vrm' && <VRMCapabilitiesPanel assetId={obj.assetId} modelPath={obj.modelPath} />}

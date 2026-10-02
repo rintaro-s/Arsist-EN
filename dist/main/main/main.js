@@ -46,10 +46,15 @@ const fs = __importStar(require("fs-extra"));
 const crypto_1 = require("crypto");
 const os = __importStar(require("os"));
 const electron_store_1 = __importDefault(require("electron-store"));
-const child_process_1 = require("child_process");
 const UnityBuilder_1 = require("./unity/UnityBuilder");
 const ProjectManager_1 = require("./project/ProjectManager");
 const AdapterManager_1 = require("./adapters/AdapterManager");
+const catalogService_1 = require("./extensions/catalogService");
+const packages_1 = require("./extensions/packages");
+const ExtensionCatalog_1 = require("./extensions/ExtensionCatalog");
+const aiIpc_1 = require("./ipc/aiIpc");
+const projectWatcher_1 = require("./project/projectWatcher");
+const adapterTags_1 = require("../shared/adapterTags");
 const assets_1 = require("../shared/assets");
 const childProcesses_1 = require("./platform/childProcesses");
 const paths_1 = require("./platform/paths");
@@ -111,12 +116,7 @@ function shutdownBackgroundWork() {
     catch {
         // 止められなくても、下の killAllChildren で木ごと落とす
     }
-    try {
-        stopMCPServer();
-    }
-    catch {
-        // 同上
-    }
+    projectWatcher.close();
     if ((0, childProcesses_1.trackedCount)() > 0) {
         console.log(`[Arsist] Closing: stopping ${(0, childProcesses_1.trackedCount)()} background process(es): ${(0, childProcesses_1.trackedLabels)().join(', ')}`);
     }
@@ -124,9 +124,10 @@ function shutdownBackgroundWork() {
 }
 let adapterManager = null;
 let currentProjectPathForAssets = null;
-let mcpServerProcess = null;
-let mcpServerEnabled = false;
-let mcpServerPort = 0; // stdio transport なので不要だが、情報として保持
+// 開いているプロジェクトが外 (エージェント等) で変わったら、レンダラに知らせて読み直してもらう
+const projectWatcher = new projectWatcher_1.ProjectWatcher((projectPath, files) => {
+    mainWindow?.webContents.send('project:external-change', { projectPath, files });
+});
 const isDev = process.env.NODE_ENV === 'development';
 function getAppLang() {
     try {
@@ -749,11 +750,13 @@ electron_1.ipcMain.handle('project:create', async (_, options) => {
     if (!projectManager) {
         projectManager = new ProjectManager_1.ProjectManager();
     }
+    projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
     const res = await projectManager.createProject(options);
     if (res?.success) {
         const projectDir = path.join(options.path, options.name);
         currentProjectPathForAssets = projectDir;
         updateRecentProjects(projectDir);
+        projectWatcher.watch(projectDir);
     }
     return res;
 });
@@ -761,10 +764,12 @@ electron_1.ipcMain.handle('project:load', async (_, projectPath) => {
     if (!projectManager) {
         projectManager = new ProjectManager_1.ProjectManager();
     }
+    projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
     const res = await projectManager.loadProject(projectPath);
     if (res?.success) {
         currentProjectPathForAssets = projectPath;
         updateRecentProjects(projectPath);
+        projectWatcher.watch(projectPath);
     }
     return res;
 });
@@ -949,6 +954,7 @@ electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => {
     if (configuredSdkDir && configuredSdkDir.trim()) {
         unityBuilder.setSdkDir(configuredSdkDir.trim());
     }
+    unityBuilder.setExtensionUserDir((0, catalogService_1.getUserExtensionsDir)());
     return await unityBuilder.build({
         ...buildConfig,
         unityVersion: buildConfig?.unityVersion || unityVersion,
@@ -994,6 +1000,90 @@ electron_1.ipcMain.handle('adapters:apply-patch', async (_, adapterId, projectPa
         adapterManager = new AdapterManager_1.AdapterManager();
     }
     return await adapterManager.applyPatch(adapterId, projectPath);
+});
+// 拡張機能 (Extensions/<id>/)。一覧と、端末のタグ (どの拡張機能がその端末で動くかを画面で示すため)。
+electron_1.ipcMain.handle('extensions:list', async (_, targetDevice) => {
+    try {
+        const catalog = await (0, catalogService_1.getExtensionCatalog)(true);
+        let deviceTags = [];
+        if (targetDevice) {
+            if (!adapterManager)
+                adapterManager = new AdapterManager_1.AdapterManager();
+            deviceTags = (0, adapterTags_1.adapterTags)(await adapterManager.getAdapter(targetDevice));
+        }
+        return {
+            success: true,
+            extensions: catalog.extensions.map((e) => ({ manifest: e.manifest, source: e.source, dir: e.dir, overrides: e.overrides })),
+            problems: (0, ExtensionCatalog_1.describeCatalogProblems)(catalog),
+            deviceTags,
+            userDir: (0, catalogService_1.getUserExtensionsDir)(),
+        };
+    }
+    catch (error) {
+        return { success: false, error: error.message, extensions: [], problems: [], deviceTags: [] };
+    }
+});
+// 拡張機能を入れる。kind: 'package' (.arsist を選ぶ) / 'folder' (フォルダを選ぶ) / path を直接。
+// 同じ id が入っていれば needsConfirm を返すので、画面で確かめてから force: true でもう一度呼ぶ。
+async function runInstall(source, force) {
+    const userDir = (0, catalogService_1.getUserExtensionsDir)();
+    if (!userDir)
+        return { ok: false, error: 'not ready' };
+    const catalog = await (0, catalogService_1.getExtensionCatalog)(true);
+    const result = await (0, packages_1.installExtension)(source, userDir, {
+        force,
+        installedVersionOf: (id) => catalog.extensions.find((e) => e.manifest.id === id)?.manifest.version ?? null,
+    });
+    (0, catalogService_1.invalidateExtensionCatalog)();
+    return { ...result, source };
+}
+electron_1.ipcMain.handle('extensions:import', async (_, kind) => {
+    const options = kind === 'folder'
+        ? { properties: ['openDirectory'], title: 'Extension folder (contains extension.json)' }
+        : { properties: ['openFile'], filters: [{ name: 'Arsist extension', extensions: [packages_1.PACKAGE_EXTENSION.slice(1), 'zip'] }] };
+    const picked = mainWindow ? await electron_1.dialog.showOpenDialog(mainWindow, options) : await electron_1.dialog.showOpenDialog(options);
+    if (picked.canceled || picked.filePaths.length === 0)
+        return { ok: false, canceled: true };
+    return runInstall(picked.filePaths[0], false);
+});
+electron_1.ipcMain.handle('extensions:install', async (_, source, force) => runInstall(source, force === true));
+electron_1.ipcMain.handle('extensions:uninstall', async (_, id) => {
+    const userDir = (0, catalogService_1.getUserExtensionsDir)();
+    if (!userDir)
+        return { ok: false, error: 'not ready' };
+    const result = await (0, packages_1.uninstallExtension)(id, userDir);
+    (0, catalogService_1.invalidateExtensionCatalog)();
+    return result;
+});
+// 拡張機能を .arsist に書き出す (配るため)
+electron_1.ipcMain.handle('extensions:export', async (_, id) => {
+    const catalog = await (0, catalogService_1.getExtensionCatalog)(true);
+    const ext = catalog.extensions.find((e) => e.manifest.id === id);
+    if (!ext)
+        return { ok: false, error: `"${id}" is not installed` };
+    const saveOptions = {
+        defaultPath: `${ext.manifest.id}-${ext.manifest.version}${packages_1.PACKAGE_EXTENSION}`,
+        filters: [{ name: 'Arsist extension', extensions: [packages_1.PACKAGE_EXTENSION.slice(1)] }],
+    };
+    const saved = mainWindow ? await electron_1.dialog.showSaveDialog(mainWindow, saveOptions) : await electron_1.dialog.showSaveDialog(saveOptions);
+    if (saved.canceled || !saved.filePath)
+        return { ok: false, canceled: true };
+    try {
+        const packed = await (0, packages_1.packExtension)(ext.dir, saved.filePath);
+        return { ok: true, file: packed.file, files: packed.files, bytes: packed.bytes };
+    }
+    catch (error) {
+        return { ok: false, error: error.message };
+    }
+});
+// 自分の拡張機能を置くフォルダを開く (無ければ作る)
+electron_1.ipcMain.handle('extensions:open-user-dir', async () => {
+    const dir = (0, catalogService_1.getUserExtensionsDir)();
+    if (!dir)
+        return { success: false, error: 'not ready' };
+    await fs.ensureDir(dir);
+    const error = await electron_1.shell.openPath(dir);
+    return error ? { success: false, error } : { success: true, path: dir };
 });
 // ファイルシステム操作
 electron_1.ipcMain.handle('fs:read-file', async (_, filePath) => {
@@ -1261,150 +1351,15 @@ electron_1.ipcMain.handle('store:set', async (_, key, value) => {
     return { success: true };
 });
 // ========================================
-// MCP サーバー管理
+// MCP (外部のエージェントへの登録)・内蔵エージェント・プロジェクトの書き出し / 読み込み
 // ========================================
-function startMCPServer(projectPath) {
-    return new Promise((resolve) => {
-        if (mcpServerProcess) {
-            resolve({ success: false, message: 'MCP server is already running' });
-            return;
-        }
-        try {
-            const scriptPath = isDev
-                ? path.join(process.cwd(), 'scripts', 'mcp-ir-server.mjs')
-                : path.join(process.resourcesPath, 'scripts', 'mcp-ir-server.mjs');
-            // Node.js パスを取得（Electron内蔵のNode.jsを使用）
-            const nodePath = process.execPath; // Electronの実行ファイル
-            const args = [scriptPath];
-            // 環境変数で stdio transport を使う
-            const env = {
-                ...process.env,
-                MCP_PROJECT_PATH: projectPath,
-            };
-            mcpServerProcess = (0, childProcesses_1.trackChild)((0, child_process_1.spawn)(nodePath, args, (0, childProcesses_1.longRunningOptions)({
-                env,
-                stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
-            })), 'MCP server', true);
-            mcpServerProcess.on('error', (err) => {
-                mcpServerEnabled = false;
-                mcpServerProcess = null;
-                resolve({ success: false, message: `Failed to start MCP server: ${err.message}` });
-            });
-            mcpServerProcess.on('exit', (code) => {
-                mcpServerEnabled = false;
-                mcpServerProcess = null;
-            });
-            // サーバー起動確認（stderr にログが出る）
-            let startupOutput = '';
-            const startupTimeout = setTimeout(() => {
-                if (mcpServerProcess) {
-                    mcpServerEnabled = true;
-                    resolve({
-                        success: true,
-                        message: 'MCP server started (stdio transport)',
-                        config: {
-                            transport: 'stdio',
-                            command: nodePath,
-                            args: args,
-                            projectPath: projectPath,
-                            tools: 17, // 現在のツール数
-                            clientSetup: {
-                                description: 'Add the following configuration to your MCP client (e.g., Claude Desktop settings.json):',
-                                config: {
-                                    mcpServers: {
-                                        'arsist-ir': {
-                                            command: nodePath,
-                                            args: args,
-                                            env: {
-                                                MCP_PROJECT_PATH: projectPath,
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    });
-                }
-            }, 500);
-            mcpServerProcess.stderr?.on('data', (data) => {
-                startupOutput += data.toString();
-                if (startupOutput.includes('error') || startupOutput.includes('Error')) {
-                    clearTimeout(startupTimeout);
-                    mcpServerProcess?.kill();
-                    mcpServerProcess = null;
-                    mcpServerEnabled = false;
-                    resolve({ success: false, message: `MCP server startup error: ${startupOutput}` });
-                }
-            });
-        }
-        catch (error) {
-            mcpServerEnabled = false;
-            mcpServerProcess = null;
-            resolve({ success: false, message: `Exception: ${error.message}` });
-        }
-    });
-}
-function stopMCPServer() {
-    if (!mcpServerProcess) {
-        return { success: false, message: 'MCP server is not running' };
-    }
-    try {
-        mcpServerProcess.kill('SIGTERM');
-        mcpServerProcess = null;
-        mcpServerEnabled = false;
-        return { success: true, message: 'MCP server stopped' };
-    }
-    catch (error) {
-        return { success: false, message: `Failed to stop MCP server: ${error.message}` };
-    }
-}
-function getMCPServerStatus() {
-    return {
-        enabled: mcpServerEnabled,
-        running: mcpServerProcess !== null,
-        config: mcpServerEnabled && currentProjectPathForAssets
-            ? {
-                transport: 'stdio',
-                projectPath: currentProjectPathForAssets,
-                tools: 17,
-            }
-            : undefined,
-    };
-}
-electron_1.ipcMain.handle('mcp:start', async (_, projectPath) => {
-    return await startMCPServer(projectPath);
-});
-electron_1.ipcMain.handle('mcp:stop', async () => {
-    return stopMCPServer();
-});
-electron_1.ipcMain.handle('mcp:status', async () => {
-    return getMCPServerStatus();
-});
-electron_1.ipcMain.handle('mcp:get-client-config', async () => {
-    if (!mcpServerEnabled || !currentProjectPathForAssets) {
-        return { success: false, message: 'MCP server is not running' };
-    }
-    const nodePath = process.execPath;
-    const scriptPath = isDev
-        ? path.join(process.cwd(), 'scripts', 'mcp-ir-server.mjs')
-        : path.join(process.resourcesPath, 'scripts', 'mcp-ir-server.mjs');
-    return {
-        success: true,
-        config: {
-            description: 'Add this configuration to your MCP client (e.g., Claude Desktop settings.json on Windows: %APPDATA%\\Claude\\claude_desktop_config.json)',
-            json: {
-                mcpServers: {
-                    'arsist-ir': {
-                        command: nodePath,
-                        args: [scriptPath],
-                        env: {
-                            MCP_PROJECT_PATH: currentProjectPathForAssets,
-                        },
-                    },
-                },
-            },
-        },
-    };
+// 旧実装は MCP サーバーをエディタが常駐させていた (しかも ELECTRON_RUN_AS_NODE 無しで Electron を起こしていた)。
+// stdio の MCP サーバーはエージェントの側が起動するものなので、エディタは登録と自己診断だけを行う。
+(0, aiIpc_1.registerAiIpc)({
+    getMainWindow: () => mainWindow,
+    store: store,
+    getProjectPath: () => currentProjectPathForAssets,
+    isDev,
 });
 // ========================================
 // ウィンドウ操作
@@ -1427,6 +1382,8 @@ electron_1.ipcMain.handle('window:close', () => {
 // アプリライフサイクル
 // ========================================
 electron_1.app.whenReady().then(() => {
+    // ユーザーが自分で置く拡張機能の場所 (同梱のものと同じ id なら、こちらが優先される)
+    (0, catalogService_1.setUserExtensionsDir)(path.join(electron_1.app.getPath('userData'), 'extensions'));
     try {
         electron_1.protocol.registerFileProtocol('arsist-file', (request, callback) => {
             try {

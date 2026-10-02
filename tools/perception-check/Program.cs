@@ -463,6 +463,7 @@ internal static class Program
         _failures += TemporalChecks.Run();
         _failures += InferenceChecks.Run();
         _failures += DataStoreChecks.Run();
+        _failures += QuestInputChecks.Run();
 
         Console.WriteLine(_failures == 0 ? "\nALL CHECKS PASSED" : $"\n{_failures} CHECK(S) FAILED");
         return _failures == 0 ? 0 : 1;

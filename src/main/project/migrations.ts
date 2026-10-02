@@ -9,13 +9,20 @@
  * 移行はひとつ前の版からひとつ次の版へ、順に適用する。各移行は冪等で、
  * 今の版のプロジェクトに掛けても何も変えない (テストで確認している)。
  *
- * 版を上げる手順:
+ * 版を上げる手順 (`npm run ir:new -- "<説明>"` で 1〜3 の雛形が入る):
  *   1. src/shared/irVersion.ts の CURRENT_IR_VERSION を上げる
- *   2. ここに { from, to, id, apply } を足す
- *   3. src/renderer/i18n/strings.ts に `ir.migration.<to>` の説明を足す
- *   4. migrations.test.ts に「古い形 → 新しい形」の確認を足す
+ *   2. MIGRATIONS の末尾に defineMigration(<新しい版>, { ops: [...] }) を足す。
+ *      項目の追加・改名・削除・値の言い換えは ops (src/shared/irOps.ts) で 1 行ずつ書ける。
+ *      それで書けない変更だけ apply に関数で書く。
+ *   3. src/renderer/i18n/strings.ts に `ir.migration.<新しい版>` の説明を足す
+ *   4. 形の変わる例を migrations.test.ts に足す
+ * 版の抜け・冪等性・説明文の有無は migrations.test.ts が全部の移行について自動で確かめる。
+ *
+ * 拡張機能のデータ (extensions.<id> / 物の ext.<id>) はここでは移行しない。拡張機能ごとに
+ * 自分の版を持ち、extension.json の data.migrations で移行する (src/shared/extensions.ts)。
  */
 import { CURRENT_IR_VERSION, readIrVersion } from '../../shared/irVersion';
+import { applyIrOps, type IrOp } from '../../shared/irOps';
 import { createARSettings, createInitialDataFlow, migrateAppType, PROJECT_TEMPLATES } from './defaults';
 
 /** 何でも入る project.json の素の形。型を付けるのは移行が終わってから。 */
@@ -31,6 +38,32 @@ export interface IrMigration {
    * 何も変えなかったなら空。ログとアップグレード画面に出す。
    */
   apply: (project: RawProject) => string[];
+}
+
+/**
+ * 1 段の移行を作る。from は to - 1、id は to の文字列で決まる。
+ *
+ *   defineMigration(5, { ops: [
+ *     { op: 'default', path: 'arSettings.foo', value: 1 },
+ *     { op: 'rename', path: 'scenes[].objects[].oldName', to: 'newName' },
+ *   ] })
+ *
+ * ops を先に掛け、そのあと apply (あれば) を呼ぶ。どちらも冪等であること。
+ */
+export function defineMigration(
+  to: number,
+  step: { ops?: IrOp[]; apply?: (project: RawProject) => string[] },
+): IrMigration {
+  if (!Number.isInteger(to) || to < 2) throw new Error(`IR migration target must be >= 2 (got ${to})`);
+  return {
+    from: to - 1,
+    to,
+    id: String(to),
+    apply: (project) => [
+      ...(step.ops?.length ? applyIrOps(project, step.ops) : []),
+      ...(step.apply ? step.apply(project) : []),
+    ],
+  };
 }
 
 export interface MigrationOutcome {
@@ -131,8 +164,11 @@ function migrate2to3(project: RawProject): string[] {
 }
 
 export const MIGRATIONS: IrMigration[] = [
-  { from: 1, to: 2, id: '2', apply: migrate1to2 },
-  { from: 2, to: 3, id: '3', apply: migrate2to3 },
+  defineMigration(2, { apply: migrate1to2 }),
+  defineMigration(3, { apply: migrate2to3 }),
+  // 拡張機能の置き場。中身 (extensions.<id> / 物の ext.<id>) は拡張機能ごとの版で移行する。
+  defineMigration(4, { ops: [{ op: 'default', path: 'extensions', value: {} }] }),
+  // @ir-migrations-end (npm run ir:new はこの行の上に足す)
 ];
 
 // ---- 実行 -----------------------------------------------------------------

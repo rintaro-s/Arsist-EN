@@ -7,6 +7,8 @@
  * ユーザーは C# を一切書かない。
  * ユーザーが扱うのは「UI定義」と「データ定義」のみ。
  */
+import type { ProjectExtensionState } from './extensions';
+export type { ProjectExtensionState } from './extensions';
 export type ProjectTemplate = '3d_ar_scene' | '2d_floating_screen' | 'head_locked_hud';
 export type TrackingMode = '6dof' | '3dof' | 'head_locked';
 export type PresentationMode = 'world_anchored' | 'floating_screen' | 'head_locked_hud';
@@ -668,6 +670,12 @@ export interface SceneObject {
     transform: Transform;
     material?: MaterialData;
     children?: SceneObject[];
+    /**
+     * 拡張機能ごとの指定 (IR v4〜)。キーは拡張機能の id (Extensions/<id>/extension.json)、
+     * 中身はその拡張機能の data.object の項目。エンジン本体は中身を解釈せず、そのまま
+     * Unity に渡す (実機では ArsistObjectExt から引ける)。src/shared/extensions.ts。
+     */
+    ext?: Record<string, Record<string, unknown>>;
 }
 /** 3D空間に配置するUIキャンバスの設定 */
 export interface CanvasSettings {
@@ -839,6 +847,12 @@ export interface ArsistProject {
     perception?: PerceptionSettings;
     /** 画像処理パイプラインの `infer` op が使う学習済みモデル (省略可) */
     models?: ModelDefinition[];
+    /**
+     * 有効にした拡張機能と、その設定 (IR v4〜)。キーは拡張機能の id。
+     * 拡張機能のデータの形は拡張機能ごとに版を持ち (dataVersion)、IR 本体の版とは独立に移行する。
+     * src/shared/extensions.ts / doc/17-extensions.md。
+     */
+    extensions?: Record<string, ProjectExtensionState>;
 }
 export interface BuildConfig {
     targetDevice: string;

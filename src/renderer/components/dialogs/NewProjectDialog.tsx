@@ -4,6 +4,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useT } from '../../i18n';
 import type { ProjectTemplate } from '../../../shared/types';
+import { useDeviceOptions, type DeviceOption } from '../../extensions/useDeviceOptions';
 
 interface NewProjectDialogProps {
   onClose: () => void;
@@ -37,7 +38,7 @@ const templates: TemplateOption[] = [
   },
 ];
 
-const devices = [
+const BASE_DEVICES: DeviceOption[] = [
   { id: 'XREAL_One', name: 'XREAL One', available: true },
   { id: 'Meta_Quest', name: 'Meta Quest', available: true },
   { id: 'Android_Phone', name: 'Android スマホ', available: true },
@@ -48,6 +49,8 @@ const devices = [
 
 export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
   const t = useT();
+  // 同梱の端末 + 拡張機能が足した端末
+  const devices = useDeviceOptions(BASE_DEVICES);
   const { createProject } = useProjectStore();
   const { addNotification } = useUIStore();
   

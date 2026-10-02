@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, FolderOpen, Glasses, Settings2 } from 'lucide-react';
+import { Plus, FolderOpen, Glasses, Settings2, PackageOpen } from 'lucide-react';
+import { importArsistPackage } from '../ai/packageActions';
 import { useProjectStore } from '../stores/projectStore';
 import { useUIStore } from '../stores/uiStore';
 import { useT } from '../i18n';
@@ -88,6 +89,17 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
             </p>
           </button>
         </div>
+
+        <button
+          onClick={() => { void importArsistPackage(t); }}
+          className="w-full mb-6 px-4 py-3 bg-arsist-surface rounded-lg ring-1 ring-transparent hover:ring-arsist-accent/60 transition-all flex items-center gap-3 text-left"
+        >
+          <PackageOpen size={18} className="text-arsist-muted shrink-0" />
+          <div>
+            <div className="text-sm font-medium">{t('pkg.import')}</div>
+            <div className="text-xs text-arsist-muted">{t('welcome.importDesc')}</div>
+          </div>
+        </button>
 
         {recent.length > 0 && (
           <div className="mb-6">

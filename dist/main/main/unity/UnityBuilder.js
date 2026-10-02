@@ -50,6 +50,16 @@ const crypto = __importStar(require("crypto"));
 const paths_1 = require("../platform/paths");
 const childProcesses_1 = require("../platform/childProcesses");
 const assets_1 = require("../../shared/assets");
+const adapterTags_1 = require("../../shared/adapterTags");
+const engineFeatures_1 = require("../../shared/engineFeatures");
+const extensions_1 = require("../../shared/extensions");
+const irVersion_1 = require("../../shared/irVersion");
+const tags_1 = require("../../shared/tags");
+const ExtensionCatalog_1 = require("../extensions/ExtensionCatalog");
+const catalogService_1 = require("../extensions/catalogService");
+const adapterDirs_1 = require("../adapters/adapterDirs");
+const extensions_2 = require("../../shared/extensions");
+const stage_1 = require("../extensions/stage");
 /** arSettings.backgroundMode に許される値（IR の BackgroundMode と対応）。 */
 const BACKGROUND_MODES = ['passthrough', 'skybox', 'solidColor'];
 class UnityBuilder extends events_1.EventEmitter {
@@ -62,6 +72,10 @@ class UnityBuilder extends events_1.EventEmitter {
     preparedAndroidSdkPath = null;
     /** validate() が取得した Unity バージョン文字列（例 "6000.0.40f1"）。パッケージ版数の分岐に使う。 */
     detectedUnityVersion = null;
+    /** ユーザーが自分で置いた拡張機能の場所 (<userData>/extensions)。main.ts が設定する */
+    extensionUserDir = null;
+    /** このビルドで有効な拡張機能 (build() の最初に決まり、transfer と stage が使う) */
+    buildExtensions = null;
     /** 作業ディレクトリ再利用の互換バージョン。準備処理を変えたら上げる（＝全ユーザーが1回だけ作り直す）。 */
     static WORKSPACE_CACHE_VERSION = 1;
     static WORKSPACE_STAMP_FILE = '.arsist-workspace.json';
@@ -162,6 +176,11 @@ class UnityBuilder extends events_1.EventEmitter {
     }
     setUnityPath(unityPath) {
         this.unityPath = unityPath;
+    }
+    setExtensionUserDir(dir) {
+        this.extensionUserDir = dir;
+        // 端末アダプタの一覧 (adapterDirs) も同じ場所を見るように
+        (0, catalogService_1.setUserExtensionsDir)(dir);
     }
     setSdkDir(sdkDir) {
         this.sdkDir = sdkDir;
@@ -400,6 +419,8 @@ class UnityBuilder extends events_1.EventEmitter {
                 }
                 this.emit('log', '[Arsist] Manual license imported successfully. Continuing to build...');
             }
+            // Phase 0.5: 端末のタグ・使っている機能・拡張機能を決める (Unity を起こす前に、ログで全部見えるように)
+            this.buildExtensions = await this.planExtensions(config);
             // Phase 1: Unityワークディレクトリ準備
             this.emitProgress('prepare-unity', 5, 'Unityプロジェクトを準備中...');
             const unityProjectPath = await this.prepareUnityProject(config.projectPath, {
@@ -419,6 +440,9 @@ class UnityBuilder extends events_1.EventEmitter {
             // Phase 3.5: 必須SDKをUnityプロジェクトへ組み込み
             this.emitProgress('sdk', 40, '必須SDKを確認/組み込み中...');
             await this.integrateRequiredSdks(unityProjectPath, config.targetDevice);
+            // Phase 3.52: 拡張機能の C# と Android の宣言を入れる (SDK を入れた後: 拡張機能が SDK を直接使うため)
+            this.emitProgress('extensions', 42, '拡張機能を組み込み中...');
+            await this.stageExtensions(unityProjectPath, this.buildExtensions?.active ?? []);
             // Phase 3.55: Android ツールチェーン設定ファイルを注入
             // Unity はプロジェクト読み込み時に ProjectSettings/AndroidExternalToolsSettings.asset を参照するため
             // プロセス起動前に書き込んでおく必要がある。
@@ -1526,6 +1550,12 @@ class UnityBuilder extends events_1.EventEmitter {
             // IR には持たせず（プロジェクトを他人に渡しても他人のIPが残らないように）、
             // ビルドのたびに現在の LAN アドレスを焼き込む。
             logRelay: this.resolveLogRelay(config.manifestData),
+            // 端末のタグ・使っている機能・このビルドで有効な拡張機能 (実機の ArsistExtensions と
+            // Editor の拡張機能フックが読む)。決め方は planExtensions。
+            deviceTags: this.buildExtensions?.deviceTags ?? [],
+            features: this.buildExtensions?.features ?? [],
+            extensions: (0, stage_1.manifestEntries)(this.buildExtensions?.active ?? []),
+            absentExtensions: this.buildExtensions?.absent ?? [],
         };
         await fs.writeJSON(path.join(dataDir, 'manifest.json'), manifestWithScenes, { spaces: 2 });
         // シーンデータ
@@ -2744,39 +2774,347 @@ class UnityBuilder extends events_1.EventEmitter {
         }
         return { errors, warnings };
     }
+    // ----------------------------------------------------------------
+    // 拡張機能 (Extensions/<id>/) とタグ
+    // ----------------------------------------------------------------
+    /**
+     * このビルドの「端末のタグ」「使っている機能」「入る拡張機能」を決める。
+     *
+     * 端末のタグ = adapter.json (src/shared/adapterTags.ts) + sdk/ に何があるか (sdk:*)。
+     * sdk:* はここでしか分からない (エディタ上では保留にしている) ので、拡張機能の条件は
+     * ここで最終的に確かめる。合わない拡張機能はビルドから外し、理由をログに出す。
+     * 同じプロジェクトを別の端末に出したときに、その端末で動かない拡張機能が外れるのは正常。
+     */
+    async planExtensions(config) {
+        const manifest = config.manifestData;
+        const adapterDir = await this.resolveAdapterDir(config.targetDevice);
+        let deviceTagsFromAdapter = [];
+        if (adapterDir) {
+            try {
+                deviceTagsFromAdapter = (0, adapterTags_1.adapterTags)(await fs.readJSON(path.join(adapterDir, 'adapter.json')));
+            }
+            catch (e) {
+                this.emit('log', `[Arsist] WARNING: could not read ${path.join(adapterDir, 'adapter.json')}: ${e.message}`);
+            }
+        }
+        const sdkTags = await this.detectSdkTags(config.targetDevice);
+        const deviceTags = (0, tags_1.uniqueTags)([...deviceTagsFromAdapter, ...sdkTags]);
+        // 機能の判定には UI の中身とスクリプトが要る (manifest にはレイアウトの名前しか無い)
+        const scriptsData = config.scriptsData;
+        const projectLike = {
+            ...manifest,
+            scenes: config.scenesData,
+            uiLayouts: config.uiData,
+            scripts: Array.isArray(scriptsData?.scripts) ? scriptsData.scripts : [],
+        };
+        const features = (0, engineFeatures_1.projectFeatureTags)(projectLike);
+        this.emit('log', `[Arsist] Device tags (${config.targetDevice}): ${deviceTags.join(' ') || '(none)'}`);
+        this.emit('log', `[Arsist] Features used: ${features.join(' ') || '(none)'}`);
+        for (const issue of (0, engineFeatures_1.unsupportedFeatures)(projectLike, deviceTags)) {
+            this.emit('log', `[Arsist] WARNING: ${issue.feature} (${issue.summary}) is used, but ${config.targetDevice} lacks ${issue.missing.join(' / ')}. ` +
+                'It will not work on this device; the rest of the app is unaffected.');
+        }
+        const projectExtensions = manifest.projectExtensions;
+        // 拡張機能は「有効にしたもの」に加え、「ビルドする端末を提供しているもの」も入る
+        const catalog = await (0, catalogService_1.getExtensionCatalog)(true);
+        for (const line of (0, ExtensionCatalog_1.describeCatalogProblems)(catalog)) {
+            this.emit('log', `[Arsist] WARNING: extension ignored — ${line}`);
+        }
+        const installed = new Map(catalog.extensions.map((e) => [e.manifest.id, e]));
+        const resolution = (0, extensions_1.resolveExtensions)(projectExtensions, catalog.extensions.map((e) => e.manifest), [...deviceTags, ...features], { irVersion: irVersion_1.CURRENT_IR_VERSION, targetDevice: config.targetDevice });
+        // 入っていない・古い拡張機能は、ビルドを止める (エディタで開くときと同じ規則。
+        // 外して続けると、その拡張機能に頼った動きが黙って消えた APK ができる)。
+        const fatal = resolution.skipped.filter((s) => s.reason === 'notInstalled' || s.reason === 'dataTooNew' || s.reason === 'engineTooOld');
+        if (fatal.length > 0) {
+            throw new Error('This project needs extensions that are not usable here:\n' +
+                fatal.map((s) => `- ${s.id}: ${s.detail ?? s.reason}`).join('\n') +
+                '\nImport them (editor: right panel → Extensions → Import, or npm run ext:install -- <file.arsist|folder>).');
+        }
+        const absent = [];
+        for (const skip of resolution.skipped) {
+            if (skip.reason === 'disabled')
+                continue;
+            const why = skip.reason === 'unsupported'
+                ? `${config.targetDevice} does not have ${skip.missing?.join(' / ')} (${skip.detail})`
+                : skip.detail ?? skip.reason;
+            this.emit('log', `[Arsist] WARNING: extension '${skip.id}' is enabled but left out of this build: ${why}`);
+            const globals = installed.get(skip.id)?.manifest.script?.globals ?? [];
+            if (globals.length > 0)
+                absent.push({ id: skip.id, globals, reason: `not in this ${config.targetDevice} build (${why})` });
+        }
+        const active = resolution.active.map((a) => ({ ...a, dir: installed.get(a.manifest.id).dir }));
+        // 拡張機能が名乗る feature:* (例: quest-input の feature:text-input) は「このアプリが使う機能」に足す。
+        // エンジンはこの一覧を見て、システムキーボードや手の宣言をマニフェストに入れる
+        // (ArsistBuildPipeline.ManifestUsesFeature)。入力欄が無くても、拡張機能が文字入力を使えるように。
+        const provided = active.flatMap((a) => (a.manifest.tags ?? []).filter((t) => t.startsWith('feature:')));
+        const allFeatures = (0, tags_1.uniqueTags)([...features, ...provided]);
+        if (provided.length > 0) {
+            this.emit('log', `[Arsist] Features from extensions: ${(0, tags_1.uniqueTags)(provided).join(' ')}`);
+        }
+        for (const a of active) {
+            const from = installed.get(a.manifest.id);
+            this.emit('log', `[Arsist] Extension '${a.manifest.id}' ${a.manifest.version} (data v${a.dataVersion}) from ${a.dir}` +
+                (a.because === 'device' ? ' — provides the target device' : '') +
+                (from?.overrides ? ` (overrides ${from.overrides})` : ''));
+        }
+        return { deviceTags, features: allFeatures, active, absent };
+    }
+    /** sdk/ に置いてあり、この端末のビルドに入る SDK のタグ。 */
+    async detectSdkTags(targetDevice) {
+        const tags = [];
+        const sdkDir = this.resolveSdkDir();
+        if (this.isQuestTarget(targetDevice)) {
+            const questDir = path.join(sdkDir, 'quest');
+            const files = await fs.readdir(questDir).catch(() => []);
+            if (files.some((f) => /^com\.meta\.xr\.sdk\.core-.*\.tgz$/i.test(f)))
+                tags.push('sdk:meta-core');
+            if (files.some((f) => /^com\.meta\.xr\.mrutilitykit-.*\.tgz$/i.test(f)))
+                tags.push('sdk:meta-mruk');
+        }
+        if (this.isXrealTarget(targetDevice) && await fs.pathExists(path.join(sdkDir, 'com.xreal.xr', 'package', 'package.json'))) {
+            tags.push('sdk:xreal');
+        }
+        if (await this.resolveUniVRMUnityPackagePath())
+            tags.push('sdk:univrm');
+        return tags;
+    }
+    /**
+     * 有効な拡張機能の C# を Unity プロジェクトに入れ、無効になったものを抜く。
+     * 写しは syncDirectory (差分 + .meta 保護) なので、変わっていなければ Unity は再インポートしない。
+     */
+    async stageExtensions(unityProjectPath, active) {
+        const assetsRoot = path.join(unityProjectPath, 'Assets');
+        const root = path.join(assetsRoot, stage_1.EXTENSIONS_ASSET_DIR);
+        // エンジンの上書きと Unity パッケージは、拡張機能が 1 つも無いビルドでも「前回の分を戻す」が要る
+        await this.stageEngineOverrides(unityProjectPath, active);
+        await this.stageExtensionPackages(unityProjectPath, active);
+        if (active.length === 0) {
+            if (await fs.pathExists(root)) {
+                await this.removeAssetFolder(assetsRoot, stage_1.EXTENSIONS_ASSET_DIR);
+                this.emit('log', '[Arsist] Extensions: none in this build (removed the previous ones from the workspace)');
+            }
+            return;
+        }
+        await fs.ensureDir(root);
+        const keep = new Set([stage_1.REGISTRY_FILE, `${stage_1.REGISTRY_FILE}.meta`, 'link.xml', 'link.xml.meta']);
+        for (const ext of active) {
+            const id = ext.manifest.id;
+            keep.add(id);
+            keep.add(`${id}.meta`);
+            for (const [kind, rel] of [['Runtime', ext.manifest.unity?.runtimeDir ?? 'Runtime'], ['Editor', ext.manifest.unity?.editorDir ?? 'Editor']]) {
+                const src = path.join(ext.dir, rel);
+                const dest = path.join(root, id, kind);
+                if (await fs.pathExists(src)) {
+                    const sync = await this.syncDirectory(src, dest, { prune: 'mirror' });
+                    this.emit('log', `[Arsist] Extension '${id}' ${kind}: ${sync.copied} updated, ${sync.removed} removed`);
+                }
+                else if (await fs.pathExists(dest)) {
+                    await this.removeAssetFolder(path.join(root, id), kind);
+                }
+            }
+        }
+        // 前のビルドで入れて、今回は入らない拡張機能を抜く (残すと C# が無い SDK を参照して落ちる)
+        for (const entry of await fs.readdir(root)) {
+            if (keep.has(entry) || entry.startsWith('.'))
+                continue;
+            await fs.remove(path.join(root, entry)).catch(() => { });
+            if (!entry.endsWith('.meta'))
+                this.emit('log', `[Arsist] Extension '${entry}' removed from the workspace (not in this build)`);
+        }
+        await this.writeIfChanged(path.join(root, stage_1.REGISTRY_FILE), (0, stage_1.renderRegistrySource)(active));
+        const linkXml = (0, stage_1.renderLinkXml)(active);
+        if (linkXml)
+            await this.writeIfChanged(path.join(root, 'link.xml'), linkXml);
+        else
+            await fs.remove(path.join(root, 'link.xml')).catch(() => { });
+        const additions = (0, stage_1.collectAndroidAdditions)(active);
+        const manifestPath = path.join(assetsRoot, 'Plugins', 'Android', 'AndroidManifest.xml');
+        if (additions.permissions.length + additions.features.length + additions.metadata.length > 0) {
+            if (!await fs.pathExists(manifestPath)) {
+                throw new Error(`Extensions need Android declarations (${additions.permissions.join(', ')}) but there is no ` +
+                    `Assets/Plugins/Android/AndroidManifest.xml (the device adapter did not provide one).`);
+            }
+            const merged = (0, stage_1.mergeAndroidManifest)(await fs.readFile(manifestPath, 'utf8'), additions);
+            if (merged.added.length > 0) {
+                await fs.writeFile(manifestPath, merged.xml, 'utf8');
+                this.emit('log', `[Arsist] AndroidManifest: added for extensions: ${merged.added.join(', ')}`);
+            }
+        }
+    }
+    static OVERRIDES_RECORD = '.arsist-overrides.json';
+    static PACKAGES_RECORD = '.arsist-extension-packages.json';
+    /**
+     * 拡張機能によるエンジンの改変 (unity.overrides)。
+     *
+     * Assets/Arsist/<path> を拡張機能の Overrides/<path> で置き換える。置き換える前に、元のファイル
+     * (テンプレート UnityBackend/ArsistBuilder/Assets/Arsist/<path>) の SHA-256 が replaces と同じかを見る。
+     * エンジンが更新されて元が変わっていたら止める — 古い前提の上書きで、新しいエンジンの修正を黙って消さない。
+     * 前回上書きして今回は上書きしないファイルは、元に戻す (記録: Assets/.arsist-overrides.json)。
+     */
+    async stageEngineOverrides(unityProjectPath, active) {
+        const assetsRoot = path.join(unityProjectPath, 'Assets');
+        const recordFile = path.join(assetsRoot, UnityBuilder.OVERRIDES_RECORD);
+        const previous = (await fs.readJSON(recordFile).catch(() => ({}))) ?? {};
+        const templateArsist = path.join(this.unityTemplatePath, 'Assets', 'Arsist');
+        const workspaceArsist = path.join(assetsRoot, 'Arsist');
+        const wanted = new Map();
+        for (const ext of active) {
+            for (const o of ext.manifest.unity?.overrides ?? []) {
+                const rel = o.path.replace(/\\/g, '/');
+                const other = wanted.get(rel);
+                if (other) {
+                    throw new Error(`Extensions '${other.ext.manifest.id}' and '${ext.manifest.id}' both replace Assets/Arsist/${rel}; only one can.`);
+                }
+                wanted.set(rel, { ext, replaces: o.replaces });
+            }
+        }
+        // 戻す
+        for (const rel of Object.keys(previous)) {
+            if (wanted.has(rel))
+                continue;
+            const original = path.join(templateArsist, rel);
+            const dest = path.join(workspaceArsist, rel);
+            if (await fs.pathExists(original))
+                await fs.copy(original, dest, { overwrite: true, preserveTimestamps: true });
+            else {
+                await fs.remove(dest).catch(() => { });
+                await fs.remove(`${dest}.meta`).catch(() => { });
+            }
+            this.emit('log', `[Arsist] Engine file restored: Assets/Arsist/${rel} (was replaced by '${previous[rel]}')`);
+        }
+        // 置き換える
+        const record = {};
+        for (const [rel, { ext, replaces }] of wanted) {
+            const original = path.join(templateArsist, rel);
+            const exists = await fs.pathExists(original);
+            if (replaces) {
+                if (!exists) {
+                    throw new Error(`Extension '${ext.manifest.id}' replaces Assets/Arsist/${rel}, but this engine has no such file. Update the extension for this engine version.`);
+                }
+                const actual = crypto.createHash('sha256').update(await fs.readFile(original)).digest('hex');
+                if (actual !== replaces) {
+                    throw new Error(`Extension '${ext.manifest.id}' ${ext.manifest.version} replaces Assets/Arsist/${rel}, but the engine's file has changed since the ` +
+                        `extension was made (expected ${replaces.slice(0, 12)}…, found ${actual.slice(0, 12)}…). Not overwriting it: update the extension ` +
+                        `(npm run ext:override -- <extension folder> ${rel} refreshes the copy and the hash).`);
+                }
+            }
+            else if (exists) {
+                throw new Error(`Extension '${ext.manifest.id}' writes Assets/Arsist/${rel}, which already exists in the engine; it must declare "replaces" (the original's SHA-256).`);
+            }
+            const content = await fs.readFile(path.join(ext.dir, 'Overrides', ...rel.split('/')));
+            const dest = path.join(workspaceArsist, rel);
+            const current = await fs.readFile(dest).catch(() => null);
+            if (!current || !current.equals(content)) {
+                await fs.ensureDir(path.dirname(dest));
+                await fs.writeFile(dest, content);
+            }
+            record[rel] = ext.manifest.id;
+            this.emit('log', `[Arsist] Engine file ${replaces ? 'replaced' : 'added'} by extension '${ext.manifest.id}': Assets/Arsist/${rel}`);
+        }
+        if (Object.keys(record).length > 0)
+            await fs.writeJSON(recordFile, record, { spaces: 2 });
+        else
+            await fs.remove(recordFile).catch(() => { });
+    }
+    /**
+     * 拡張機能の Unity パッケージ (unity.packages)。端末の SDK など。
+     * 拡張機能の中のファイル / フォルダは Packages/arsist-ext-<id>/ に写して `file:` で、版の指定はそのまま
+     * Packages/manifest.json に足す。エンジンが入れたパッケージは上書きしない (版の食い違いで壊さない)。
+     * 前回足して今回は要らないものは外す (記録: Packages/.arsist-extension-packages.json)。
+     */
+    async stageExtensionPackages(unityProjectPath, active) {
+        const packagesDir = path.join(unityProjectPath, 'Packages');
+        const manifestPath = path.join(packagesDir, 'manifest.json');
+        const recordFile = path.join(packagesDir, UnityBuilder.PACKAGES_RECORD);
+        const previous = (await fs.readJSON(recordFile).catch(() => ({}))) ?? {};
+        if (!await fs.pathExists(manifestPath))
+            return;
+        const manifest = await fs.readJSON(manifestPath);
+        const deps = manifest.dependencies ?? {};
+        let changed = false;
+        const record = {};
+        const keepFolders = new Set();
+        for (const ext of active) {
+            for (const [name, ref] of Object.entries(ext.manifest.unity?.packages ?? {})) {
+                let value = ref;
+                if ((0, extensions_2.isLocalPackageRef)(ref)) {
+                    const folder = `arsist-ext-${ext.manifest.id}`;
+                    keepFolders.add(folder);
+                    const src = path.join(ext.dir, ref);
+                    const dest = path.join(packagesDir, folder, path.basename(ref));
+                    const [a, b] = await Promise.all([fs.stat(src), fs.stat(dest).catch(() => null)]);
+                    if (a.isDirectory()) {
+                        await this.syncDirectory(src, dest, { prune: 'mirror' });
+                    }
+                    else if (!b || b.size !== a.size || Math.floor(b.mtimeMs) !== Math.floor(a.mtimeMs)) {
+                        await fs.ensureDir(path.dirname(dest));
+                        await fs.copy(src, dest, { overwrite: true, preserveTimestamps: true });
+                    }
+                    value = `file:${folder}/${path.basename(ref)}`;
+                }
+                if (deps[name] !== undefined && previous[name] === undefined) {
+                    this.emit('log', `[Arsist] WARNING: extension '${ext.manifest.id}' asks for package ${name} (${ref}), but the engine already has ${name}@${deps[name]}; keeping the engine's`);
+                    continue;
+                }
+                if (deps[name] !== value) {
+                    deps[name] = value;
+                    changed = true;
+                }
+                record[name] = ext.manifest.id;
+                this.emit('log', `[Arsist] Package ${name} from extension '${ext.manifest.id}': ${value}`);
+            }
+        }
+        for (const name of Object.keys(previous)) {
+            if (record[name] !== undefined)
+                continue;
+            if (deps[name] !== undefined) {
+                delete deps[name];
+                changed = true;
+            }
+            this.emit('log', `[Arsist] Package ${name} removed (its extension '${previous[name]}' is not in this build)`);
+        }
+        for (const entry of await fs.readdir(packagesDir).catch(() => [])) {
+            if (entry.startsWith('arsist-ext-') && !keepFolders.has(entry))
+                await fs.remove(path.join(packagesDir, entry)).catch(() => { });
+        }
+        if (changed) {
+            manifest.dependencies = deps;
+            await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
+        }
+        if (Object.keys(record).length > 0)
+            await fs.writeJSON(recordFile, record, { spaces: 2 });
+        else
+            await fs.remove(recordFile).catch(() => { });
+    }
+    /** 中身が同じなら書かない (mtime を変えると Unity が再インポート・再コンパイルする)。 */
+    async writeIfChanged(file, content) {
+        try {
+            if (await fs.readFile(file, 'utf8') === content)
+                return;
+        }
+        catch {
+            // 無い
+        }
+        await fs.ensureDir(path.dirname(file));
+        await fs.writeFile(file, content, 'utf8');
+    }
+    /**
+     * targetDevice のアダプタのフォルダ。エンジン同梱の Adapters/ と、拡張機能が足した端末の両方から探す
+     * (照合の規則は src/shared/adapterNames.ts。型番まで書かれていても拾う: "Meta Quest 3" → Meta_Quest。
+     * 一致しないと device patch がまるごと飛び、権限の足りない APK が何事もなく出来上がる)。
+     */
     async resolveAdapterDir(targetDevice) {
         const resolvedRepo = this.resolveRepoRoot();
-        const adaptersRoot = resolvedRepo.path
+        const builtinRoot = resolvedRepo.path
             ? path.join(resolvedRepo.path, 'Adapters')
             : process.resourcesPath
                 ? path.join(process.resourcesPath, 'Adapters')
                 : path.join(__dirname, '../../..', 'Adapters');
-        if (!await fs.pathExists(adaptersRoot))
-            return null;
-        const direct = path.join(adaptersRoot, targetDevice);
-        if (await fs.pathExists(direct))
-            return direct;
-        const normalizedTarget = targetDevice.replace(/[-\s]/g, '_').toLowerCase();
-        const entries = await fs.readdir(adaptersRoot);
-        const normalized = entries.map((entry) => ({
-            entry,
-            name: entry.replace(/[-\s]/g, '_').toLowerCase(),
-        }));
-        for (const { entry, name } of normalized) {
-            if (name === normalizedTarget)
-                return path.join(adaptersRoot, entry);
+        const hit = await (0, adapterDirs_1.resolveAdapter)(targetDevice, (await fs.pathExists(builtinRoot)) ? builtinRoot : null);
+        if (hit?.source === 'extension') {
+            this.emit('log', `[Arsist] Target device "${targetDevice}" comes from extension '${hit.extensionId}' (${hit.dir})`);
         }
-        // 型番まで書かれていても拾う ("Meta Quest 3" -> Meta_Quest)。
-        // 一致しないと device patch がまるごと飛び、権限の足りない APK が
-        // 何事もなく出来上がるので、少しでも当たるようにしておく。
-        // 複数当たったら、より具体的な（長い）方を採る。
-        const prefixMatches = normalized
-            .filter(({ name }) => normalizedTarget.startsWith(name))
-            .sort((a, b) => b.name.length - a.name.length);
-        if (prefixMatches.length > 0) {
-            return path.join(adaptersRoot, prefixMatches[0].entry);
-        }
-        return null;
+        return hit ? hit.dir : null;
     }
     emitProgress(phase, progress, message) {
         this.emit('progress', { phase, progress, message });

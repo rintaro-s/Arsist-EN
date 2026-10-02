@@ -5,7 +5,7 @@ Guidance for AI agents (Claude Code and others) working in this repository.
 ## Start here
 
 Read [CODEMAP.md](CODEMAP.md) first for the module map and the XREAL/Quest device-responsibility map, then the
-relevant deep-dive in [`doc/`](doc/) (`00-overview` … `16-models-beyond-vision`). [README.md](README.md) covers user-facing
+relevant deep-dive in [`doc/`](doc/) (`00-overview` … `17-extensions`). [README.md](README.md) covers user-facing
 setup.
 
 ## What this project is
@@ -27,6 +27,12 @@ npm run test:perception # 姿勢推定・画像処理パイプライン・ジャ
 npm run logs           # 実機アプリのログを LAN で受ける (adb 不要, doc/13-device-logs.md)
 npm run package        # electron-builder (needs sdk/ present)
 npm run xreal:diag     # build + adb install + filtered logcat (needs Unity + device)
+npm run ext:new -- <id> [--requires cap:hand-tracking]   # scaffold an extension (Extensions/<id>/)
+npm run ext:new -- <id> --device My_Glasses              # scaffold an extension that adds a device (adapter + XR hook)
+npm run ext:pack -- <extension folder>                   # → <id>-<version>.arsist (zip + SHA-256 of every file)
+npm run ext:install -- <file.arsist | folder> [--force]  # same as the editor's Extensions → Import
+npm run ext:override -- <extension folder> <path under Assets/Arsist>  # start an engine modification
+npm run ir:new -- "<説明>" ["<English>"]                  # scaffold an IR version bump (+ migration + upgrade text)
 ```
 
 Unity builds and on-device verification require a full Unity install, the `sdk/` directory, and hardware — usually
@@ -58,11 +64,31 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
 
 ## Conventions
 
+- **New features go in as extensions when they can.** An extension is one folder, `Extensions/<id>/`
+  (`extension.json` + `Runtime/*.cs` + optional `Editor/*.cs`), and touches the engine only through
+  `ArsistExtensionContext` / `ArsistScriptBridge` (runtime) and `ArsistBuildContext` (build). Its settings and
+  per-object options are declared in `extension.json` (the editor forms are generated from that) and live in
+  `project.extensions.<id>` / `SceneObject.ext.<id>`, with their **own** `dataVersion` + declarative migrations —
+  an extension's data change never needs an IR bump. `doc/17-extensions.md`; worked example
+  `Extensions/quest-room/`.
+- **Extensions may add devices (`provides.adapters` + `Adapters/<name>/`), SDKs (`unity.packages`) and engine
+  modifications (`unity.overrides`, files under `Overrides/` replacing `Assets/Arsist/<path>` in the build workspace
+  only, guarded by the original's SHA-256).** Never edit the engine to support one device or one app when an
+  extension can carry it. Adapter lookup for every caller goes through `src/main/adapters/adapterDirs.ts`.
+- **A project that enables an extension (or targets a device) this editor lacks does not open** — the load returns
+  `requirementsMissing` and the editor offers to import the `.arsist` / folder. Builds apply the same rule.
+- **Devices, engine features and extensions meet through tags, not names.** `adapter.json` (`capabilities` +
+  `tags`) gives a device its tags (`src/shared/adapterTags.ts`), `src/shared/engineFeatures.ts` says what each
+  engine feature needs, an extension's `requires` says where it runs. Prefer adding a tag over another
+  `isQuestTarget()`-style name check. `requires` lists only hard needs (a feature with a fallback has none).
 - **IR is the source of truth.** TypeScript IR types live in [src/shared/types.ts](src/shared/types.ts); a schema
   change usually touches the type, [src/bridge/UnityBridge.ts](src/bridge/UnityBridge.ts), and the Unity consumer.
 - **IR has a version.** When `project.json` changes shape, bump `CURRENT_IR_VERSION` in
   [src/shared/irVersion.ts](src/shared/irVersion.ts) and add a migration in
   [src/main/project/migrations.ts](src/main/project/migrations.ts) (+ `ir.migration.<n>` string + test).
+  `npm run ir:new` scaffolds all three; write the change as declarative ops (`src/shared/irOps.ts`:
+  default / set / rename / remove / map) and only fall back to an `apply` function when ops cannot say it.
+  `migrations.test.ts` checks every step for gaps, idempotence and both upgrade texts automatically.
   Old projects open read-only until the user accepts the upgrade; never silently rewrite them.
 - **Device support = adapters.** Add a folder under [Adapters/](Adapters/); don't hardcode device logic elsewhere.
 - **Prefer the SDK's intended setup over reimplementation.** For XREAL, configure Unity/the scene the way
@@ -83,6 +109,13 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   **flat**: prefer surface contrast + spacing over borders; use the `.hairline*` utilities for the rare divider, and
   avoid heavy frames/shadows. Theme is toggled via `data-theme` on `<html>` (see `src/renderer/theme/`), persisted in
   electron-store (`theme`).
+
+- **AI tools live in one place.** MCP tools are TypeScript in `src/main/mcp/tools.ts`; the stdio server
+  (external agents) and the built-in OpenAI-compatible assistant (`src/main/agent/`) both call them. Out-of-editor
+  writes go through `src/main/project/projectIO.ts` (atomic, queued, refuse other IR versions) and the editor
+  reloads via `ProjectWatcher` — never write project files any other way. Registration into agents' settings
+  (`agentTargets.ts`) only touches the `arsist` entry and backs the file up first. Test it with a fake `HOME`;
+  never against your real `~/.claude.json` etc. See `doc/09-mcp-server.md`.
 
 ## Gotchas
 
@@ -117,6 +150,22 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   `AndroidJNI.AttachCurrentThread()` / `DetachCurrentThread()` (see `ArsistOrtRunner.RunBlocking`), or hand the
   call back to the main thread. The Java side itself can be exercised on a desktop JVM with
   `tools/ort-bridge-check`, but that cannot catch this — it only shows up on the device.
+- **An extension's C# is only in builds whose device tags satisfy its `requires`** (`UnityBuilder.stageExtensions`
+  copies it to `Assets/ArsistExtensions/<id>/` and removes it again when it no longer applies). So a Quest-only
+  extension may use the Meta SDK directly, without `#if`, but a device-neutral one must not touch any device SDK.
+  Its entry class is created by the generated `ArsistExtensionRegistry.g.cs` (no reflection), and its namespace
+  is preserved via a generated `link.xml` — Jint calls script APIs by reflection, so a stripped method shows up
+  only on the device as `undefined`. MonoBehaviours in an extension follow Unity's one-class-per-file-name rule.
+- **Never put `[SerializeField]` / public serialized fields inside an `#if` whose define is set during the build**
+  (`XR_HANDS`, `ARSIST_META_QUEST`, … are added in `ApplyDeviceScriptingDefines`, after the editor has already
+  compiled without them). The editor and the player then disagree on the class layout and Unity stops with
+  `script class layout is incompatible between the editor and the player`. Keep serialized fields outside the
+  `#if` (see `ArsistHandInteraction`). `ARSIST_INFERENCE` avoids this differently: it is synced before Unity
+  starts (`UnityBuilder.syncInferenceDefine`).
+- **Hand tracking needs both `XR_HANDS` and the OpenXR "Hand Tracking Subsystem" feature** — until 2026-10 neither
+  was set, so `ArsistHandInteraction` shipped as an empty class. Both are now set on Quest builds. Do not also enable
+  "Meta Hand Tracking Aim": it makes hands appear as controllers, and the controller ray and the hand ray then both
+  fire.
 - Inside any `Arsist.Runtime.*` namespace, a bare `Input` resolves to the sibling namespace
   `Arsist.Runtime.Input`, **not** `UnityEngine.Input` (C# walks up the namespace chain before it looks
   at `using` directives). Always write `UnityEngine.Input.gyro` etc. — this broke the build once.

@@ -1,0 +1,131 @@
+{
+  "id": "quest-room",
+  "version": "1.0.0",
+  "name": {
+    "en": "Room awareness (Quest)",
+    "ja": "部屋を理解する (Quest)"
+  },
+  "description": {
+    "en": "Reads the room the headset has scanned — walls, floor, ceiling, tables, couches — and lets the app use it: snap panels and objects onto real surfaces, let virtual things collide with real furniture, keep things where the user pinned them across launches, and ask the room from scripts (room.*).",
+    "ja": "ヘッドセットがスキャンした部屋 (壁・床・天井・机・ソファ) を読み取り、アプリから使えるようにします。パネルや物を本物の壁や机に貼る、仮想の物を本物の家具にぶつける、ユーザーが留めた場所を次に起動しても覚えている、スクリプトから部屋を問い合わせる (room.*)、ができます。"
+  },
+  "tags": ["cap:scene-understanding", "cap:spatial-anchors"],
+  "requires": {
+    "all": ["cap:scene-understanding", "sdk:meta-mruk"]
+  },
+  "minIrVersion": 4,
+  "data": {
+    "version": 1,
+    "settings": [
+      {
+        "key": "loadRoom",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Read the room on start", "ja": "起動したら部屋を読み取る" },
+        "help": {
+          "en": "Asks for the \"spatial data\" permission the first time. Off: nothing happens until a script calls room.reload().",
+          "ja": "初回だけ「空間データ」の許可を求めます。切ると、スクリプトが room.reload() を呼ぶまで何もしません。"
+        }
+      },
+      {
+        "key": "requestSpaceSetup",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Ask for Space Setup if the room is not scanned", "ja": "部屋が未スキャンならスペース設定を促す" },
+        "help": {
+          "en": "Opens the headset's own room scan when no room is stored yet.",
+          "ja": "部屋がまだ保存されていないとき、ヘッドセットの部屋のスキャン画面を開きます。"
+        }
+      },
+      {
+        "key": "roomColliders",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Real furniture is solid", "ja": "本物の家具に当たり判定を付ける" },
+        "help": {
+          "en": "Walls, floor and furniture get physics colliders, so falling or thrown objects stop on them. They do not block pointing at UI.",
+          "ja": "壁・床・家具に物理の当たり判定を付けます。落ちる物や投げた物がそこで止まります。UI を指す邪魔はしません。"
+        }
+      },
+      {
+        "key": "showSurfaces",
+        "type": "boolean",
+        "default": false,
+        "label": { "en": "Outline the recognised surfaces", "ja": "認識した面の輪郭を表示する" },
+        "help": {
+          "en": "Draws thin lines around every wall, table and so on. Useful to check that the room lines up with reality.",
+          "ja": "壁や机などの輪郭に細い線を引きます。部屋が現実とずれていないかの確認に使います。"
+        }
+      },
+      {
+        "key": "publishToStore",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Put room facts in the store (room.*)", "ja": "部屋の情報をストアに入れる (room.*)" },
+        "help": {
+          "en": "room.status, room.walls, room.tables, room.floorArea … can then be bound to UI text directly.",
+          "ja": "room.status / room.walls / room.tables / room.floorArea などを UI の文字に直接つなげられます。"
+        }
+      },
+      {
+        "key": "highFidelity",
+        "type": "boolean",
+        "default": false,
+        "label": { "en": "High-fidelity room (slanted ceilings, several floors)", "ja": "詳細な部屋 (斜めの天井・複数の階)" }
+      }
+    ],
+    "object": [
+      {
+        "key": "snapTo",
+        "type": "select",
+        "default": "none",
+        "label": { "en": "Put on a real surface", "ja": "本物の面に置く" },
+        "help": {
+          "en": "When the room is ready, this object moves onto the chosen kind of surface.",
+          "ja": "部屋を読み取れたら、この物を選んだ種類の面の上に移します。"
+        },
+        "options": [
+          { "value": "none", "label": { "en": "No (stay where placed)", "ja": "置かない (置いた場所のまま)" } },
+          { "value": "wall", "label": { "en": "Wall", "ja": "壁" } },
+          { "value": "floor", "label": { "en": "Floor", "ja": "床" } },
+          { "value": "table", "label": { "en": "Table", "ja": "机" } },
+          { "value": "couch", "label": { "en": "Couch", "ja": "ソファ" } },
+          { "value": "ceiling", "label": { "en": "Ceiling", "ja": "天井" } },
+          { "value": "any", "label": { "en": "Any surface", "ja": "どの面でも" } }
+        ]
+      },
+      {
+        "key": "pick",
+        "type": "select",
+        "default": "ahead",
+        "label": { "en": "Which one", "ja": "どれに置くか" },
+        "help": {
+          "en": "Ahead: looking from where the user starts towards where you placed it, the first such surface. Nearest: the one closest to where you placed it.",
+          "ja": "先: ユーザーの開始位置から、置いた場所の方向を見て最初にある面。近く: 置いた場所にいちばん近い面。"
+        },
+        "options": [
+          { "value": "ahead", "label": { "en": "Ahead, in the direction it was placed", "ja": "置いた方向の先にあるもの" } },
+          { "value": "nearest", "label": { "en": "Closest to where it was placed", "ja": "置いた位置にいちばん近いもの" } }
+        ]
+      },
+      {
+        "key": "offset",
+        "type": "number",
+        "default": 0.02,
+        "min": 0,
+        "max": 1,
+        "step": 0.01,
+        "label": { "en": "Gap from the surface (m)", "ja": "面からの浮かせ (m)" }
+      }
+    ]
+  },
+  "script": {
+    "globals": ["room"]
+  },
+  "android": {
+    "permissions": ["com.oculus.permission.USE_SCENE", "com.oculus.permission.USE_ANCHOR_API"]
+  },
+  "unity": {
+    "entry": "Arsist.Extensions.QuestRoom.QuestRoomExtension"
+  }
+}

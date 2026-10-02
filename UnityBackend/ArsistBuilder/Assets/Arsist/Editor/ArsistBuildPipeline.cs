@@ -97,6 +97,9 @@ namespace Arsist.Builder
                     ApplyQuestBuildBootstrap();
                 }
 
+                // Phase 3.16: 拡張機能のビルド設定 (端末のパッチを当てた後に、上書きされない順で)
+                Arsist.Builder.Extensions.ArsistBuildExtensionRunner.RunPlayerSettings(_manifest);
+
                 // Phase 3.2: ビルド前検証（ここで落とすことで“成功したけど動かない”を避ける）
                 Debug.Log("[Arsist] Phase 3.2: Validating build readiness...");
                 ValidateBuildReadiness(_targetDevice);
@@ -712,6 +715,10 @@ namespace Arsist.Builder
                     GenerateCanvasUI(uiPath);
                 }
 
+                // 拡張機能 (Extensions/<id>/)。シーンが出来上がってから、保存する前に手を入れさせる。
+                Arsist.Builder.Extensions.ArsistBuildExtensionRunner.EnsureHostInScene(_manifest);
+                Arsist.Builder.Extensions.ArsistBuildExtensionRunner.RunScene(_manifest);
+
                 // シーンを保存（すべてのGameObjectが作成された後）
                 var scenePath = $"Assets/Scenes/{sceneName}.unity";
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(Application.dataPath, "..", scenePath)));
@@ -782,6 +789,10 @@ namespace Arsist.Builder
             }
 
             go.name = name;
+
+            // 拡張機能ごとの指定 (IR の ext)。中身は解釈せず、実機の拡張機能が読む。
+            // この後の分岐に途中で return するものがあるので、名前を決めた直後に付ける。
+            AttachExtensionData(go, objData, assetId);
 
             var transformData = objData["transform"] as JObject;
             if (transformData != null)
@@ -912,6 +923,23 @@ namespace Arsist.Builder
             ApplyImageAnchor(go, objData, name);
 
             return go;
+        }
+
+        /// <summary>
+        /// IR の SceneObject.ext (拡張機能ごとの指定) を ArsistObjectExt に入れる。
+        /// 有効でない拡張機能の分もそのまま入れる (読むかどうかは拡張機能が決める。
+        /// 無効な拡張機能はそもそも実機に居ないので読まれない)。
+        /// </summary>
+        private static void AttachExtensionData(GameObject go, JObject objData, string assetId)
+        {
+            var ext = objData?["ext"] as JObject;
+            if (ext == null || !ext.HasValues) return;
+            var holder = go.GetComponent<Arsist.Runtime.Extensions.ArsistObjectExt>();
+            if (holder == null) holder = go.AddComponent<Arsist.Runtime.Extensions.ArsistObjectExt>();
+            holder.objectId = objData["id"]?.ToString() ?? "";
+            holder.assetId = assetId ?? "";
+            holder.json = ext.ToString(Formatting.None);
+            Debug.Log($"[Arsist] Extension data on '{go.name}': {string.Join(", ", ext.Properties().Select(p => p.Name))}");
         }
 
         /// <summary>
@@ -5287,6 +5315,19 @@ ScriptedImporter:
             
             if (isQuest) defines.Add("ARSIST_META_QUEST");
 
+            // XR Hands (com.unity.xr.hands)。ArsistHandInteraction は中身が丸ごと #if XR_HANDS なので、
+            // これが無いと空のコンポーネントになり、ハンドトラッキングのピンチ操作が実機で何もしない
+            // (2026-10 まで、この define はどこでも立っていなかった。その頃の APK の IL2CPP メタデータには
+            // ArsistHandInteraction の Update / ComputePinch が無い)。
+            // パッケージがあれば Quest で立てる。手のデータを出す OpenXR 機能は EnableQuestOpenXRFeatures。
+            defines.Remove("XR_HANDS");
+            // アセンブリが読み込まれていなくても見つかるよう、アセンブリ名を添えて探す (CODEMAP の注意点)
+            if (isQuest && FindTypeWithAssemblyHints("UnityEngine.XR.Hands.XRHandSubsystem", "Unity.XR.Hands") != null)
+            {
+                defines.Add("XR_HANDS");
+                Debug.Log("[Arsist] XR Hands detected, adding XR_HANDS define");
+            }
+
             // Inference Engine はモデルを使うプロジェクトでだけ入る。ArsistModelExecutor は
             // この define の有無で本物と空の実装を切り替える。
             defines.Remove("ARSIST_INFERENCE");
@@ -5338,7 +5379,9 @@ ScriptedImporter:
                         GetBackgroundMode() == BACKGROUND_PASSTHROUGH
                     );
                     // 操作方法にハンドトラッキングを選んだときだけパーミッション/メタデータを足す。
-                    var (_, handTrackingForManifest) = GetInteractionSettings();
+                    var (_, handTrackingSetting) = GetInteractionSettings();
+                    // 手の宣言は、ビルド設定の「ハンドトラッキング」か、手を使う拡張機能 (feature:hand-tracking) で付ける
+                    var handTrackingForManifest = handTrackingSetting || ManifestUsesFeature("feature:hand-tracking");
                     InvokeStaticIfExists(
                         "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
                         "ConfigureHandTracking",
@@ -5351,7 +5394,7 @@ ScriptedImporter:
                         "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
                         "ConfigureSystemKeyboard",
                         manifestPath,
-                        ProjectHasInputElement()
+                        WantsSystemKeyboard()
                     );
                     // 画像を見るプロジェクトだけカメラ権限を宣言する。
                     // ターゲットの有無で判断してはいけない: ビューポートを見るタスクは
@@ -6010,12 +6053,73 @@ ScriptedImporter:
                     if (!TryEnableOpenXRFeature(getFeature, featureId)) anyFailed = true;
                 }
 
+                // 手の関節 (XR Hands の XRHandSubsystem)。無くてもアプリは起動するので任意。
+                // これが無効だと XRHandSubsystem が動かず、ハンドトラッキングのピンチ操作も
+                // 拡張機能の hands.* も何も返さない。
+                // "Meta Hand Tracking Aim" は有効にしない: 手が「コントローラー」として見えるようになり、
+                // コントローラーのレイ (XROriginSetup) と手のレイ (ArsistHandInteraction) が二重に反応する。
+                var handFeature = getFeature.Invoke(null, new object[] { BuildTargetGroup.Android, "com.unity.openxr.feature.input.handtrackingsubsystem" });
+                if (handFeature == null)
+                {
+                    Debug.LogWarning("[Arsist] OpenXR feature 'Hand Tracking Subsystem' (com.unity.xr.hands) not found; hand tracking will not report joints.");
+                }
+                else if (!TryEnableOpenXRFeature(getFeature, "com.unity.openxr.feature.input.handtrackingsubsystem"))
+                {
+                    anyFailed = true;
+                }
+
                 if (!anyFailed) AssetDatabase.SaveAssets();
             }
             catch (Exception e)
             {
                 Debug.LogError($"[Arsist] Failed to enable the Quest OpenXR features: {e.Message}");
             }
+        }
+
+        // ---- 拡張機能から使う口 (Editor/Extensions/ArsistBuildExtensions.cs の ArsistBuildContext 経由) ----
+        // 端末を足す拡張機能が、その端末の XR ローダーや OpenXR 機能を設定するため。
+        // パイプラインの中身を拡張機能が直接いじらなくて済むように、ここに寄せる。
+
+        /// <summary>Android の XR Manager にローダーを足す (型の完全名)。既にあれば何もしない。</summary>
+        internal static bool ExtensionAddXRLoader(string loaderTypeName)
+        {
+            var settings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+            if (settings == null || settings.Manager == null)
+            {
+                Debug.LogError($"[Arsist] Cannot add XR loader {loaderTypeName}: XR General Settings (Android) not found");
+                return false;
+            }
+            settings.InitManagerOnStart = true;
+            EditorUtility.SetDirty(settings);
+            var manager = settings.Manager;
+            var present = manager.activeLoaders.Any(l => l != null && l.GetType().FullName == loaderTypeName);
+            if (!present && !TryAddXRLoaderByType(manager, loaderTypeName))
+            {
+                Debug.LogError($"[Arsist] XR loader {loaderTypeName} could not be added (is its package installed? unity.packages in extension.json)");
+                return false;
+            }
+            EditorUtility.SetDirty(manager);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[Arsist] XR loader {(present ? "already present" : "added")}: {loaderTypeName}");
+            return true;
+        }
+
+        /// <summary>Android の OpenXR 機能を有効にする (機能 ID)。</summary>
+        internal static bool ExtensionEnableOpenXRFeature(string featureId)
+        {
+            var helpersType = FindTypeWithAssemblyHints("UnityEditor.XR.OpenXR.Features.FeatureHelpers", "Unity.XR.OpenXR.Editor");
+            var getFeature = helpersType?.GetMethod("GetFeatureWithIdForBuildTarget", BindingFlags.Public | BindingFlags.Static,
+                null, new[] { typeof(BuildTargetGroup), typeof(string) }, null);
+            if (getFeature == null)
+            {
+                Debug.LogError($"[Arsist] Cannot enable OpenXR feature {featureId}: com.unity.xr.openxr is not in this project");
+                return false;
+            }
+            helpersType.GetMethod("RefreshFeatures", BindingFlags.Public | BindingFlags.Static)
+                ?.Invoke(null, new object[] { BuildTargetGroup.Android });
+            var ok = TryEnableOpenXRFeature(getFeature, featureId);
+            if (ok) AssetDatabase.SaveAssets();
+            return ok;
         }
 
         private static bool TryEnableOpenXRFeature(MethodInfo getFeature, string featureId)
@@ -6527,6 +6631,29 @@ ScriptedImporter:
         }
 
         /// <summary>
+        /// このアプリが使う機能 (manifest の features: プロジェクトの IR から決まったもの +
+        /// 有効な拡張機能が名乗った feature:*) に、その機能が入っているか。
+        /// UnityBuilder.planExtensions が書く。src/shared/engineFeatures.ts。
+        /// </summary>
+        private static bool ManifestUsesFeature(string featureTag)
+        {
+            if (_manifest?["features"] is JArray features)
+            {
+                foreach (var f in features)
+                {
+                    if (string.Equals(f?.ToString(), featureTag, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// システムキーボード (Quest のオーバーレイ) の宣言を入れるか。入力欄 (Input 要素) があるか、
+        /// 文字入力を使う拡張機能 (feature:text-input を名乗る。quest-input の keyboard.open) があるとき。
+        /// </summary>
+        private static bool WantsSystemKeyboard() => ProjectHasInputElement() || ManifestUsesFeature("feature:text-input");
+
+        /// <summary>
         /// UIレイアウトのどこかに Input 要素があるかを調べる。
         /// システムキーボードの uses-feature 宣言を、使わないプロジェクトにまで足さないため
         /// （使わない機能で対応端末を絞らない、という他の Configure* 系と同じ方針）。
@@ -6621,11 +6748,12 @@ ScriptedImporter:
                 }
                 Debug.Log("[Arsist] ArsistHandInteraction added (Quest hand-tracking pinch interaction).");
 
-                if (FindType("Unity.XR.Hands.XRHandSubsystem") == null
-                    && FindTypeInLoadedAssemblies("Unity.XR.Hands.XRHandSubsystem") == null)
+                // 型の名前空間は UnityEngine.XR.Hands (アセンブリ名は Unity.XR.Hands)。
+                if (FindType("UnityEngine.XR.Hands.XRHandSubsystem") == null
+                    && FindTypeInLoadedAssemblies("UnityEngine.XR.Hands.XRHandSubsystem") == null)
                 {
                     Debug.LogWarning(
-                        "[Arsist] com.unity.xr.hands package (Unity.XR.Hands.XRHandSubsystem) not found. " +
+                        "[Arsist] com.unity.xr.hands package (UnityEngine.XR.Hands.XRHandSubsystem) not found. " +
                         "ArsistHandInteraction will compile to a no-op at runtime; install com.unity.xr.hands " +
                         "and enable the OpenXR 'Hand Tracking Subsystem' feature for hand tracking to actually work.");
                 }
@@ -6958,7 +7086,7 @@ ScriptedImporter:
                     // OVRManifestPreprocessor がビルド中にマニフェストを作り直したときに
                     // oculus.software.overlay_keyboard が消え、TouchScreenKeyboard.Open() が
                     // **黙って何も出さない** (実機では「押しても何も起きない」にしか見えない)。
-                    var wantsKeyboard = ProjectHasInputElement();
+                    var wantsKeyboard = WantsSystemKeyboard();
                     changed |= SetSerializedIntOrBool(serialized, "requiresSystemKeyboard", wantsKeyboard ? 1 : 0, wantsKeyboard);
 
                     if (changed)
@@ -7029,7 +7157,7 @@ ScriptedImporter:
             yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", passthrough ? 2 : 0);
             yaml = ReplaceYamlNumericValue(yaml, "focusAware", 1);
             yaml = ReplaceYamlNumericValue(yaml, "sceneSupport", 1);
-            yaml = ReplaceYamlNumericValue(yaml, "requiresSystemKeyboard", ProjectHasInputElement() ? 1 : 0);
+            yaml = ReplaceYamlNumericValue(yaml, "requiresSystemKeyboard", WantsSystemKeyboard() ? 1 : 0);
 
             File.WriteAllText(path, yaml);
             AssetDatabase.Refresh();

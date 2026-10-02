@@ -40,6 +40,9 @@ interface UIState {
   showSettingsDialog: boolean;
   showPreviewDialog: boolean;
   showMCPDialog: boolean;
+  /** 内蔵 AI アシスタントの欄を出すか */
+  showAssistant: boolean;
+  setShowAssistant: (show: boolean) => void;
   showSetupWizard: boolean;
   setShowNewProjectDialog: (show: boolean) => void;
   setShowBuildDialog: (show: boolean) => void;
@@ -113,6 +116,8 @@ export const useUIStore = create<UIState>((set) => ({
   showSettingsDialog: false,
   showPreviewDialog: false,
   showMCPDialog: false,
+  showAssistant: false,
+  setShowAssistant: (show) => set({ showAssistant: show }),
   showSetupWizard: false,
   setShowNewProjectDialog: (show) => set({ showNewProjectDialog: show }),
   setShowBuildDialog: (show) => set({ showBuildDialog: show }),

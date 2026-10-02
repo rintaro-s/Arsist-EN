@@ -10,6 +10,10 @@ import { PreviewDialog } from './components/dialogs/PreviewDialog';
 import { MCPDialog } from './components/dialogs/MCPDialog';
 import { SetupWizard } from './components/dialogs/SetupWizard';
 import { IrUpgradeDialog } from './components/dialogs/IrUpgradeDialog';
+import { MissingRequirementsDialog } from './components/dialogs/MissingRequirementsDialog';
+import { AssistantPanel } from './components/ai/AssistantPanel';
+import { ExternalChangeBanner } from './components/ai/ExternalChangeBanner';
+import { PackageResultDialog } from './ai/packageActions';
 import { useProjectStore } from './stores/projectStore';
 import { useUIStore } from './stores/uiStore';
 import { DataStoreProvider } from './stores/dataStoreContext';
@@ -158,6 +162,14 @@ declare global {
         get: (id: string) => Promise<any>;
         applyPatch: (id: string, path: string) => Promise<any>;
       };
+      extensions?: {
+        list: (targetDevice?: string) => Promise<import('./extensions/useExtensions').ExtensionListResult>;
+        openUserDir: () => Promise<{ success: boolean; path?: string; error?: string }>;
+        import: (kind: 'package' | 'folder') => Promise<import('./extensions/useExtensions').InstallReply>;
+        install: (source: string, force?: boolean) => Promise<import('./extensions/useExtensions').InstallReply>;
+        uninstall: (id: string) => Promise<{ ok: boolean; error?: string }>;
+        export: (id: string) => Promise<{ ok: boolean; canceled?: boolean; file?: string; error?: string }>;
+      };
       sdk?: {
         xrealStatus: () => Promise<{ exists: boolean; path?: string; version?: string; error?: string }>;
         questStatus: () => Promise<{ exists: boolean; path?: string; corePackage?: string; mrukPackage?: string; error?: string }>;
@@ -184,10 +196,27 @@ declare global {
         setLanguage: (lang: 'en' | 'ja') => void;
       };
       mcp?: {
-        start: (projectPath: string) => Promise<{ success: boolean; message?: string; config?: any }>;
-        stop: () => Promise<{ success: boolean; message: string }>;
-        getStatus: () => Promise<{ enabled: boolean; running: boolean; config?: any }>;
-        getClientConfig: () => Promise<{ success: boolean; message?: string; config?: any }>;
+        agents: (includeProject: boolean) => Promise<import('./ai/types').McpAgentsInfo>;
+        register: (id: string, includeProject: boolean) => Promise<{ ok: boolean; message: string; configPath?: string | null }>;
+        unregister: (id: string) => Promise<{ ok: boolean; message: string; configPath?: string | null }>;
+        selfTest: (includeProject: boolean) => Promise<{ ok: boolean; tools?: number; ms?: number; error?: string; stderr?: string }>;
+      };
+      assistant?: {
+        getSettings: () => Promise<import('./ai/types').AssistantSettingsView>;
+        setSettings: (settings: { baseUrl?: string; model?: string; temperature?: number | null; maxSteps?: number; apiKey?: string | null }) => Promise<{ ok: boolean }>;
+        models: (override?: { baseUrl?: string; apiKey?: string }) => Promise<{ ok: boolean; models?: string[]; error?: string }>;
+        send: (conversationId: string, text: string, context: { selection?: string; language?: string; targetDevice?: string }) => Promise<{ ok: boolean; error?: string }>;
+        abort: (conversationId: string) => Promise<{ ok: boolean }>;
+        reset: (conversationId: string) => Promise<{ ok: boolean }>;
+        undo: (snapshotId: string) => Promise<{ ok: boolean; error?: string }>;
+        onEvent: (callback: (payload: { conversationId: string; event: import('./ai/types').AssistantEvent }) => void) => () => void;
+      };
+      projectPackage?: {
+        export: (projectPath: string, bundleExtensions: boolean) => Promise<{ ok: boolean; canceled?: boolean; file?: string; files?: number; bytes?: number; extensions?: Array<{ id: string; version: string; bundled: boolean }>; error?: string }>;
+        import: () => Promise<import('./ai/types').PackageImportReply>;
+        installStagedExtension: (stagedDir: string) => Promise<{ ok: boolean; id?: string; version?: string; error?: string }>;
+        onExternalChange: (callback: (payload: { projectPath: string; files: string[] }) => void) => () => void;
+        onBusy: (callback: (state: { action: 'export' | 'import'; file: string } | null) => void) => () => void;
       };
       window: {
         minimize: () => void;
@@ -210,7 +239,13 @@ declare global {
 }
 
 export default function App() {
-  const { project, loadProject, saveProject } = useProjectStore();
+  const { project, loadProject, saveProject, handleExternalChange } = useProjectStore();
+
+  // 開いているプロジェクトが外 (AI エージェント・MCP) で変わったら読み直す
+  useEffect(() => {
+    const off = window.electronAPI?.projectPackage?.onExternalChange((payload) => { void handleExternalChange(payload); });
+    return () => off?.();
+  }, [handleExternalChange]);
   const { 
     showNewProjectDialog, 
     showBuildDialog,
@@ -227,6 +262,8 @@ export default function App() {
     setCurrentView,
     setShowVisionTab,
     appMode,
+    showAssistant,
+    setShowAssistant,
   } = useUIStore();
 
   // 画像処理タブは既定で隠す (設定で出せる)
@@ -329,6 +366,10 @@ export default function App() {
         )}
 
         <IrUpgradeDialog />
+        <MissingRequirementsDialog />
+        <PackageResultDialog />
+        {project && <ExternalChangeBanner />}
+        {project && showAssistant && <AssistantPanel onClose={() => setShowAssistant(false)} />}
         {showSetupWizard && (
           <SetupWizard onClose={() => setShowSetupWizard(false)} />
         )}

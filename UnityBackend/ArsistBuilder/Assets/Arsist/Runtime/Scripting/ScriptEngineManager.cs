@@ -107,6 +107,10 @@ namespace Arsist.Runtime.Scripting
             _engine.SetValue("error", new Action<object>(msg =>
                 Debug.LogError($"[ArsistJS] {msg}")));
 
+            // 拡張機能が出す名前 (Extensions/<id>/extension.json の script.globals)。
+            // 組み込みの名前は上書きできない (ArsistScriptBridge.Set が断る)。
+            Arsist.Runtime.Extensions.ArsistExtensions.InstallScriptGlobals(_engine);
+
             // 互換グローバルを提供（window / globalThis / console）
             // 既存サンプルやユーザースクリプトが browser-like API を使っても落ちないようにする
             _engine.Execute(@"

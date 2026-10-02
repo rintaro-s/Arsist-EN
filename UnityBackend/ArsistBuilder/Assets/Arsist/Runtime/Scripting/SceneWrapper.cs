@@ -33,6 +33,16 @@ namespace Arsist.Runtime.Scripting
         }
 
         /// <summary>
+        /// 登録されたオブジェクトを探す (見つからなくても警告を出さない)。拡張機能から使う。
+        /// </summary>
+        public bool TryGetObject(string id, out GameObject obj)
+        {
+            obj = null;
+            if (string.IsNullOrEmpty(id)) return false;
+            return _dynamicObjects.TryGetValue(id, out obj) && obj != null;
+        }
+
+        /// <summary>
         /// 登録されたオブジェクトを取得する
         /// </summary>
         private GameObject GetObject(string id)

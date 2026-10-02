@@ -47,11 +47,20 @@ const uuid_1 = require("uuid");
 const YAML = __importStar(require("yaml"));
 const irVersion_1 = require("../../shared/irVersion");
 const migrations_1 = require("./migrations");
+const extensions_1 = require("../../shared/extensions");
+const catalogService_1 = require("../extensions/catalogService");
+const adapterDirs_1 = require("../adapters/adapterDirs");
+const projectIO_1 = require("./projectIO");
 const defaults_1 = require("./defaults");
 // ========================================
 // ProjectManager
 // ========================================
 class ProjectManager {
+    /** 保存したファイルとその中身を知らせる先 (ProjectWatcher.recordOwnWrite) */
+    writeObserver = null;
+    setWriteObserver(observer) {
+        this.writeObserver = observer;
+    }
     currentProject = null;
     projectPath = null;
     /**
@@ -102,6 +111,7 @@ class ProjectManager {
                 scenes: [],
                 uiLayouts: [],
                 models: [],
+                extensions: {},
                 buildSettings: {
                     packageName: `com.arsist.${options.name.toLowerCase().replace(/\s+/g, '')}`,
                     version: '1.0.0',
@@ -165,15 +175,38 @@ class ProjectManager {
                 throw e;
             }
             const project = migration.project;
-            const upgrade = migration.from < migration.to
+            // このプロジェクトが使う拡張機能と端末が、このエディタに揃っているか。
+            // IR は有効にした拡張機能を id で、端末をアダプタ名で持っているので、開く前に分かる。
+            // 足りないまま開くと、拡張機能の設定が画面に出ないまま保存され、ビルドからも黙って外れる。
+            const catalog = await (0, catalogService_1.getExtensionCatalog)(true);
+            const missing = (0, extensions_1.checkProjectRequirements)(project, catalog.extensions.map((e) => e.manifest), await (0, adapterDirs_1.listBuiltinAdapterNames)(), irVersion_1.CURRENT_IR_VERSION);
+            if (missing.length > 0) {
+                return { success: false, error: 'requirementsMissing', missing };
+            }
+            let upgrade = migration.from < migration.to
                 ? { from: migration.from, to: migration.to, applied: migration.applied, changes: migration.changes }
                 : undefined;
-            // Scripts ディレクトリが存在しない場合は作成 (読み取り専用で開くときは触らない)
-            if (!upgrade)
-                await fs.ensureDir(path.join(projectPath, 'Scripts'));
             // シーン、UIの詳細を読み込み
             project.scenes = await this.loadScenes(projectPath, project.scenes);
             project.uiLayouts = await this.loadUILayouts(projectPath, project.uiLayouts);
+            // 拡張機能のデータ (extensions.<id> と物の ext.<id>)。拡張機能ごとの版で移行する。
+            // シーンの物にも掛けるので、シーンを読んだ後。本体の IR と同じく、承諾までは書き戻さない。
+            try {
+                const ext = (0, extensions_1.migrateExtensionData)(project, catalog.extensions.map((e) => e.manifest));
+                for (const problem of ext.problems)
+                    console.warn(`[Arsist] extension data: ${problem}`);
+                if (ext.upgrades.length > 0) {
+                    upgrade = upgrade ?? { from: migration.to, to: migration.to, applied: [], changes: [] };
+                    upgrade.extensions = ext.upgrades;
+                }
+            }
+            catch (e) {
+                // 拡張機能の一覧が読めなくても、プロジェクト自体は開く (データには触れていない)
+                console.warn(`[Arsist] extension data was not checked: ${e.message}`);
+            }
+            // Scripts ディレクトリが存在しない場合は作成 (読み取り専用で開くときは触らない)
+            if (!upgrade)
+                await fs.ensureDir(path.join(projectPath, 'Scripts'));
             this.currentProject = project;
             this.projectPath = projectPath;
             this.readOnly = upgrade !== undefined;
@@ -241,15 +274,22 @@ class ProjectManager {
         try {
             Object.assign(this.currentProject, data);
             this.currentProject.updatedAt = new Date().toISOString();
+            // 1 ファイルずつ「一時ファイル → 置き換え」で書く (途中で落ちても半端な JSON を残さない。
+            // MCP のエージェントが同時に読んでも、書きかけを見ない)。書いた中身は監視役に知らせ、
+            // 自分の保存を「外での変更」と取り違えないようにする。
+            const save = async (file, data) => {
+                const text = await (0, projectIO_1.atomicWriteJson)(file, data);
+                this.writeObserver?.(file, text);
+            };
             // メインプロジェクトファイル保存
-            await fs.writeJSON(path.join(this.projectPath, 'project.json'), this.currentProject, { spaces: 2 });
+            await save(path.join(this.projectPath, 'project.json'), this.currentProject);
             // 各シーンを個別ファイルに保存
             for (const scene of this.currentProject.scenes) {
-                await fs.writeJSON(path.join(this.projectPath, 'Scenes', `${scene.id}.json`), scene, { spaces: 2 });
+                await save(path.join(this.projectPath, 'Scenes', `${scene.id}.json`), scene);
             }
             // 各UIレイアウトを保存
             for (const ui of this.currentProject.uiLayouts) {
-                await fs.writeJSON(path.join(this.projectPath, 'UI', `${ui.id}.json`), ui, { spaces: 2 });
+                await save(path.join(this.projectPath, 'UI', `${ui.id}.json`), ui);
             }
             return { success: true };
         }

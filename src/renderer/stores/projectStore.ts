@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { useUIStore } from './uiStore';
+import { newExtensionState, type ExtensionManifest } from '../../shared/extensions';
 import type {
   ArsistProject,
   SceneData,
@@ -32,6 +33,8 @@ export interface IrUpgradeOffer {
   to: number;
   applied: string[];
   changes: string[];
+  /** 拡張機能のデータの移行 (本体の版と独立) */
+  extensions?: Array<{ id: string; from: number; to: number; changes: string[] }>;
 }
 
 /** Surface a project error to the console panel instead of failing silently. */
@@ -64,6 +67,21 @@ interface ProjectState {
   irUpgrade: IrUpgradeOffer | null;
   /** 提案のダイアログを出しているか。見送っても、保存しようとしたらもう一度出る */
   showIrUpgrade: boolean;
+  /**
+   * 開こうとしたプロジェクトが要る拡張機能・端末が無かったとき (main の 'requirementsMissing')。
+   * MissingRequirementsDialog が見せ、拡張機能を入れたら同じパスで開き直す。
+   */
+  missingRequirements: { path: string; missing: Array<{ kind: string; id: string; detail: string }> } | null;
+  clearMissingRequirements: () => void;
+  /**
+   * 開いているプロジェクトのファイルが外 (AI エージェント・MCP・別のエディタ) で変わった。
+   * 未保存の変更が無ければすぐ読み直し、あれば (ここに入れて) 利用者に訊く。
+   */
+  externalChange: { files: string[] } | null;
+  handleExternalChange: (payload: { projectPath: string; files: string[] }) => Promise<void>;
+  dismissExternalChange: () => void;
+  /** 開いているプロジェクトを読み直す (見ているシーン・レイアウト・選択は、残っていれば保つ) */
+  reloadProject: () => Promise<boolean>;
 
   // Scene
   currentSceneId: string | null;
@@ -135,6 +153,13 @@ interface ProjectState {
   // --- AR ---
   updateARSettings: (updates: Partial<ARSettings>) => void;
 
+  // Extensions (IR v4: project.extensions / SceneObject.ext)
+  /** 有効にする (初めてなら既定の設定で作る) / 無効にする (設定は残す) */
+  setExtensionEnabled: (manifest: ExtensionManifest, enabled: boolean) => void;
+  updateExtensionSettings: (id: string, updates: Record<string, unknown>) => void;
+  /** 物の ext.<id> を書き換える。null で消す */
+  updateObjectExtension: (objectId: string, id: string, updates: Record<string, unknown> | null) => void;
+
   // --- Perception ---
   addPerceptionTarget: (target: Pick<PerceptionTarget, 'name' | 'imagePath' | 'physicalWidth'> &
     Partial<PerceptionTarget>) => string | null;
@@ -181,6 +206,51 @@ export const useProjectStore = create<ProjectState>()(
     readOnly: false,
     irUpgrade: null,
     showIrUpgrade: false,
+    missingRequirements: null,
+    clearMissingRequirements: () => set((s) => { s.missingRequirements = null; }),
+    externalChange: null,
+
+    handleExternalChange: async ({ projectPath, files }) => {
+      const { project, projectPath: current, isDirty } = get();
+      if (!project || !current || current !== projectPath) return;
+      if (isDirty) {
+        set((s) => { s.externalChange = { files }; });
+        return;
+      }
+      if (await get().reloadProject()) {
+        try {
+          useUIStore.getState().addConsoleLog({ type: 'info', message: `Reloaded changes made outside the editor: ${files.join(', ')}` });
+        } catch { /* ignore */ }
+      }
+    },
+
+    dismissExternalChange: () => set((s) => { s.externalChange = null; }),
+
+    reloadProject: async () => {
+      const { projectPath, currentSceneId, currentUILayoutId, selectedObjectIds, currentScriptId } = get();
+      if (!projectPath || !window.electronAPI) return false;
+      const result = await window.electronAPI.project.load(projectPath);
+      if (!result.success) {
+        if (result.error === 'requirementsMissing') set((s) => { s.missingRequirements = { path: projectPath, missing: result.missing ?? [] }; });
+        else notifyProjectError('Failed to reload project', result.error);
+        return false;
+      }
+      set((s) => {
+        const p = result.project;
+        s.project = p;
+        s.isDirty = false;
+        s.externalChange = null;
+        s.readOnly = Boolean(result.upgrade);
+        s.irUpgrade = result.upgrade ?? null;
+        s.showIrUpgrade = Boolean(result.upgrade);
+        s.currentSceneId = p.scenes.some((x: { id: string }) => x.id === currentSceneId) ? currentSceneId : p.scenes[0]?.id ?? null;
+        s.currentUILayoutId = p.uiLayouts.some((x: { id: string }) => x.id === currentUILayoutId) ? currentUILayoutId : p.uiLayouts[0]?.id ?? null;
+        const scene = p.scenes.find((x: { id: string }) => x.id === s.currentSceneId);
+        s.selectedObjectIds = selectedObjectIds.filter((id) => scene?.objects?.some((o: { id: string }) => o.id === id));
+        s.currentScriptId = (p.scripts ?? []).some((x: { id: string }) => x.id === currentScriptId) ? currentScriptId : p.scripts?.[0]?.id ?? null;
+      });
+      return true;
+    },
     currentSceneId: null,
     selectedObjectIds: [],
     selectedPerceptionTargetId: null,
@@ -225,6 +295,7 @@ export const useProjectStore = create<ProjectState>()(
         const result = await window.electronAPI.project.load(path);
         if (result.success) {
           set((s) => {
+            s.missingRequirements = null;
             s.project = result.project;
             s.projectPath = path;
             s.isDirty = false;
@@ -237,6 +308,8 @@ export const useProjectStore = create<ProjectState>()(
             s.selectedTransformId = null;
             s.currentScriptId = result.project.scripts?.[0]?.id ?? null;
           });
+        } else if (result.error === 'requirementsMissing') {
+          set((s) => { s.missingRequirements = { path, missing: result.missing ?? [] }; });
         } else if (result.error === 'irTooNew') {
           notifyProjectError(
             'This project was saved by a newer Arsist',
@@ -764,6 +837,45 @@ export const useProjectStore = create<ProjectState>()(
       set((s) => {
         if (!s.project) return;
         s.project.arSettings = { ...s.project.arSettings, ...updates };
+        s.isDirty = true;
+      });
+    },
+
+    // ========================================
+    // Extensions
+    // ========================================
+
+    setExtensionEnabled: (manifest, enabled) => {
+      set((s) => {
+        if (!s.project) return;
+        const all = s.project.extensions ?? (s.project.extensions = {});
+        const current = all[manifest.id];
+        if (current) current.enabled = enabled;
+        else if (enabled) all[manifest.id] = newExtensionState(manifest);
+        s.isDirty = true;
+      });
+    },
+
+    updateExtensionSettings: (id, updates) => {
+      set((s) => {
+        const state = s.project?.extensions?.[id];
+        if (!state) return;
+        state.settings = { ...state.settings, ...updates };
+        s.isDirty = true;
+      });
+    },
+
+    updateObjectExtension: (objectId, id, updates) => {
+      set((s) => {
+        if (!s.project || !s.currentSceneId) return;
+        const scene = s.project.scenes.find((sc) => sc.id === s.currentSceneId);
+        const obj = scene?.objects.find((o) => o.id === objectId);
+        if (!obj) return;
+        const ext = { ...(obj.ext ?? {}) };
+        if (updates === null) delete ext[id];
+        else ext[id] = { ...(ext[id] ?? {}), ...updates };
+        if (Object.keys(ext).length > 0) obj.ext = ext;
+        else delete obj.ext;
         s.isDirty = true;
       });
     },

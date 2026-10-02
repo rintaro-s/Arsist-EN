@@ -6,6 +6,8 @@
   "description": "XREAL One ARグラス用アダプター（XREAL SDK 3.1.0対応）",
   "author": "Arsist Team",
   "license": "MIT",
+  "tagsNote": "タグは src/shared/adapterTags.ts。id → device:*, build.platform → platform:*, capabilities の true → cap:* は自動で付くので、ここには表に無い性質だけを書く。",
+  "tags": ["cap:camera-access", "cap:optical-see-through", "cap:system-keyboard", "cap:phone-controller"],
   
   "device": {
     "manufacturer": "XREAL",

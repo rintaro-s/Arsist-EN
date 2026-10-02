@@ -68,8 +68,9 @@ async function main() {
     const tools = toolsResponse.tools || [];
     console.log(`✅ Tools available: ${tools.length}`);
     
-    if (tools.length !== 17) {
-      throw new Error(`Expected 17 tools, got ${tools.length}`);
+    // 旧サーバーの 17 ツールが残っていること (新しいツールは増えてよい。下で名前を 1 つずつ確かめる)
+    if (tools.length < 17) {
+      throw new Error(`Expected at least 17 tools, got ${tools.length}`);
     }
 
     const expectedTools = [
