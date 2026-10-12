@@ -72,9 +72,9 @@ describe('extension staging', () => {
   });
 
   it('writes the resolved entries Unity reads', () => {
-    const m = ext('a', { script: { globals: ['thing'] }, data: { version: 2, settings: [], migrations: [{ from: 1, to: 2 }] } }).manifest;
+    const m = ext('a', { script: { globals: ['thing'] }, data: { version: 2, settings: [], migrations: [{ from: 1, to: 2 }] }, replaces: ['vrm-loader'] }).manifest;
     expect(manifestEntries([{ manifest: m, settings: { k: 1 }, dataVersion: 2, deferred: [] }])).toEqual([
-      { id: 'a', version: '1.2.3', dataVersion: 2, settings: { k: 1 }, entry: 'Arsist.Extensions.a.Entry', scriptGlobals: ['thing'] },
+      { id: 'a', version: '1.2.3', dataVersion: 2, settings: { k: 1 }, entry: 'Arsist.Extensions.a.Entry', scriptGlobals: ['thing'], replaces: ['vrm-loader'] },
     ]);
   });
 });
@@ -88,6 +88,11 @@ describe('extension catalog', () => {
     expect(room?.source).toBe('linked');
     expect(room?.root).toBe(samples);
     expect(catalog.extensions.map((e) => e.manifest.id)).toContain('quest-input');
+    // VRM 1.0 (公式。Extensions/ にある): エンジンの VRM の読み込みを置き換え、UniVRM の .unitypackage を持ってくる
+    const vrm10 = catalog.extensions.find((e) => e.manifest.id === 'vrm10');
+    expect(vrm10?.source).toBe('repo');
+    expect(vrm10?.manifest.replaces).toEqual(['vrm-loader']);
+    expect(vrm10?.manifest.unity?.unitypackages).toEqual(['Packages/VRM-0.131.3_011b.unitypackage']);
   });
 
   it('accepts a registered folder that is itself one extension, and reports a registered folder that is gone', async () => {

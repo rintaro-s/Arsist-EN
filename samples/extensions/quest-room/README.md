@@ -5,6 +5,7 @@ Meta の MR Utility Kit (MRUK) で読み取り、アプリから使えるよう�
 
 - **本物の面に置く** — パネルや 3D の物を、本物の壁に貼る・机の上に載せる・床に立てる
 - **本物の家具に当たる** — 壁・床・家具に当たり判定。落ちる物・投げた物がそこで止まる (UI を指す邪魔はしない)
+- **本物の物で隠す** — 本物の机や壁の向こうに回った仮想の物 (キャラクターなど) が、その机・壁で隠れる
 - **輪郭を見せる** — 認識した面の縁に線を引く。部屋が現実とずれていないかがひと目で分かる
 - **場所を覚える** — `room.pin(id)` で空間アンカーを作り、次に起動しても同じ場所に戻る
 - **部屋を問い合わせる** — スクリプトの `room.*`、ストアの `room.*`
@@ -27,6 +28,7 @@ Meta の MR Utility Kit (MRUK) で読み取り、アプリから使えるよう�
 1. 上のタブの **拡張機能** → 「部屋を理解する (Quest)」のスイッチを入れる (選ぶと設定・説明が出る)
 2. 物 (例: Canvas) を選び、インスペクタ → **拡張機能** → 「本物の面に置く」を `壁` に
    - どれに置くか: `置いた方向の先にあるもの` (開始位置から、置いた場所の方を見て最初の壁) / `置いた位置にいちばん近いもの`
+   - 机・床の上での向き: `立てる (こちらを向く)` / `寝かせる (机に置いた紙のように)` — 机の上に問題を「置く」ならパネルを寝かせる
    - 面からの浮かせ (m)
 3. Quest 向けにビルド
 
@@ -41,6 +43,7 @@ Meta の MR Utility Kit (MRUK) で読み取り、アプリから使えるよう�
 | requestSpaceSetup | on | 部屋が未スキャンなら、スキャン画面を開く |
 | roomColliders | on | 壁・床・家具に当たり判定 (レイヤー Ignore Raycast。UI のレイには当たらない) |
 | showSurfaces | off | 認識した面の輪郭を描く (壁=水色・床=緑・机=橙…) |
+| occlusion | off | 本物の家具・壁が、その向こうの仮想の物を隠す (スキャンした箱の形なので縁は大まか。手や動く物では隠れない) |
 | publishToStore | on | 下の `room.*` をストアに入れる |
 | highFidelity | off | 斜めの天井・複数の階 (対応端末のみ。無ければ普通の部屋で読む) |
 
@@ -71,6 +74,14 @@ room.onReady(function () {
 
 var hit = room.lookAt();          // { hit, label, x, y, z, distance, normal }
 var tables = room.list('table');  // [{ label, x, y, z, width, depth, height, top, normal }]
+
+// 机に置いた紙のように、問題のパネルを机の上に寝かせる
+room.place('Quiz', 'table', 'nearest', 0.005, 'flat');
+
+// コントローラー (quest-input) で指した床の点を「キャラクターの席」にする
+var a = controller.aim('right');
+var p = room.raycast(a.x, a.y, a.z, a.forward.x, a.forward.y, a.forward.z, 'floor');
+if (p.hit) scene.setPosition('Sister', p.x, p.y, p.z);
 ```
 
 | | |
@@ -79,7 +90,8 @@ var tables = room.list('table');  // [{ label, x, y, z, width, depth, height, to
 | `room.onReady(fn)` | 使えるようになったら (もう使えるなら今すぐ) |
 | `room.count(surface)` / `room.list([surface])` | 数・一覧 |
 | `room.lookAt([surface])` | 今見ている先の面 |
-| `room.place(id, surface[, pick[, offset]])` | 置く。pick: `gaze` (今見ている先、既定) / `ahead` / `nearest` |
+| `room.place(id, surface[, pick[, offset[, lie]]])` | 置く。pick: `gaze` (今見ている先、既定) / `ahead` / `nearest`。lie: `upright` (既定) / `flat` (寝かせる) |
+| `room.raycast(x, y, z, dx, dy, dz[, surface])` | その点からその向きに最初に当たる面 (`lookAt` と同じ形)。手・コントローラーで指した先 |
 | `room.isInside()` | ユーザーが部屋の中にいるか |
 | `room.pin(id[, fn(ok, detail)])` / `room.unpin(id[, fn])` / `room.pinned(id)` | 場所を覚える |
 
@@ -96,6 +108,8 @@ var tables = room.list('table');  // [{ label, x, y, z, width, depth, height, to
 - `Runtime/QuestRoomPins.cs` — `OVRSpatialAnchor` の保存と読み戻し。物を空間アンカーの子にはせず、
   `RoomPinFollower` が毎フレーム姿勢を写す (シーンの階層を変えない)
 - `Runtime/RoomScriptApi.cs` — スクリプトの `room`
+- `Runtime/Resources/ArsistQuestRoomOccluder.shader` — `occlusion` で使う「深度だけ書く」シェーダー。部屋の箱と同じ形を
+  他の物より先に描き、その奥の仮想の物を隠す (パススルーの上なので、その形自体は見えない)
 
 MRUK は OVRCameraRig が無いと、部屋をワールド原点基準で置く。Arsist の XR Origin は原点にあるので
 一致するはず。起動時のログ `tracking origin …, head at …` と、ずれていれば警告が出る。

@@ -26,6 +26,7 @@ import type {
   PerceptionTask,
   ModelDefinition,
 } from '../../shared/types';
+import { CHARACTER_DEFAULTS } from '../../shared/types';
 
 /** 古い版の IR を開いたときの提案 (main の PendingUpgrade と同じ形)。 */
 export interface IrUpgradeOffer {
@@ -165,6 +166,9 @@ interface ProjectState {
 
   // --- AR ---
   updateARSettings: (updates: Partial<ARSettings>) => void;
+
+  /** 端末に保存する store のキー (project.storage.persist, IR v5) */
+  setPersistedKeys: (persist: string[]) => void;
 
   // Extensions (IR v4: project.extensions / SceneObject.ext)
   /** 有効にする (初めてなら既定の設定で作る) / 無効にする (設定は残す) */
@@ -504,6 +508,12 @@ export const useProjectStore = create<ProjectState>()(
             scale: { x: 1, y: 1, z: 1 },
           },
           material: obj.material || { color: '#FFFFFF', metallic: 0.5, roughness: 0.5 },
+          ...(obj.assetId ? { assetId: obj.assetId } : {}),
+          ...(obj.ext ? { ext: obj.ext } : {}),
+          // 新しく置いた VRM は最初からキャラクター (まばたき・呼吸・こちらを見る)。古い VRM は character 無し = 今までどおり
+          ...((obj.character || (obj.type === 'vrm'))
+            ? { character: obj.character ?? { ...CHARACTER_DEFAULTS } }
+            : {}),
         };
 
         scene.objects.push(newObj);
@@ -864,6 +874,15 @@ export const useProjectStore = create<ProjectState>()(
       });
     },
 
+    setPersistedKeys: (persist) => {
+      set((s) => {
+        if (!s.project) return;
+        const clean = [...new Set(persist.map((k) => k.trim()).filter(Boolean))];
+        s.project.storage = { ...(s.project.storage ?? {}), persist: clean };
+        s.isDirty = true;
+      });
+    },
+
     // ========================================
     // Extensions
     // ========================================
@@ -1180,6 +1199,7 @@ export const useProjectStore = create<ProjectState>()(
             code: sc.code,
             enabled: sc.enabled,
           })),
+        storage: { persist: project?.storage?.persist ?? [] },
       };
     },
   })),

@@ -17,6 +17,8 @@ into an Android APK for AR glasses (XREAL) and VR headsets (Meta Quest).
 - **No in-repo head tracking / sensor fusion / HID.** All pose/tracking/rendering is delegated to vendor SDKs
   (`sdk/com.xreal.xr`, `sdk/quest`) through **Unity XR Management + OpenXR / AR Foundation**.
 - Core data model: **DataSource → DataStore → UI** (see `doc/00-overview.md`).
+- Characters, voice, camera stills and on-device memory (IR v5): `doc/18-characters-voice-memory.md`. Script APIs are
+  listed once in `src/shared/scriptApi.ts` (editor reference + agent reference).
 
 ## Tech stack per layer
 
@@ -43,7 +45,7 @@ Build system: **npm + Vite + tsc + electron-builder** (no CMake/Cargo). Unity pr
 |------|----------------|
 | [main.ts](src/main/main.ts) | App lifecycle, IPC handlers, menu, project watcher, Unity path detection, OS tuning |
 | [ipc/aiIpc.ts](src/main/ipc/aiIpc.ts) | IPC for MCP agent registration, the built-in assistant, and `.arsist` project export/import |
-| `mcp/` | `tools.ts` (all 38 IR tools, shared by MCP and the assistant), `server.ts` (stdio server), `agentTargets.ts` (one-click registration into Claude Code / Codex / Qwen Code / …), `launch.ts` (launch spec + self-test), `scriptReference.ts` |
+| `mcp/` | `tools.ts` (all 41 IR tools, shared by MCP and the assistant), `server.ts` (stdio server), `agentTargets.ts` (one-click registration into Claude Code / Codex / Qwen Code / …), `launch.ts` (launch spec + self-test), `scriptReference.ts` |
 | [agent/assistant.ts](src/main/agent/assistant.ts) | Built-in agent: OpenAI-compatible chat completions + function calling, snapshot/undo in `Backups/agent/` |
 | `project/projectIO.ts`, `projectWatcher.ts`, `projectPackage.ts` | Atomic writes + per-project write queue for out-of-editor edits; reload on external change; `.arsist` project export/import (bundles extensions) |
 | [preload.ts](src/main/preload.ts) | contextBridge IPC surface exposed to renderer |
@@ -61,12 +63,13 @@ Editor views switched by `uiStore.currentView`: `scene` / `ui` / `dataflow` / `s
 - `components/panels/` — Left (hierarchy), Right (inspector), Bottom.
 - `components/vision/` — the image-pipeline editor (its tab is hidden unless Settings turns it on; existing
   projects keep building either way): start screen, storyboard (horizontal cards with each step's result picture, kind-coloured wires, drag, bypass), stage (overlay/raw/compare, legend, pixel readout, eyedropper for colour/threshold, drag-to-set viewing rect), timeline (video / photo sequences / device frames), add-step picker (every candidate tried on the current picture via `--probe`), step inspector, outputs (world / anchor / store / image), device import, ONNX model panel; `viewport/VisionEditor.tsx` just re-exports it. Editor-only state in `vision/visionStore.ts`; materials in `vision/testMedia.ts`; drafting/auto-wiring in `vision/draft.ts`; icons in `vision/opIcons.tsx`.
+- `components/character/` — VRM **Character** inspector section (starting animation, blink, breathe, look at the user, FBX import) and the 3D-view preview (`animationRetarget.ts`: humanoid FBX → VRM normalized bones, like three-vrm's Mixamo example); `panels/StorageSection.tsx` — "Saved on the device" (`project.storage.persist`) in the Script tab's right panel; `viewport/RevealText.tsx` — the "write it out" text preview. The Script tab's API drawer is generated from `src/shared/scriptApi.ts`.
 - `components/ai/` — **AssistantPanel** (built-in AI chat), **ExternalChangeBanner**; `ai/packageActions.tsx` — `.arsist` export/import flow.
 - `components/dialogs/` — Build, Settings, NewProject, Preview, MCP (agent registration), **SetupWizard** (SDK/Unity path setup), Error, **IrUpgradeDialog** (old project format).
 - `utils/uiCodeSync.ts` — IR ↔ HTML serialization.
 
 ### Unity runtime engine — `UnityBackend/ArsistBuilder/Assets/Arsist/`
-Interprets the IR at runtime, by domain: `Runtime/Scripting/` (Jint JS host + wrappers), `Runtime/Scene/`,
+Interprets the IR at runtime, by domain: `Runtime/Scripting/` (Jint JS host + wrappers; `ScriptRuntimeHost` = timers and main-thread queue, `AudioWrapper`, `CameraWrapper` (stills cropped around a world point), `StorageWrapper`, `JsBridge` = JS⇄CLR values via JSON), `Runtime/Data/ArsistPersistentStore.cs` (store keys kept on the device), `Runtime/Audio/` (WAV/base64 decoding, lip sync), `Runtime/VRM/ArsistCharacter.cs` (animator controller, blink, breathing, look at the user, walkTo), `Runtime/UI/ArsistTextReveal.cs`, `Runtime/Scene/`,
 `Runtime/UI/`, `Runtime/DataFlow/`, `Runtime/Data/`, `Runtime/VRM/`, `Runtime/Network/` (WebSocket for Python),
 `Runtime/Input/` (gaze), `Runtime/Events/`, `Runtime/Audio/`, `Runtime/Animation/`, `Runtime/Pooling/`,
 `Runtime/Perception/` (image anchors: `Vision/` = device-independent recogniser, `Sources/` = per-device camera
@@ -84,11 +87,18 @@ Each = `adapter.json` (metadata + **tags**) + `AndroidManifest.xml` + a C# build
 One folder per extension: `extension.json` (what, `requires` tags, settings/per-object fields, data version +
 migrations, script globals, Android permissions, C# entry), `Runtime/*.cs`, optional `Editor/*.cs`.
 - Shared model: [src/shared/extensions.ts](src/shared/extensions.ts) (validate / resolve / migrate data),
-  [tags.ts](src/shared/tags.ts), [irOps.ts](src/shared/irOps.ts), [engineFeatures.ts](src/shared/engineFeatures.ts).
+  [tags.ts](src/shared/tags.ts), [irOps.ts](src/shared/irOps.ts), [engineFeatures.ts](src/shared/engineFeatures.ts),
+  [engineParts.ts](src/shared/engineParts.ts) (engine parts an extension may replace via `replaces`: `vrm-loader`,
+  `storage-backend`, `script:<built-in>`; mirrored by `Runtime/Extensions/ArsistEngineParts.cs`, checked by a test).
 - Main: `src/main/extensions/` (catalog from `Extensions/`, `resources/Extensions`, `<userData>/extensions` and
-  registered folders — `linkedFolders.ts`, config key `extensionFolders`, used in place without copying; staging helpers). Build: `UnityBuilder.planExtensions` / `stageExtensions`.
+  registered folders — `linkedFolders.ts`, config key `extensionFolders`, used in place without copying; staging helpers;
+  `unitypackage.ts` unpacks an extension's `.unitypackage` without Unity and remembers what it placed). Build:
+  `UnityBuilder.planExtensions` (also decides who replaces which engine part → `manifest.replacements`) / `stageExtensions`
+  (`stageExtensionUnityPackages`, `dropReplacedEngineSdks`).
 - Unity: `Runtime/Extensions/` (`ArsistRuntimeExtension`, `ArsistExtensionContext`, `ArsistScriptBridge`,
-  `ArsistExtensions`, `ArsistExtensionHost`, `ArsistObjectExt`), `Editor/Extensions/ArsistBuildExtensions.cs`.
+  `ArsistExtensions`, `ArsistExtensionHost`, `ArsistObjectExt`, `ArsistEngineParts`), `Editor/Extensions/ArsistBuildExtensions.cs`.
+  Replaceable parts' interfaces: `Runtime/VRM/IArsistVrmLoader.cs` (+ `IArsistVrmFace` / `IArsistVrmEyes`, used by
+  `VRMExpressionController` / `VRMLookAtController`), `Runtime/Data/IArsistStorageBackend.cs` (+ the default file backend).
 - Editor UI: the **Extensions tab** `components/extensions/ExtensionsWorkspace.tsx` (list with on/off switches, description,
   where it runs, settings, per-object options and which objects use them, README via `components/common/MiniMarkdown.tsx`);
   `components/panels/ExtensionsSection.tsx` keeps the right-panel summary and the per-object inspector section
@@ -100,6 +110,9 @@ migrations, script globals, Android permissions, C# entry), `Runtime/*.cs`, opti
   as scripts `controller`/`hands`/`mic`/`keyboard`/`headset`, store `input.*`, script events `quest-input:*`, and
   no-code grab/throw). Its gesture and audio maths are UnityEngine-free and checked by `npm run test:perception`
   (`QuestInputChecks`).
+- Official extensions (`Extensions/`, ship with the engine, marked "official" in the Extensions tab): `vrm10` replaces the
+  engine's VRM loading (UniVRM 0.x) with UniVRM 0.131.3's VRM 1.0 loader, carried as
+  `Packages/VRM-0.131.3_011b.unitypackage` (`unity.unitypackages`); VRM 0.x models are converted on load.
 - An extension can name engine features it relies on in its `tags` (`feature:text-input`, `feature:hand-tracking`);
   the build adds them to `manifest.features` and the pipeline then adds the matching Android declarations
   (`ArsistBuildPipeline.ManifestUsesFeature` / `WantsSystemKeyboard`).

@@ -66,6 +66,13 @@ describe('extension manifests', () => {
     expect(bad({ unity: { runtimeDir: '../elsewhere' } })[0]).toMatch(/runtimeDir/);
     expect(bad({ android: { permissions: ['not a permission'] } })[0]).toMatch(/permission/);
     expect(bad({ data: { version: 2 } })[0]).toMatch(/no migrations/);
+    expect(bad({ replaces: ['vrm-loader', 'script:audio'] })).toEqual([]);
+    expect(bad({ replaces: ['renderer'] })[0]).toMatch(/unknown engine part/);
+    expect(bad({ replaces: ['script:__arsistTimers'] })[0]).toMatch(/not a built-in script name/);
+    expect(bad({ replaces: 'vrm-loader' })[0]).toMatch(/must be an array/);
+    expect(bad({ unity: { unitypackages: ['Packages/VRM.unitypackage'] } })).toEqual([]);
+    expect(bad({ unity: { unitypackages: ['../VRM.unitypackage'] } })[0]).toMatch(/inside the extension/);
+    expect(bad({ unity: { unitypackages: ['Packages/sdk.tgz'] } })[0]).toMatch(/\.unitypackage/);
     expect(bad({ data: { version: 1, settings: [{ key: 'm', type: 'select', default: 'z', label: { en: 'M', ja: 'M' }, options: [{ value: 'a', label: { en: 'A', ja: 'A' } }] }] } })[0])
       .toMatch(/one of the options/);
   });

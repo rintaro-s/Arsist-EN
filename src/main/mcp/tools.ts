@@ -32,6 +32,11 @@ import { matchTagQuery } from '../../shared/tags';
 import { projectFeatureTags, unsupportedFeatures } from '../../shared/engineFeatures';
 import { CURRENT_IR_VERSION, readIrVersion } from '../../shared/irVersion';
 import { scriptReferenceFor } from './scriptReference';
+import { importAnimation, listAnimations } from '../project/animationAssets';
+import { characterAnimationIssues } from '../../shared/characterChecks';
+import { readVrmSpec } from '../project/vrmInfo';
+import { enginePart, enginePartLabel, planReplacements } from '../../shared/engineParts';
+import { CHARACTER_DEFAULTS } from '../../shared/types';
 
 type Args = Record<string, any>;
 
@@ -267,7 +272,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
   },
   {
     name: 'ir_validate_project',
-    description: 'Check the project before building: missing extensions or device, features the target device cannot do, canvases without a layout, script syntax errors, duplicate assetIds.',
+    description: 'Check the project before building: missing extensions or device, features the target device cannot do, canvases without a layout, script syntax errors, duplicate assetIds, animation names that do not exist.',
     inputSchema: schema({}),
     readOnly: true,
     async run(args, session) {
@@ -298,6 +303,28 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         }
       }
       for (const [a, n] of assetIds) if (n > 1) warnings.push(`assetId "${a}" is used by ${n} objects; scripts will reach only one`);
+      const animations = (await listAnimations(session.resolve(args))).map((a) => a.name);
+      for (const issue of characterAnimationIssues(p as any, animations)) warnings.push(issue);
+      // VRM 1.0 は、VRM の読み込みを置き換える拡張機能 (replaces: vrm-loader) が無いと実機で出ない
+      const vrmLoaders = catalog.filter(({ manifest: m }) => (m.replaces ?? []).includes('vrm-loader')).map(({ manifest: m }) => m.id);
+      const vrmLoaderOn = vrmLoaders.some((id) => p.extensions?.[id]?.enabled === true);
+      for (const sc of p.scenes ?? []) {
+        for (const o of sc.objects ?? []) {
+          if (o.type !== 'vrm' || typeof o.modelPath !== 'string' || vrmLoaderOn) continue;
+          if (await readVrmSpec(path.join(session.resolve(args), o.modelPath)) === '1.0') {
+            warnings.push(
+              `"${o.name}" is a VRM 1.0 model, but the engine's own VRM loader (UniVRM 0.x) reads VRM 0.x only; it will not appear on the device. ` +
+              (vrmLoaders.length
+                ? `Enable an extension that replaces vrm-loader: ir_set_extension { id: "${vrmLoaders[0]}" }`
+                : 'No installed extension replaces vrm-loader (the official extension Extensions/vrm10 does; it ships with the engine), or convert the model to VRM 0.x'));
+          }
+        }
+      }
+      // 同じエンジンの部品を 2 つの有効な拡張機能が置き換えていると、ビルドが止まる
+      const enabledManifests = catalog.map((c) => c.manifest).filter((m) => p.extensions?.[m.id]?.enabled === true);
+      for (const c of planReplacements(enabledManifests).conflicts) {
+        problems.push(`extensions ${c.ids.join(' and ')} both replace the engine part ${c.part}; enable only one`);
+      }
       for (const sc of p.scripts ?? []) {
         const r = checkScriptSyntax(sc.code);
         if (!r.ok) problems.push(`script "${sc.name}": ${r.error}${r.line ? ` (line ${r.line})` : ''}`);
@@ -429,8 +456,47 @@ export const ARSIST_TOOLS: ArsistTool[] = [
     },
   },
   {
+    name: 'ir_import_animation',
+    description: 'Copy a humanoid FBX animation (e.g. from Mixamo; walking downloaded "In Place") into Assets/Animations. ' +
+      'Returns its name — use it for a VRM\'s character.animation and in scripts (vrm.playAnimation(id, name), vrm.walkTo uses "Walk"/"Idle").',
+    inputSchema: schema({ sourcePath: { type: 'string' }, name: { type: 'string', description: 'Animation name (default: the file name)' } }, ['sourcePath']),
+    readOnly: false,
+    async run(args, session) {
+      const projectPath = session.resolve(args);
+      const imported = await importAnimation(projectPath, args.sourcePath, args.name);
+      if (!imported.existed) session.changed = true;
+      return { success: true, ...imported };
+    },
+  },
+  {
+    name: 'ir_list_animations',
+    description: 'Animations in the project (Assets/Animations/*.fbx). The name is what character.animation and vrm.playAnimation take.',
+    inputSchema: schema({}),
+    readOnly: true,
+    async run(args, session) {
+      const animations = await listAnimations(session.resolve(args));
+      return { animations, hint: animations.length ? undefined : 'none yet — import humanoid FBX files with ir_import_animation' };
+    },
+  },
+  {
+    name: 'ir_set_storage',
+    description: 'Choose which store keys are kept on the device across launches (project.storage.persist). ' +
+      '"memory." keeps every key starting with memory.; any other entry is one exact key. Replaces the list.',
+    inputSchema: schema({ persist: { type: 'array', items: { type: 'string' } } }, ['persist']),
+    readOnly: false,
+    async run(args, session) {
+      if (!Array.isArray(args.persist) || args.persist.some((k: unknown) => typeof k !== 'string' || !k.trim())) {
+        throw new Error('persist: an array of non-empty strings (store keys, or prefixes ending with ".")');
+      }
+      return write(session, args, (p) => {
+        p.storage = { ...(p.storage ?? {}), persist: [...new Set(args.persist.map((k: string) => k.trim()))] };
+        return { success: true, storage: p.storage };
+      });
+    },
+  },
+  {
     name: 'ir_place_model',
-    description: 'Place an imported model (assetPath from ir_import_model_asset) in a scene. .vrm becomes a VRM avatar.',
+    description: 'Place an imported model (assetPath from ir_import_model_asset) in a scene. .vrm becomes a VRM character (blinks, breathes, looks at the user nearby; give it motion with ir_update_object character.animation).',
     inputSchema: schema({
       modelAssetPath: { type: 'string' }, name: { type: 'string' }, assetId: { type: 'string' },
       sceneId: { type: 'string' }, position: vec3, rotation: vec3, scale: vec3,
@@ -441,9 +507,12 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         const s = scene(p, args.sceneId);
         const rel = toRel(args.modelAssetPath);
         const name = args.name || path.basename(rel, path.extname(rel)) || 'Model';
+        const isVrm = path.extname(rel).toLowerCase() === '.vrm';
         const obj: Args = {
-          id: uid(), name, type: path.extname(rel).toLowerCase() === '.vrm' ? 'vrm' : 'model', modelPath: rel,
+          id: uid(), name, type: isVrm ? 'vrm' : 'model', modelPath: rel,
           assetId: args.assetId || name, transform: transformFrom(args),
+          // エディタで置いた VRM と同じ既定 (まばたき・呼吸・近くで見られたら見返す)
+          ...(isVrm ? { character: { ...CHARACTER_DEFAULTS } } : {}),
         };
         s.objects.push(obj);
         return { success: true, object: obj, sceneId: s.id };
@@ -465,10 +534,24 @@ export const ARSIST_TOOLS: ArsistTool[] = [
   },
   {
     name: 'ir_update_object',
-    description: 'Rename an object, change its assetId, color (#RRGGBB) or primitiveType.',
+    description: 'Rename an object, change its assetId, color (#RRGGBB), primitiveType, a canvas panel\'s size / pixel density / layout, or a VRM\'s character settings (animation, blink, breathe, lookAtUser).',
     inputSchema: schema({
       objectId: { type: 'string' }, sceneId: { type: 'string' }, name: { type: 'string' }, assetId: { type: 'string' },
       color: { type: 'string' }, primitiveType: { type: 'string', enum: ['cube', 'sphere', 'plane', 'cylinder', 'capsule'] },
+      canvas: {
+        type: 'object',
+        description: 'Canvas objects only: the panel size in space and its pixel density (pixels across = widthMeters × pixelsPerUnit; UI elements are laid out in those pixels), or another canvas layout',
+        properties: { widthMeters: { type: 'number' }, heightMeters: { type: 'number' }, pixelsPerUnit: { type: 'number' }, layoutId: { type: 'string' } },
+      },
+      character: {
+        type: ['object', 'null'],
+        description: 'VRM only. Merged into the current settings; null removes them (the VRM then just stands relaxed: arms down, no blinking or animation).',
+        properties: {
+          animation: { type: 'string', description: 'Looping animation at start: an ir_list_animations name, "" for none' },
+          blink: { type: 'boolean' }, breathe: { type: 'boolean' },
+          lookAtUser: { type: 'string', enum: ['off', 'always', 'nearby'] },
+        },
+      },
     }, ['objectId']),
     readOnly: false,
     async run(args, session) {
@@ -480,6 +563,31 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         if (args.primitiveType !== undefined) {
           if (object.type !== 'primitive') throw new Error('primitiveType applies to primitives only');
           object.primitiveType = args.primitiveType;
+        }
+        if (args.canvas !== undefined) {
+          if (object.type !== 'canvas') throw new Error('canvas applies to canvas objects only');
+          const next = { ...(object.canvasSettings ?? {}) };
+          for (const key of ['widthMeters', 'heightMeters', 'pixelsPerUnit']) {
+            if (args.canvas[key] === undefined) continue;
+            const v = Number(args.canvas[key]);
+            if (!(v > 0)) throw new Error(`canvas.${key} must be a positive number`);
+            next[key] = v;
+          }
+          if (args.canvas.layoutId !== undefined) {
+            const l = layout(p, args.canvas.layoutId);
+            if (l.scope !== 'canvas') throw new Error(`layout "${l.name}" is scope ${l.scope}; a canvas object needs a scope "canvas" layout`);
+            next.layoutId = l.id;
+          }
+          object.canvasSettings = next;
+        }
+        if (args.character !== undefined) {
+          if (object.type !== 'vrm') throw new Error('character applies to VRM objects only');
+          if (args.character === null) delete object.character;
+          else {
+            const next = { ...(object.character ?? CHARACTER_DEFAULTS), ...args.character };
+            if (!next.animation) delete next.animation;
+            object.character = next;
+          }
         }
         return { success: true, object };
       });
@@ -574,6 +682,49 @@ export const ARSIST_TOOLS: ArsistTool[] = [
     },
   },
   {
+    name: 'ir_update_ui_layout',
+    description: 'Rename a UI layout or change its resolution (the pixel size the editor lays it out in; for a canvas layout match it to its panel: widthMeters × pixelsPerUnit).',
+    inputSchema: schema({
+      layoutId: { type: 'string' }, name: { type: 'string' },
+      resolution: { type: 'object', properties: { width: { type: 'number' }, height: { type: 'number' } } },
+    }, ['layoutId']),
+    readOnly: false,
+    async run(args, session) {
+      return write(session, args, (p) => {
+        const l = layout(p, args.layoutId);
+        if (args.name !== undefined) {
+          if (!String(args.name).trim()) throw new Error('name must not be empty');
+          l.name = String(args.name);
+        }
+        if (args.resolution !== undefined) {
+          const width = Number(args.resolution.width ?? l.resolution?.width);
+          const height = Number(args.resolution.height ?? l.resolution?.height);
+          if (!(width > 0 && height > 0)) throw new Error('resolution width/height must be positive numbers');
+          l.resolution = { width: Math.round(width), height: Math.round(height) };
+        }
+        return { success: true, layout: { id: l.id, name: l.name, scope: l.scope, resolution: l.resolution } };
+      });
+    },
+  },
+  {
+    name: 'ir_remove_ui_layout',
+    description: 'Delete a UI layout. Refused while a canvas object still shows it (remove or re-point that object first).',
+    inputSchema: schema({ layoutId: { type: 'string' } }, ['layoutId']),
+    readOnly: false,
+    async run(args, session) {
+      const result = await write(session, args, (p) => {
+        const l = layout(p, args.layoutId);
+        const users = (p.scenes ?? []).flatMap((sc: Args) => (sc.objects ?? []).filter((o: Args) => o.type === 'canvas' && o.canvasSettings?.layoutId === l.id).map((o: Args) => o.name));
+        if (users.length > 0) throw new Error(`layout "${l.name}" is shown by ${users.join(', ')}; remove or re-point those canvas objects first`);
+        p.uiLayouts = (p.uiLayouts ?? []).filter((x: Args) => x.id !== l.id);
+        return { success: true, removed: { id: l.id, name: l.name } };
+      });
+      // 個別ファイルも消す (残すと「一覧に無いファイル」と言われ続ける)
+      await fs.remove(path.join(session.resolve(args), 'UI', `${result.removed.id}.json`));
+      return result;
+    },
+  },
+  {
     name: 'ir_add_ui_element',
     description: 'Add a UI element (Panel, Text, Button, Image, Slider, Input, Gauge, Graph, Keyboard) under the layout root or a parent. bindingId names it for scripts/events; bind { key } shows a store value.',
     inputSchema: schema({
@@ -582,6 +733,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
       content: { type: 'string' }, bindingId: { type: 'string' }, assetPath: { type: 'string' },
       bind: { type: 'object', properties: { key: { type: 'string' }, format: { type: 'string' } } },
       style: { type: 'object' }, layout: { type: 'string', enum: ['FlexRow', 'FlexColumn', 'Absolute'] },
+      reveal: { type: ['object', 'null'], properties: { speed: { type: 'number', description: 'letters per second' } }, description: 'Text/Button: the text appears letter by letter whenever it changes; null = all at once' },
     }, ['type']),
     readOnly: false,
     async run(args, session) {
@@ -591,6 +743,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         if (!parent) throw new Error(`parent element not found: ${args.parentElementId}`);
         const element: Args = { id: uid(), type: args.type, style: args.style || {}, children: [] };
         for (const key of ['content', 'bindingId', 'assetPath', 'bind', 'layout']) if (args[key] !== undefined) element[key] = args[key];
+        if (args.reveal) element.reveal = { speed: Number(args.reveal.speed) || 12 };
         parent.children = Array.isArray(parent.children) ? parent.children : [];
         parent.children.push(element);
         return { success: true, layoutId: l.id, element };
@@ -603,6 +756,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
     inputSchema: schema({
       layoutId: { type: 'string' }, elementId: { type: 'string' }, type: { type: 'string' }, content: { type: 'string' },
       bindingId: { type: 'string' }, assetPath: { type: 'string' }, bind: { type: 'object' }, style: { type: 'object' }, layout: { type: 'string' },
+      reveal: { type: ['object', 'null'], properties: { speed: { type: 'number', description: 'letters per second' } }, description: 'Text/Button: the text appears letter by letter whenever it changes; null = all at once' },
     }, ['elementId']),
     readOnly: false,
     async run(args, session) {
@@ -613,6 +767,8 @@ export const ARSIST_TOOLS: ArsistTool[] = [
           if (!el) continue;
           for (const key of ['type', 'content', 'bindingId', 'assetPath', 'bind', 'layout']) if (args[key] !== undefined) el[key] = args[key];
           if (args.style !== undefined) el.style = { ...(el.style ?? {}), ...args.style };
+          if (args.reveal === null) delete el.reveal;
+          else if (args.reveal !== undefined) el.reveal = { speed: Number(args.reveal.speed) || 12 };
           return { success: true, layoutId: l.id, element: el };
         }
         throw new Error(`element not found: ${args.elementId}`);
@@ -824,7 +980,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
   // ---- 拡張機能 ----
   {
     name: 'ir_list_extensions',
-    description: 'Installed extensions: what they do, where they run, their settings and per-object options, script globals, whether this project enables them and whether they fit its target device.',
+    description: 'Installed extensions: what they do, where they run, their settings and per-object options, script globals, which engine parts they replace (e.g. vrm-loader: the vrm10 extension loads VRM 1.0), whether this project enables them and whether they fit its target device.',
     inputSchema: schema({}),
     readOnly: true,
     async run(args, session) {
@@ -836,6 +992,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         extensions: (await catalogManifests()).map(({ manifest: m }) => ({
           id: m.id, version: m.version, name: m.name.en, description: m.description.en,
           requires: m.requires, providesDevices: m.provides?.adapters ?? [], scriptGlobals: m.script?.globals ?? [],
+          replacesEngineParts: (m.replaces ?? []).map((part) => ({ part, name: enginePartLabel(part, 'en'), description: enginePart(part)?.description.en })),
           settings: (m.data?.settings ?? []).map(field), objectOptions: (m.data?.object ?? []).map(field),
           enabled: project?.extensions?.[m.id]?.enabled === true,
           currentSettings: project?.extensions?.[m.id]?.settings,

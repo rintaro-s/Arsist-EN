@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { VRM } from '@pixiv/three-vrm';
@@ -7,6 +7,8 @@ import { useProjectStore } from '../../stores/projectStore';
 import { loadVrm, peekVrm } from './vrmCache';
 import { resolveModelUrl } from './modelUrl';
 import { transformOf, type SceneObjectProps } from './sceneObjectProps';
+import { previewAnimationFor, useCharacterStore } from '../character/characterStore';
+import { retargetedClip } from '../character/animationRetarget';
 
 /**
  * VRM アバター。読み込んだものは vrmCache が覚えているので、ビューを作り直しても読み直さない。
@@ -40,7 +42,41 @@ export const VRMViewer = memo(function VRMViewer({ object, isSelected, transform
     return () => { alive = false; };
   }, [object.id, url]);
 
+  // キャラクターの動きの試し再生 (選んでいる間だけ)。実機は Unity の Humanoid が同じ FBX を流す
+  const animations = useCharacterStore((s) => s.animations);
+  const preview = useCharacterStore((s) => s.preview);
+  const animationName = previewAnimationFor(preview, object.id, isSelected, object.character?.animation);
+  const animationPath = animationName ? animations.find((a) => a.name === animationName)?.assetPath : undefined;
+  const animationUrl = animationPath ? resolveModelUrl(animationPath, projectPath) : '';
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+
+  useEffect(() => {
+    if (!vrm || !animationUrl) return;
+    let alive = true;
+    let mixer: THREE.AnimationMixer | null = null;
+    retargetedClip(animationUrl, vrm).then(
+      (clip) => {
+        if (!alive) return;
+        mixer = new THREE.AnimationMixer(vrm.scene);
+        mixer.clipAction(clip).play();
+        mixerRef.current = mixer;
+      },
+      (err: unknown) => console.warn(`[Arsist] animation preview failed (${animationName}):`, err),
+    );
+    return () => {
+      alive = false;
+      if (mixer) {
+        mixer.stopAllAction();
+        mixer.uncacheRoot(vrm.scene);
+      }
+      if (mixerRef.current === mixer) mixerRef.current = null;
+      // 休みの姿勢に戻す (VRM 自体は読み直さない)
+      vrm.humanoid?.resetNormalizedPose();
+    };
+  }, [vrm, animationUrl, animationName]);
+
   useFrame((_state: unknown, delta: number) => {
+    mixerRef.current?.update(delta);
     vrm?.update(delta);
   });
 

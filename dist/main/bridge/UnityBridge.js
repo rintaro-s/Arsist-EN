@@ -298,6 +298,8 @@ function generateBuildManifest(project, overrides = {}) {
         // 有効にした拡張機能とその設定 (IR のまま)。どれが実際にビルドに入るかは、端末のタグと
         // sdk/ の中身を見て UnityBuilder.planExtensions が決め、manifest.json の extensions に書く。
         projectExtensions: project.extensions ?? {},
+        // 端末に保存する store のキー。実機は scripts.json の storage を読む (ここはビルドの機能判定とログ用)
+        storage: { persist: project.storage?.persist ?? [] },
         exportedAt: new Date().toISOString(),
     };
 }
@@ -312,6 +314,7 @@ function generateUnityManifest(project) {
             code: sc.code,
             enabled: sc.enabled,
         })),
+        storage: { persist: project.storage?.persist ?? [] },
     };
     return {
         arsistVersion: '1.0.0',

@@ -32,6 +32,7 @@
  */
 import { applyIrOps, validateIrOps, type IrOp } from './irOps';
 import { matchAdapterName } from './adapterNames';
+import { checkReplaceable } from './engineParts';
 import {
   describeTagQuery,
   isKnownNamespace,
@@ -103,6 +104,11 @@ export interface ExtensionManifest {
     features?: Array<{ name: string; required?: boolean }>;
     metadata?: Array<{ name: string; value: string }>;
   };
+  /**
+   * 置き換えるエンジンの部品 (src/shared/engineParts.ts の id、または "script:<組み込みの名前>")。
+   * 実装は入口の ReplaceEngineParts / RegisterScriptGlobals で渡す。ここに書いていない置き換えは実機で断られる。
+   */
+  replaces?: string[];
   /** この拡張機能が足すもの */
   provides?: {
     /**
@@ -126,6 +132,11 @@ export interface ExtensionManifest {
      */
     packages?: Record<string, string>;
     /**
+     * .unitypackage (拡張機能の中のパス)。ビルドが作業用の Unity プロジェクトに展開し、拡張機能が
+     * 入らなくなったら展開したファイルを消す。UniVRM のように unitypackage でしか配られていないもの用。
+     */
+    unitypackages?: string[];
+    /**
      * エンジンの改変。path は Assets/Arsist からの相対 ("Runtime/Input/ArsistGazeInput.cs")、
      * 中身は拡張機能の Overrides/<path>。replaces は置き換える元ファイルの SHA-256 (16 進)。
      * 元のファイルが無い (新しく足す) ときだけ省略できる。
@@ -145,6 +156,7 @@ export interface ProjectExtensionState {
 /** スクリプトの組み込みの名前 (ScriptEngineManager.InitEngine)。拡張機能はこれを上書きできない。 */
 export const BUILTIN_SCRIPT_GLOBALS = [
   'api', 'ui', 'store', 'scene', 'vrm', 'remote', 'viewer', 'perception', 'model', 'log', 'error',
+  'audio', 'camera', 'storage', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', '__arsistTimers',
   'globalThis', 'window', 'console',
 ];
 
@@ -258,7 +270,7 @@ export function validateExtensionManifest(raw: unknown, folderName?: string): { 
     if (!isPlainObject(m.script) || (globals !== undefined && !Array.isArray(globals))) problems.push('script.globals: must be an array of names');
     else for (const g of globals ?? []) {
       if (typeof g !== 'string' || !JS_NAME_RE.test(g)) problems.push(`script.globals: "${String(g)}" is not a JavaScript name`);
-      else if (BUILTIN_SCRIPT_GLOBALS.includes(g)) problems.push(`script.globals: "${g}" is a built-in name and cannot be replaced`);
+      else if (BUILTIN_SCRIPT_GLOBALS.includes(g)) problems.push(`script.globals: "${g}" is a built-in name (to replace it, list "script:${g}" in replaces instead)`);
     }
   }
 
@@ -296,6 +308,14 @@ export function validateExtensionManifest(raw: unknown, folderName?: string): { 
     }
   }
 
+  if (m.replaces !== undefined) {
+    if (!Array.isArray(m.replaces)) problems.push('replaces: must be an array of engine part names');
+    else for (const part of m.replaces) {
+      const why = checkReplaceable(part);
+      if (why) problems.push(`replaces: "${String(part)}" ${why}`);
+    }
+  }
+
   if (m.provides !== undefined) {
     if (!isPlainObject(m.provides)) problems.push('provides: must be an object');
     else if (m.provides.adapters !== undefined) {
@@ -316,6 +336,14 @@ export function validateExtensionManifest(raw: unknown, folderName?: string): { 
         if (!/^[a-z0-9][a-z0-9._-]*\.[a-z0-9._-]+$/.test(name)) problems.push(`unity.packages: "${name}" is not a Unity package name`);
         if (typeof value !== 'string' || value.trim() === '') problems.push(`unity.packages.${name}: needs a version or a path`);
         else if (isLocalPackageRef(value) && !isSafeRelative(value)) problems.push(`unity.packages.${name}: "${value}" must stay inside the extension`);
+      }
+    }
+    if (u.unitypackages !== undefined) {
+      if (!Array.isArray(u.unitypackages)) problems.push('unity.unitypackages: must be an array of paths inside the extension');
+      else for (const ref of u.unitypackages) {
+        if (typeof ref !== 'string' || !isSafeRelative(ref) || !/\.unitypackage$/i.test(ref)) {
+          problems.push(`unity.unitypackages: "${String(ref)}" must be a .unitypackage inside the extension`);
+        }
       }
     }
     if (u.overrides !== undefined) {

@@ -18,6 +18,8 @@ import { installExtension, packExtension, uninstallExtension, PACKAGE_EXTENSION 
 import { describeCatalogProblems } from './extensions/ExtensionCatalog';
 import { registerAiIpc } from './ipc/aiIpc';
 import { ProjectWatcher } from './project/projectWatcher';
+import { importAnimation, listAnimations } from './project/animationAssets';
+import { readVrmSpec } from './project/vrmInfo';
 import { adapterTags } from '../shared/adapterTags';
 import {
   isUnsupportedTextureExtension,
@@ -1314,7 +1316,38 @@ ipcMain.handle('sdk:bundled-deps', async () => {
   }
 });
 
-ipcMain.handle('assets:import', async (_, params: { projectPath: string; sourcePath: string; kind?: 'model' | 'texture' | 'video' | 'other' }) => {
+// キャラクターの動き (人型 FBX)。名前 = ファイル名なのでハッシュを付けない (MCP の ir_import_animation と同じ関数)
+ipcMain.handle('animations:import', async (_, params: { projectPath: string; sourcePath: string; name?: string }) => {
+  try {
+    if (!params?.projectPath || !params?.sourcePath) return { success: false, error: 'projectPath/sourcePath is required' };
+    const r = await importAnimation(params.projectPath, params.sourcePath, params.name);
+    return { success: true, ...r };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle('animations:list', async (_, params: { projectPath: string }) => {
+  try {
+    if (!params?.projectPath) return { success: false, error: 'projectPath is required', animations: [] };
+    return { success: true, animations: await listAnimations(params.projectPath) };
+  } catch (error) {
+    return { success: false, error: (error as Error).message, animations: [] };
+  }
+});
+
+ipcMain.handle('animations:vrm-spec', async (_, params: { projectPath: string; modelPath: string }) => {
+  try {
+    if (!params?.projectPath || !params?.modelPath) return { success: false, spec: null, error: 'projectPath/modelPath is required' };
+    const file = path.resolve(params.projectPath, params.modelPath);
+    if (!file.startsWith(path.resolve(params.projectPath) + path.sep)) return { success: false, spec: null, error: 'modelPath must be inside the project' };
+    return { success: true, spec: await readVrmSpec(file) };
+  } catch (error) {
+    return { success: false, spec: null, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle('assets:import', async (_, params: { projectPath: string; sourcePath: string; kind?: 'model' | 'texture' | 'video' | 'animation' | 'other' }) => {
   try {
     const projectPath = params?.projectPath;
     const sourcePath = params?.sourcePath;
@@ -1326,6 +1359,11 @@ ipcMain.handle('assets:import', async (_, params: { projectPath: string; sourceP
     }
 
     const ext = path.extname(sourcePath).toLowerCase();
+
+    if (params.kind === 'animation') {
+      const r = await importAnimation(projectPath, sourcePath);
+      return { success: true, assetPath: r.assetPath, name: r.name };
+    }
 
     // Unity が取り込めない画像形式はここで断る。
     // 通してしまうとエディタ上は正常に見えるのに、ビルドすると

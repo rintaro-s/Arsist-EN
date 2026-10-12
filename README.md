@@ -101,6 +101,16 @@ log      // 実機ログ (PC で受け取れる)
 
 GLB / glTF をそのまま置けます。**VRM** も読み込めて、表情やポーズをスクリプトから動かせます。
 
+VRM は**キャラクター**として動かせます (`doc/18-characters-voice-memory.md`):
+
+- 人型の FBX (Mixamo など) を入れると、待機・歩く・座る…の動きになる。インスペクタで最初の動きを選び、3D ビューで試せる
+- まばたき・呼吸・近くで見られたら見返す。スクリプトから `vrm.walkTo` で歩かせ、`vrm.playAnimation` で切り替える
+- 読み上げの音声を `audio.play(…, { at: 'キャラ' })` で鳴らすと、その位置から聞こえて口が動く
+- カメラの画の一部 (机の上など) を `camera.capture` で撮って、画像に対応した API に送れる
+- `store` の値をアプリを閉じても残せる (スクリプトタブの「端末に保存する値」)。会話や出来事を次の日も覚えておける
+- VRM 1.0 のモデル (今の VRoid などの書き出し) は、公式の拡張機能「VRM 1.0」(`Extensions/vrm10`、エンジンに同梱) を有効にすると実機で読める。
+  エンジン標準の読み込み (UniVRM 0.x) は VRM 0.x だけなので、VRM 1.0 を置くとインスペクタがそう言い、その場で有効にできる
+
 ### 拡張機能で足せる
 
 エンジンを書き換えずに、**フォルダ 1 つ**で機能を足せます。
@@ -192,7 +202,7 @@ sdk/
 ├── com.xreal.xr/package/              XREAL SDK (XREAL を使うなら)
 ├── quest/com.meta.xr.sdk.core-*.tgz   Meta Quest SDK (Quest を使うなら)
 ├── nupkg/jint.*.nupkg                 スクリプトエンジン (必須)
-├── UniVRM-*.unitypackage              VRM を使うなら
+├── UniVRM-*.unitypackage              VRM を使うなら (VRM 0.x。VRM 1.0 は拡張機能 vrm10 が自分の UniVRM を持ってくる)
 └── JKG-M3.unitypackage / JKG-M_3.ttf  日本語フォント (日本語を表示するなら)
 ```
 

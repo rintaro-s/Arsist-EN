@@ -181,6 +181,8 @@ export declare class UnityBuilder extends EventEmitter {
     /** uGUI / TextMeshPro の依存をUnityバージョンに応じて設定する。 */
     private applyUnityUiDependencies;
     private projectUsesVRM;
+    /** 物が使っている VRM のうち、VRM 1.0 のもの (プロジェクトからの相対パス)。 */
+    private vrm10ModelsInProject;
     private resolveUniVRMUnityPackagePath;
     /**
      * .unitypackage を作業プロジェクトへ取り込む。既に同じパッケージを取り込み済みなら何もしない。
@@ -329,6 +331,24 @@ export declare class UnityBuilder extends EventEmitter {
     private stageExtensions;
     private static readonly OVERRIDES_RECORD;
     private static readonly PACKAGES_RECORD;
+    private static readonly UNITYPACKAGES_RECORD;
+    private static readonly UNIVRM_MARKER;
+    /**
+     * 拡張機能の .unitypackage (unity.unitypackages) を作業用の Unity プロジェクトに展開する。
+     * Unity のインポートを使わずに自分で展開するのは、置いたファイルを正確に覚えておき、
+     * 拡張機能が入らなくなったときにそれだけを消すため (記録: <作業用プロジェクト>/.arsist-extension-unitypackages.json)。
+     * 2 つの拡張機能が同じファイルを置こうとしたら止める。
+     *
+     * @returns 今回置いた (置いてある) ファイルとフォルダ。エンジンの SDK を外すときに残すもの。
+     */
+    private stageExtensionUnityPackages;
+    /**
+     * 置き換えられた部品のために、エンジンが入れていた SDK を作業用の Unity プロジェクトから外す
+     * (src/shared/engineParts.ts の dropsFromBuild)。今は VRM の読み込みだけ: 拡張機能が自分の UniVRM を
+     * 持ってくるので、エンジンの UniVRM 0.x を残すと UniGLTF の版違いがぶつかる。
+     * 拡張機能が外れたら、次のビルドで Phase 3.6 がエンジンの UniVRM をもう一度取り込む。
+     */
+    private dropReplacedEngineSdks;
     /**
      * 拡張機能によるエンジンの改変 (unity.overrides)。
      *

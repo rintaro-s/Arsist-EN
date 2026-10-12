@@ -8,10 +8,13 @@ import React from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { Vector3, UIElement, UIStyle, DataSourceDefinition, TransformDefinition } from '../../../shared/types';
-import { Box, Compass, Layout, Database, Activity, Wifi, User } from 'lucide-react';
+import { Box, Compass, Layout, Database, Activity, Wifi, User, PenLine, Play } from 'lucide-react';
+import { useRevealReplay } from '../viewport/RevealText';
 import { ScriptInspector } from '../viewport/ScriptEditor';
 import { PerceptionTargetInspector, PerceptionTaskInspector, ObjectAnchorSection } from './PerceptionInspector';
 import { ObjectExtensionsSection, ProjectExtensionsSection } from './ExtensionsSection';
+import { CharacterSection } from '../character/CharacterSection';
+import { VrmFormatNotice } from '../character/VrmFormatNotice';
 import { useT } from '../../i18n';
 
 export function RightPanel() {
@@ -256,6 +259,10 @@ function ObjectInspector() {
           );
         })()}
 
+        {/* Character (VRM: animation, blink, breathing, looking at the user — IR v5) */}
+        {obj.type === 'vrm' && <VrmFormatNotice object={obj} />}
+        {obj.type === 'vrm' && <CharacterSection object={obj} />}
+
         {/* Image anchor */}
         <ObjectAnchorSection object={obj} />
 
@@ -449,6 +456,11 @@ function UIInspector() {
           </Field>
         )}
 
+        {/* Write it out (element.reveal, IR v5) */}
+        {(element.type === 'Text' || element.type === 'Button') && (
+          <RevealSection element={element} onChange={(reveal) => update({ reveal })} />
+        )}
+
         {/* Binding ID (for scripting) */}
         <div className="p-3 rounded-lg bg-arsist-hover space-y-2">
           <div className="flex items-center gap-1.5">
@@ -624,6 +636,44 @@ function UIInspector() {
           {t('rightPanel.deleteElement')}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** 「書いていくように出す」。文字が変わるたびに先頭から 1 文字ずつ現れる (実機は TextMeshPro の表示文字数) */
+function RevealSection({ element, onChange }: { element: UIElement; onChange: (reveal: UIElement['reveal']) => void }) {
+  const t = useT();
+  const replay = useRevealReplay((s) => s.replay);
+  const on = !!element.reveal;
+  const speed = element.reveal?.speed ?? 12;
+  return (
+    <div className="p-3 rounded-lg bg-arsist-hover space-y-2">
+      <div className="flex items-start gap-2">
+        <PenLine size={14} className="text-arsist-accent mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold text-arsist-text">{t('reveal.title')}</div>
+          <div className="text-[10px] text-arsist-muted leading-snug">{t('reveal.help')}</div>
+        </div>
+        <button role="switch" aria-checked={on} aria-label={t('reveal.title')}
+          onClick={() => onChange(on ? undefined : { speed })}
+          className={`relative w-9 h-5 rounded-full transition-colors shrink-0 mt-0.5 ${on ? 'bg-arsist-accent' : 'bg-arsist-border'}`}>
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
+        </button>
+      </div>
+      {on && (
+        <div className="flex items-end gap-2">
+          <Field label={t('reveal.speed')}>
+            <input type="number" min={1} max={200} step={1} className="input text-xs py-1 w-24" value={speed}
+              onChange={(e) => onChange({ speed: Math.max(1, Math.min(200, Number(e.target.value) || 12)) })} />
+          </Field>
+          <button className="btn btn-secondary text-xs py-1" onClick={() => replay(element.id)}>
+            <Play size={11} />{t('reveal.replay')}
+          </button>
+        </div>
+      )}
+      {on && element.bindingId && (
+        <p className="text-[10px] text-arsist-muted font-mono break-all">ui.setText('{element.bindingId}', '…')</p>
+      )}
     </div>
   );
 }

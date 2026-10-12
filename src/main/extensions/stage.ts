@@ -162,5 +162,6 @@ export function manifestEntries(active: ResolvedExtension[]): Array<Record<strin
     settings: a.settings,
     entry: a.manifest.unity?.entry ?? null,
     scriptGlobals: a.manifest.script?.globals ?? [],
+    replaces: a.manifest.replaces ?? [],
   }));
 }

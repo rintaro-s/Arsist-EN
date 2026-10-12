@@ -86,6 +86,23 @@ describe('Arsist tools', () => {
     expect(fs.readdirSync(dir).filter((f) => f.includes('.tmp-'))).toEqual([]);
   });
 
+  it('resizes a canvas panel, changes a layout and removes a layout nobody shows', async () => {
+    const s = new ToolSession({ projectPath: dir });
+    const panel = await call(s, 'ir_add_canvas_object', { name: 'Card' });
+    const objectId = (panel.result as any).object.id;
+    const resized = await call(s, 'ir_update_object', { objectId, canvas: { widthMeters: 0.32, heightMeters: 0.18, pixelsPerUnit: 3200 } });
+    expect((resized.result as any).object.canvasSettings).toEqual({ layoutId: 'l1', widthMeters: 0.32, heightMeters: 0.18, pixelsPerUnit: 3200 });
+    expect((await call(s, 'ir_update_object', { objectId, canvas: { pixelsPerUnit: 0 } })).error).toMatch(/positive/);
+    expect((await call(s, 'ir_update_ui_layout', { layoutId: 'Panel', name: 'Card', resolution: { width: 1024, height: 576 } })).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'UI', 'l1.json'), 'utf8'))).toMatchObject({ name: 'Card', resolution: { width: 1024, height: 576 } });
+    // 見せている物があるうちは消さない
+    expect((await call(s, 'ir_remove_ui_layout', { layoutId: 'l1' })).error).toMatch(/shown by Card/);
+    expect((await call(s, 'ir_remove_scene_object', { objectId })).ok).toBe(true);
+    expect((await call(s, 'ir_remove_ui_layout', { layoutId: 'l1' })).ok).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'UI', 'l1.json'))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'project.json'), 'utf8')).uiLayouts).toEqual([]);
+  });
+
   it('refuses scripts that would not run', async () => {
     const s = new ToolSession({ projectPath: dir });
     const broken = await call(s, 'ir_add_script', { name: 'x', trigger: { type: 'onStart' }, code: 'log("a"' });
@@ -128,7 +145,7 @@ describe('Arsist tools', () => {
     await call(s, 'ir_add_primitive', { primitiveType: 'cube', assetId: 'Box' });
     expect((await call(s, 'ir_set_object_extension', { objectId: 'Box', extensionId: 'quest-room', values: { snapTo: 'shelf' } })).error).toMatch(/must be one of/);
     const snap = await call(s, 'ir_set_object_extension', { objectId: 'Box', extensionId: 'quest-room', values: { snapTo: 'table' } });
-    expect((snap.result as any).ext['quest-room']).toEqual({ snapTo: 'table', pick: 'ahead', offset: 0.02 });
+    expect((snap.result as any).ext['quest-room']).toEqual({ snapTo: 'table', pick: 'ahead', lie: 'upright', offset: 0.02 });
 
     const list = await call(s, 'ir_list_extensions');
     const room = (list.result as any).extensions.find((e: any) => e.id === 'quest-room');
@@ -165,5 +182,44 @@ describe('Arsist tools', () => {
     for (const g of ['store.set', 'ui.setText', 'scene.setPosition', 'api.post', 'model.generate', 'viewer.placeInFront', 'perception.run']) expect(ref).toContain(g);
     expect(ref).toMatch(/Extension quest-input .* controller, hands, mic, keyboard, headset/);
     expect(ref).toContain('room.onReady');
+    // v5 で足した名前もエージェントに見えている (エディタの早見表と同じ元 src/shared/scriptApi.ts)
+    for (const g of ['setTimeout', 'api.request', 'audio.play', 'camera.capture', 'storage.forget', 'vrm.walkTo', 'viewer.isLookingAt', 'scene.moveTo']) expect(ref).toContain(g);
+    expect(ref).toContain('project.storage.persist');
+  });
+
+  it('makes a VRM a character with imported animations, writes text reveal and the saved keys', async () => {
+    const s = new ToolSession({ projectPath: dir });
+    const src = path.join(dir, 'src');
+    fs.mkdirSync(src);
+    fs.writeFileSync(path.join(src, 'Sitting Idle.fbx'), 'fbx-1');
+    fs.writeFileSync(path.join(src, 'other.fbx'), 'fbx-2');
+    fs.writeFileSync(path.join(src, 'sis.vrm'), 'vrm');
+
+    const first = await call(s, 'ir_import_animation', { sourcePath: path.join(src, 'Sitting Idle.fbx') });
+    expect(first.result).toMatchObject({ name: 'Sitting_Idle', assetPath: 'Assets/Animations/Sitting_Idle.fbx', existed: false });
+    // 同じ中身はそのまま、同じ名前で別の中身は _2
+    expect((await call(s, 'ir_import_animation', { sourcePath: path.join(src, 'Sitting Idle.fbx') })).result).toMatchObject({ existed: true });
+    expect((await call(s, 'ir_import_animation', { sourcePath: path.join(src, 'other.fbx'), name: 'Sitting Idle' })).result).toMatchObject({ name: 'Sitting_Idle_2' });
+    expect((await call(s, 'ir_import_animation', { sourcePath: path.join(src, 'sis.vrm') })).error).toMatch(/fbx/);
+    expect(((await call(s, 'ir_list_animations')).result as any).animations.map((a: any) => a.name)).toEqual(['Sitting_Idle', 'Sitting_Idle_2']);
+
+    const model = await call(s, 'ir_import_model_asset', { sourcePath: path.join(src, 'sis.vrm') });
+    const placed = await call(s, 'ir_place_model', { modelAssetPath: (model.result as any).assetPath, assetId: 'Sister' });
+    expect((placed.result as any).object.character).toEqual({ blink: true, breathe: true, lookAtUser: 'nearby' });
+    const updated = await call(s, 'ir_update_object', { objectId: 'Sister', character: { animation: 'Sitting_Idle', lookAtUser: 'always' } });
+    expect((updated.result as any).object.character).toEqual({ blink: true, breathe: true, lookAtUser: 'always', animation: 'Sitting_Idle' });
+    expect((await call(s, 'ir_update_object', { objectId: 'Sister', character: null })).ok).toBe(true);
+    expect((await call(s, 'ir_add_primitive', { primitiveType: 'cube', assetId: 'Box' })).ok).toBe(true);
+    expect((await call(s, 'ir_update_object', { objectId: 'Box', character: { blink: true } })).error).toMatch(/VRM/);
+
+    expect((await call(s, 'ir_add_ui_element', { type: 'Text', bindingId: 'quiz', content: '2x + 3 = 7', reveal: { speed: 8 } })).ok).toBe(true);
+    expect((await call(s, 'ir_update_ui_element', { elementId: 'quiz', reveal: null })).ok).toBe(true);
+    expect((await call(s, 'ir_set_storage', { persist: ['memory.', 'user.name', 'memory.'] })).ok).toBe(true);
+    expect((await call(s, 'ir_set_storage', { persist: [''] })).ok).toBe(false);
+
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, 'project.json'), 'utf8'));
+    expect(saved.storage).toEqual({ persist: ['memory.', 'user.name'] });
+    expect('character' in saved.scenes[0].objects.find((o: any) => o.assetId === 'Sister')).toBe(false);
+    expect('reveal' in saved.uiLayouts[0].root.children[0]).toBe(false);
   });
 });

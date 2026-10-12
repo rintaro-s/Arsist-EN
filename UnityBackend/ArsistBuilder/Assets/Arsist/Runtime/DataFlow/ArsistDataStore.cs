@@ -59,13 +59,31 @@ namespace Arsist.Runtime.DataFlow
 
             // 入れ子 (認識タスクが辞書ごと書いたもの) を辿る。
             // "items[0]" を "items.0" に均してから分解する。
+            //
+            // 名前そのものにドットが入っていることがある ("memory.episodes" に配列を入れて
+            // "memory.episodes[0].event" を bind する、など。端末に保存する値はこの形になりやすい)。
+            // なので「いちばん長く一致する名前」から先を辿る。一致する名前が無ければ、先頭から入れ子として辿る (以前と同じ)。
             value = null;
-            var parts = path.Replace("[", ".").Replace("]", string.Empty).Split('.');
-            object current = _values;
-            for (var i = 0; i < parts.Length; i++)
+            var raw = path.Replace("[", ".").Replace("]", string.Empty).Split('.');
+            var parts = new List<string>(raw.Length);
+            foreach (var part in raw) if (part.Length > 0) parts.Add(part);   // "items[0]" -> "items", "0", "" になる場合がある
+            if (parts.Count == 0) return false;
+
+            for (int split = parts.Count - 1; split >= 1; split--)
+            {
+                var head = string.Join(".", parts.GetRange(0, split));
+                if (_values.TryGetValue(head, out var root) && TryWalk(root, parts, split, out value)) return true;
+            }
+            value = null;
+            return TryWalk(_values, parts, 0, out value);
+        }
+
+        private static bool TryWalk(object current, List<string> parts, int start, out object value)
+        {
+            value = null;
+            for (var i = start; i < parts.Count; i++)
             {
                 var part = parts[i];
-                if (part.Length == 0) continue;   // "items[0]" -> "items", "0", "" になる場合がある
 
                 if (current is Dictionary<string, object> dict)
                 {

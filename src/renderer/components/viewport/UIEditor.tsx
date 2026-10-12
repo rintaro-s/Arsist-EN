@@ -7,6 +7,7 @@
  * - Images imported to project Assets
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { RevealText } from './RevealText';
 import { useProjectStore } from '../../stores/projectStore';
 import { useDataValue } from '../../stores/dataStoreContext';
 import { toArsistFileUrl } from '../../utils/assetUrl';
@@ -699,19 +700,23 @@ function ElementRenderer({
   const renderContent = () => {
     switch (element.type) {
       case 'Text':
-        return <span style={{ pointerEvents: 'none' }}>{displayText()}</span>;
+        // 改行は実機 (TextMeshPro) と同じく改行として見せる
+        return <span style={{ pointerEvents: 'none', whiteSpace: 'pre-wrap' }}><RevealText elementId={element.id} text={displayText()} reveal={element.reveal} /></span>;
 
       case 'Button':
+        // 実機と同じく、ボタンの箱全体が背景色で、文字は真ん中。背景色が無いボタンは実機の既定色で見せる
         return (
           <div
-            className="px-4 py-2 rounded font-medium text-center"
+            className="w-full h-full flex items-center justify-center font-medium text-center"
             style={{
-              backgroundColor: '#2196F3',
-              color: '#ffffff',
+              backgroundColor: element.style.backgroundColor ? undefined : '#E84561',
+              borderRadius: 'inherit',
+              color: element.style.color || '#ffffff',
+              whiteSpace: 'pre-wrap',
               pointerEvents: 'none',
             }}
           >
-            {displayText()}
+            <RevealText elementId={element.id} text={displayText()} reveal={element.reveal} />
           </div>
         );
 

@@ -11,6 +11,7 @@
 //   1. RegisterScriptGlobals  スクリプトエンジンの初期化中 (Awake)。ここで `room` などの名前を出す。
 //                             スクリプトを使わないプロジェクトでは呼ばれない。
 //   2. OnStart                シーンが始まって最初の Start。部屋を読む・物を置く等はここから。
+//   (ReplaceEngineParts       エンジンが置き換えられる部品を初めて使う直前。replaces を書いた拡張機能だけ)
 //
 // どちらもメインスレッド。Jint もメインスレッドでしか触れないので、別スレッドで得た結果を
 // スクリプトに返すときは、メインスレッドに戻してから ArsistScriptBridge.Call を呼ぶこと。
@@ -30,6 +31,13 @@ namespace Arsist.Runtime.Extensions
         /// (組み込みの名前や他の拡張機能の名前とぶつかると、Set が断ってログに出す)。
         /// </summary>
         public virtual void RegisterScriptGlobals(ArsistScriptBridge script, ArsistExtensionContext context) { }
+
+        /// <summary>
+        /// エンジンの部品を置き換える (extension.json の replaces に書いたものだけ)。
+        /// エンジンが置き換えられる部品を最初に使う前に 1 回呼ばれる (シーンの Start より前のこともある。
+        /// context.Host はまだ無い)。組み込みのスクリプトの名前は RegisterScriptGlobals で Set する。
+        /// </summary>
+        public virtual void ReplaceEngineParts(ArsistEngineParts.Replacer parts, ArsistExtensionContext context) { }
 
         /// <summary>シーンが始まったら 1 回だけ呼ばれる。</summary>
         public virtual void OnStart(ArsistExtensionContext context) { }

@@ -188,9 +188,17 @@ declare global {
         import: (params: {
           projectPath: string;
           sourcePath: string;
-          kind?: 'model' | 'texture' | 'video' | 'other';
+          kind?: 'model' | 'texture' | 'video' | 'animation' | 'other';
         }) => Promise<{ success: boolean; assetPath?: string; error?: string }>;
         list: (params: { projectPath: string }) => Promise<{ success: boolean; items: any[]; error?: string }>;
+      };
+      animations: {
+        import: (params: { projectPath: string; sourcePath: string; name?: string }) =>
+          Promise<{ success: boolean; name?: string; assetPath?: string; existed?: boolean; error?: string }>;
+        list: (params: { projectPath: string }) =>
+          Promise<{ success: boolean; animations: Array<{ name: string; assetPath: string; bytes: number }>; error?: string }>;
+        vrmSpec: (params: { projectPath: string; modelPath: string }) =>
+          Promise<{ success: boolean; spec: '1.0' | '0.x' | 'unknown' | null; error?: string }>;
       };
       store: {
         get: (key: string) => Promise<any>;

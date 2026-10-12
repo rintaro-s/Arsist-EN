@@ -1,6 +1,6 @@
 {
   "id": "quest-room",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": {
     "en": "Room awareness (Quest)",
     "ja": "部屋を理解する (Quest)"
@@ -58,6 +58,16 @@
         }
       },
       {
+        "key": "occlusion",
+        "type": "boolean",
+        "default": false,
+        "label": { "en": "Real furniture and walls hide virtual things", "ja": "本物の家具や壁の向こうの物を隠す" },
+        "help": {
+          "en": "A character walking behind the real table is hidden by it, as if it were really there. Uses the scanned boxes, so edges are approximate; hands and moving things do not hide anything.",
+          "ja": "本物の机の向こうに回ったキャラクターが、本当にそこにいるように机で隠れます。スキャンした箱の形を使うので縁は大まかです。手や動く物では隠れません。"
+        }
+      },
+      {
         "key": "publishToStore",
         "type": "boolean",
         "default": true,
@@ -106,6 +116,20 @@
         "options": [
           { "value": "ahead", "label": { "en": "Ahead, in the direction it was placed", "ja": "置いた方向の先にあるもの" } },
           { "value": "nearest", "label": { "en": "Closest to where it was placed", "ja": "置いた位置にいちばん近いもの" } }
+        ]
+      },
+      {
+        "key": "lie",
+        "type": "select",
+        "default": "upright",
+        "label": { "en": "On a table or the floor", "ja": "机・床の上での向き" },
+        "help": {
+          "en": "Upright: stands and faces the user. Flat: lies face up like a sheet of paper on the desk, readable from where the user sits (for panels).",
+          "ja": "立てる: 立ててユーザーの方を向ける。寝かせる: 机に置いた紙のように表を上にして、座った位置から読める向きに置く (パネル向け)。"
+        },
+        "options": [
+          { "value": "upright", "label": { "en": "Upright, facing the user", "ja": "立てる (こちらを向く)" } },
+          { "value": "flat", "label": { "en": "Flat, like paper on the desk", "ja": "寝かせる (机に置いた紙のように)" } }
         ]
       },
       {

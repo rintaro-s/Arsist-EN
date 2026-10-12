@@ -20,6 +20,9 @@ namespace Arsist.Runtime.VRM
     [UnityEngine.Scripting.Preserve]
     public class VRMExpressionController : MonoBehaviour
     {
+        // ---- 読み込んだ部品が持ってくる表情 (VRM の読み込みを置き換えた拡張機能など) ----
+        private IArsistVrmFace _face;
+
         // ---- VRM0.x BlendShapeProxy ----
         private Component _blendShapeProxy;       // VRMBlendShapeProxy
         private MethodInfo _immSetValueMethod;     // ImmediatelySetValue(BlendShapeKey, float)
@@ -50,6 +53,14 @@ namespace Arsist.Runtime.VRM
 
         private void DetectUniVRMAPIs()
         {
+            // ---- モデルを作った側が表情の口を持っていれば、それを使う (IArsistVrmFace) ----
+            _face = GetComponentInParent<IArsistVrmFace>(true);
+            if (_face != null)
+            {
+                Debug.Log($"[VRMExpressionController] ✅ Expressions via {_face.GetType().Name} ({_face.ExpressionNames?.Count ?? 0} expressions)");
+                return;
+            }
+
             // ---- VRM0.x: VRMBlendShapeProxy を探す ----
             foreach (var comp in GetComponentsInParent<Component>(true))
             {
@@ -152,6 +163,7 @@ namespace Arsist.Runtime.VRM
         {
             if (string.IsNullOrEmpty(expressionName)) return false;
             float normalized = Mathf.Clamp01(value / 100f);
+            if (_face != null) return _face.SetExpression(expressionName, normalized);
             var candidates = ResolveExpressionCandidates(expressionName);
 
             // VRM0.x: VRMBlendShapeProxy.ImmediatelySetValue
@@ -229,6 +241,8 @@ namespace Arsist.Runtime.VRM
         /// </summary>
         public void ResetAllExpressions()
         {
+            if (_face != null) { _face.ResetExpressions(); return; }
+
             if (_blendShapeProxy != null)
             {
                 // VRM0.x: VRMBlendShapeProxy の ResetValues を呼ぶ
@@ -260,6 +274,7 @@ namespace Arsist.Runtime.VRM
         /// </summary>
         public List<string> GetAvailableExpressions()
         {
+            if (_face != null && _face.ExpressionNames != null) return new List<string>(_face.ExpressionNames);
             return new List<string>(_fallbackCache.Keys);
         }
 

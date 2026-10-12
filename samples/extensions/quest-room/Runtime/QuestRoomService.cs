@@ -304,7 +304,10 @@ namespace Arsist.Extensions.QuestRoom
 
             bool colliders = _ctx.GetBool("roomColliders", true);
             bool outlines = _ctx.GetBool("showSurfaces", false);
-            int made = 0;
+            bool occlusion = _ctx.GetBool("occlusion", false);
+            int made = 0, occluders = 0;
+            var occluderMaterial = occlusion ? OccluderMaterial() : null;
+            if (occlusion && occluderMaterial == null) _ctx.Warn("occlusion is on, but the occluder shader is missing from the build; virtual things will not be hidden");
 
             foreach (var anchor in Room.Anchors)
             {
@@ -339,10 +342,72 @@ namespace Arsist.Extensions.QuestRoom
                     if (holder != null) { _decorations.Add(holder); made++; }
                 }
 
+                if (occluderMaterial != null && label != "invisibleWall" && AddOccluder(anchor, label, occluderMaterial)) occluders++;
                 if (outlines) AddOutline(anchor, label);
             }
 
-            _ctx.Log($"decorations: {made} colliders{(outlines ? ", outlines on" : "")}");
+            _ctx.Log($"decorations: {made} colliders, {occluders} occluders{(outlines ? ", outlines on" : "")}");
+        }
+
+        // ---- 本物の物が仮想の物を隠す ----
+        //
+        // 部屋の面・箱と同じ形を「深度だけ書いて色は書かない」材質で先に描く。パススルーの上では何も見えないが、
+        // その奥にある仮想の物 (机の向こうのキャラクターの脚など) は深度で負けて描かれず、現実の机が手前に見える。
+        // 部屋のスキャンは家具の箱なので、形は大まか (人の手や動く物は隠さない。それには Depth API が要る)。
+
+        private const string OccluderShader = "ArsistQuestRoomOccluder";
+        private static Material _occluderMaterial;
+        private static Mesh _cube;
+
+        private static Material OccluderMaterial()
+        {
+            if (_occluderMaterial != null) return _occluderMaterial;
+            var shader = Resources.Load<Shader>(OccluderShader);
+            if (shader == null) return null;
+            _occluderMaterial = new Material(shader) { name = "[RoomOccluder]" };
+            return _occluderMaterial;
+        }
+
+        private static Mesh Cube()
+        {
+            if (_cube != null) return _cube;
+            var tmp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            tmp.SetActive(false); // Destroy はフレームの終わりなので、それまで原点に箱が映らないように
+            _cube = tmp.GetComponent<MeshFilter>().sharedMesh;
+            Destroy(tmp);
+            return _cube;
+        }
+
+        private bool AddOccluder(MRUKAnchor anchor, string label, Material material)
+        {
+            Vector3 center, size;
+            if (anchor.VolumeBounds.HasValue)
+            {
+                center = anchor.VolumeBounds.Value.center;
+                size = anchor.VolumeBounds.Value.size;
+            }
+            else if (anchor.PlaneRect.HasValue)
+            {
+                // 当たり判定と同じく、面の裏側に厚みを持たせる (表は面そのもの)
+                const float thickness = 0.05f;
+                var r = anchor.PlaneRect.Value;
+                center = new Vector3(r.center.x, r.center.y, -thickness / 2f);
+                size = new Vector3(r.width, r.height, thickness);
+            }
+            else return false;
+
+            var go = new GameObject("[RoomOccluder] " + label);
+            go.layer = IgnoreRaycastLayer;
+            go.transform.SetParent(anchor.transform, false);
+            go.transform.localPosition = center;
+            go.transform.localScale = size;
+            go.AddComponent<MeshFilter>().sharedMesh = Cube();
+            var renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            _decorations.Add(go);
+            return true;
         }
 
         private void AddOutline(MRUKAnchor anchor, string label)
@@ -424,7 +489,8 @@ namespace Arsist.Extensions.QuestRoom
 
                 var pick = MiniJson.Text(data, "pick", "ahead");
                 var offset = (float)MiniJson.Number(data, "offset", 0.02);
-                if (Place(obj.gameObject, surface, pick, offset, out var detail)) placed++;
+                var flat = MiniJson.Text(data, "lie", "upright") == "flat";
+                if (Place(obj.gameObject, surface, pick, offset, out var detail, flat)) placed++;
                 else failed++;
                 if (failed > 0 && detail != null) _ctx.Warn($"'{obj.name}': {detail}");
             }
@@ -438,9 +504,11 @@ namespace Arsist.Extensions.QuestRoom
         ///            nearest = 作者が置いた位置にいちばん近い面
         ///            gaze    = 今ユーザーが見ている先 (スクリプトから使う)
         ///   offset   面から浮かせる距離 (m)
+        ///   flat     机・床などの上に「寝かせる」。パネルなら机に置いた紙のように表を上に、文字の上側を
+        ///            ユーザーから遠い方へ向ける (座って読む向き)。壁では無視する
         /// 向きは「作者がユーザーに対してどう向けたか」を保つ (正面に置いたパネルは、壁でもこちらを向く)。
         /// </summary>
-        public bool Place(GameObject go, string surface, string pick, float offset, out string detail)
+        public bool Place(GameObject go, string surface, string pick, float offset, out string detail, bool flat = false)
         {
             detail = null;
             if (go == null) { detail = "no object"; return false; }
@@ -479,7 +547,9 @@ namespace Arsist.Extensions.QuestRoom
                 normal = ceiling ? Vector3.down : Vector3.up;
 
                 var facing = RoomGeometry.Flat(point - head, lookDir);
-                go.transform.SetPositionAndRotation(point, Quaternion.LookRotation(facing, Vector3.up) * relative);
+                go.transform.SetPositionAndRotation(point, flat && !ceiling
+                    ? LyingFlat(facing)
+                    : Quaternion.LookRotation(facing, Vector3.up) * relative);
                 // 物の底 (天井なら頂) を面に合わせる
                 if (RoomGeometry.TryWorldBounds(go, out var b))
                 {
@@ -516,7 +586,9 @@ namespace Arsist.Extensions.QuestRoom
                 {
                     // 'any' で床や机の上に当たった: 上に載せる
                     var facing = RoomGeometry.Flat(point - head, lookDir);
-                    go.transform.SetPositionAndRotation(point, Quaternion.LookRotation(facing, Vector3.up) * relative);
+                    go.transform.SetPositionAndRotation(point, flat
+                        ? LyingFlat(facing)
+                        : Quaternion.LookRotation(facing, Vector3.up) * relative);
                 }
                 else
                 {
@@ -539,6 +611,12 @@ namespace Arsist.Extensions.QuestRoom
             _ctx.Log($"'{go.name}' -> {anchorName} at {go.transform.position:F2} (pick {pick})");
             return true;
         }
+
+        /// <summary>
+        /// 表 (パネルの読める面 = ローカルの -Z) を上に、上側 (ローカルの +Y) をユーザーから遠い方へ向けた寝かせ方。
+        /// awayFromUser は水平の向き。
+        /// </summary>
+        private static Quaternion LyingFlat(Vector3 awayFromUser) => Quaternion.LookRotation(Vector3.down, awayFromUser);
 
         private bool TryHorizontalPoint(string surface, string pick, Ray ray, LabelFilter filter, Vector3 authored,
             out Vector3 point, out MRUKAnchor anchor, out string detail)
@@ -580,6 +658,17 @@ namespace Arsist.Extensions.QuestRoom
         }
 
         // ---- スクリプトから ----
+
+        /// <summary>任意の向きの光線が最初に当たる本物の面 (手やコントローラーで指した先など)。</summary>
+        public bool TryHit(Ray ray, string surface, out RaycastHit hit, out MRUKAnchor anchor)
+        {
+            hit = default;
+            anchor = null;
+            if (!Ready || ray.direction.sqrMagnitude < 1e-8f) return false;
+            var labels = RoomGeometry.LabelsFor(surface);
+            if (!labels.HasValue) return false;
+            return Room.Raycast(ray, 20f, LabelFilter.Included(labels.Value), out hit, out anchor);
+        }
 
         /// <summary>今見ている先にある本物の面。</summary>
         public bool TryHitFromView(string surface, out RaycastHit hit, out MRUKAnchor anchor)

@@ -55,6 +55,8 @@ const packages_1 = require("./extensions/packages");
 const ExtensionCatalog_1 = require("./extensions/ExtensionCatalog");
 const aiIpc_1 = require("./ipc/aiIpc");
 const projectWatcher_1 = require("./project/projectWatcher");
+const animationAssets_1 = require("./project/animationAssets");
+const vrmInfo_1 = require("./project/vrmInfo");
 const adapterTags_1 = require("../shared/adapterTags");
 const assets_1 = require("../shared/assets");
 const childProcesses_1 = require("./platform/childProcesses");
@@ -1292,6 +1294,41 @@ electron_1.ipcMain.handle('sdk:bundled-deps', async () => {
         return { deps: [], error: error.message };
     }
 });
+// キャラクターの動き (人型 FBX)。名前 = ファイル名なのでハッシュを付けない (MCP の ir_import_animation と同じ関数)
+electron_1.ipcMain.handle('animations:import', async (_, params) => {
+    try {
+        if (!params?.projectPath || !params?.sourcePath)
+            return { success: false, error: 'projectPath/sourcePath is required' };
+        const r = await (0, animationAssets_1.importAnimation)(params.projectPath, params.sourcePath, params.name);
+        return { success: true, ...r };
+    }
+    catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+electron_1.ipcMain.handle('animations:list', async (_, params) => {
+    try {
+        if (!params?.projectPath)
+            return { success: false, error: 'projectPath is required', animations: [] };
+        return { success: true, animations: await (0, animationAssets_1.listAnimations)(params.projectPath) };
+    }
+    catch (error) {
+        return { success: false, error: error.message, animations: [] };
+    }
+});
+electron_1.ipcMain.handle('animations:vrm-spec', async (_, params) => {
+    try {
+        if (!params?.projectPath || !params?.modelPath)
+            return { success: false, spec: null, error: 'projectPath/modelPath is required' };
+        const file = path.resolve(params.projectPath, params.modelPath);
+        if (!file.startsWith(path.resolve(params.projectPath) + path.sep))
+            return { success: false, spec: null, error: 'modelPath must be inside the project' };
+        return { success: true, spec: await (0, vrmInfo_1.readVrmSpec)(file) };
+    }
+    catch (error) {
+        return { success: false, spec: null, error: error.message };
+    }
+});
 electron_1.ipcMain.handle('assets:import', async (_, params) => {
     try {
         const projectPath = params?.projectPath;
@@ -1303,6 +1340,10 @@ electron_1.ipcMain.handle('assets:import', async (_, params) => {
             return { success: false, error: `Source not found: ${sourcePath}` };
         }
         const ext = path.extname(sourcePath).toLowerCase();
+        if (params.kind === 'animation') {
+            const r = await (0, animationAssets_1.importAnimation)(projectPath, sourcePath);
+            return { success: true, assetPath: r.assetPath, name: r.name };
+        }
         // Unity が取り込めない画像形式はここで断る。
         // 通してしまうとエディタ上は正常に見えるのに、ビルドすると
         // UI.Image が sprite=null のまま「真っ白な四角」になる。

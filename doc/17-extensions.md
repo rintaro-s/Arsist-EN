@@ -64,7 +64,7 @@ Extensions/<id>/
 
 置き場は 4 つ (後ほど優先、同じ id なら後が勝つ):
 
-1. `Extensions/` (リポジトリ。エンジンに同梱するもの。今は空)
+1. `Extensions/` (リポジトリ。エンジンに同梱する**公式**の拡張機能。拡張機能タブに「公式」と出る。今は `vrm10`)
 2. `<resources>/Extensions` (パッケージ版に同梱されたもの)
 3. `<ユーザーデータ>/extensions` (自分で置くもの。エディタの拡張機能タブ → フォルダのボタン)
 4. **登録したフォルダ** (設定の `extensionFolders`)。コピーせず、その場所のまま使う。
@@ -93,7 +93,8 @@ npm run ext:unlink -- samples/extensions   # 登録を外す (フォルダの中
 | 設定 | `data.settings` | エディタの入力欄を自動で作る → `project.json` の `extensions.<id>.settings` |
 | 物ごとの指定 | `data.object` | 物のインスペクタに自動で出す → シーンの物の `ext.<id>` → 実機の `ArsistObjectExt` |
 | データの形を変える | `data.version` + `data.migrations` | 開いたプロジェクトのその拡張機能のデータだけを移行 (§3.2) |
-| スクリプトの API | `script.globals` + 入口の `RegisterScriptGlobals` | Jint に登録。組み込みの名前は上書きできない |
+| スクリプトの API | `script.globals` + 入口の `RegisterScriptGlobals` | Jint に登録。組み込みの名前は `replaces` に書いたときだけ上書きできる |
+| エンジンの部品を置き換える | `replaces` + 入口の `ReplaceEngineParts` | エンジンがその部品を使うとき、拡張機能の実装を使う (§2.6) |
 | Android の権限 | `android.permissions` / `features` / `metadata` | AndroidManifest.xml に**足りないものだけ**足す |
 | シーンに部品を置く | `Editor/*.cs` の `OnScene` | シーン保存の直前に呼ぶ |
 | PlayerSettings | `Editor/*.cs` の `OnPlayerSettings` | 端末のパッチの後に呼ぶ |
@@ -127,6 +128,12 @@ Extensions/<id>/
 - **SDK** — `unity.packages`: `{ "com.vendor.sdk": "Packages/com.vendor.sdk-1.0.0.tgz" }` (拡張機能の中のファイル /
   フォルダ) か `"1.2.3"` (レジストリ)。入るビルドでだけ `Packages/manifest.json` に足し、要らなくなったら外す。
   エンジンが入れているパッケージは上書きしない (警告だけ出す)。
+- **.unitypackage** — `unity.unitypackages`: `["Packages/VRM-0.131.3_011b.unitypackage"]` (拡張機能の中のファイル)。
+  UniVRM のように .unitypackage でしか配られていないもの用。ビルドが Unity を使わずに作業用の Unity プロジェクトへ
+  展開し (`src/main/extensions/unitypackage.ts`。置き場所は `Assets/` と `Packages/` の中だけ)、何を置いたかを
+  `.arsist-extension-unitypackages.json` に覚え、拡張機能が入らなくなったらそれだけを消す。2 つの拡張機能が同じファイルを
+  置こうとしたら止める。
+- **エンジンの部品の置き換え** — §2.6。エンジンのファイルを書き換えずに済むなら、下の改変よりこちらを使う。
 - **エンジンの改変** — `npm run ext:override -- <拡張機能のフォルダ> Runtime/Scripting/CoroutineRunner.cs` が、
   エンジンの元ファイルを `Overrides/` に写し、`unity.overrides` に**元のファイルの SHA-256** (`replaces`) を書く。
   あとは写しを編集する。ビルドは、その拡張機能が入るときだけ作業用の Unity プロジェクトのそのファイルを置き換え、
@@ -192,7 +199,10 @@ IR は「どの拡張機能を有効にしたか」(`extensions.<id>`) と「ど
 ```
 UnityBuilder.planExtensions     端末のタグ + sdk:* + feature:* → 入る拡張機能を決める (ログに全部出す)
   → manifest.json               deviceTags / features / extensions (id・版・設定)
+                                replaces → 部品ごとに 1 つの拡張機能 (manifest.replacements)。2 つが名乗れば止める
 UnityBuilder.stageExtensions    Assets/ArsistExtensions/<id>/{Runtime,Editor} に差分同期
+                                unity.unitypackages を展開 / 外れたものを消す
+                                vrm-loader が置き換えられていれば、エンジンの UniVRM 0.x を作業用プロジェクトから外す
                                 ArsistExtensionRegistry.g.cs / link.xml を生成
                                 AndroidManifest.xml に足りない宣言を足す
                                 前回入れて今回入らない拡張機能は消す
@@ -255,6 +265,59 @@ defineMigration(5, { ops: [
 エンジンはそれを見て必要な宣言を入れる。例えば `quest-input` は `feature:text-input` を名乗るので、
 プロジェクトに入力欄 (Input 要素) が無くても Quest のシステムキーボードの宣言が入り、`keyboard.open()` が使える。
 `feature:hand-tracking` なら、ビルド設定でハンドトラッキングを切っていても手の宣言が入る。
+
+### 2.6 エンジンの部品を置き換える (`replaces`)
+
+エンジンのやり方を丸ごと別のものにしたいことがある (VRM 1.0 を読みたい、保存先をクラウドにしたい、`audio` を
+別の音声エンジンにしたい…)。§2.2.1 の改変 (ファイルの差し替え) でもできるが、エンジンが更新されるたびに
+直しが要る。そこで、エンジンは**置き換えられる部品**を決まった形 (C# のインターフェース) で使っていて、拡張機能は
+その形の実装を 1 つ渡すだけで置き換えられるようにしてある。エンジンの中が変わっても、形が同じなら拡張機能は壊れない。
+
+| 部品 (`replaces` に書く名前) | 実装する形 | エンジン標準 |
+|---|---|---|
+| `vrm-loader` VRM の読み込み | `Arsist.Runtime.VRM.IArsistVrmLoader` (+ 任意で `IArsistVrmFace` / `IArsistVrmEyes` をモデルに付ける) | UniVRM 0.x (VRM 0.x だけ) |
+| `storage-backend` 端末に保存する値の置き場 | `Arsist.Runtime.Data.IArsistStorageBackend` | 端末の中のファイル 1 つ |
+| `script:<組み込みの名前>` (`script:audio` など) | 何でも (Jint に渡すオブジェクト) | エンジンの `audio` など |
+
+一覧の元は `src/shared/engineParts.ts` (実機側は `Runtime/Extensions/ArsistEngineParts.cs`。テストで照合)。
+
+```json
+"replaces": ["vrm-loader"]
+```
+
+```csharp
+public override void ReplaceEngineParts(ArsistEngineParts.Replacer parts, ArsistExtensionContext context)
+{
+    parts.Replace<IArsistVrmLoader>(ArsistEngineParts.VrmLoader, new MyLoader(context));
+}
+
+// 組み込みのスクリプトの名前は RegisterScriptGlobals で ("replaces": ["script:audio"])
+public override void RegisterScriptGlobals(ArsistScriptBridge script, ArsistExtensionContext context)
+{
+    script.Set("audio", new MyAudio(context));
+}
+```
+
+雛形: `npm run ext:new -- my-thing --replaces vrm-loader,storage-backend,script:audio`
+(入口の `ReplaceEngineParts` と、部品ごとの実装の雛形ができる。`storage-backend` の雛形は PlayerPrefs に書く動く見本)。
+
+- **1 つの部品を置き換えられるのは 1 つの拡張機能だけ。** 2 つが有効ならビルドが理由付きで止まる。エディタの
+  拡張機能タブ (「エンジンの部品を置き換える」) と `ir_validate_project` も先に言う。
+- **宣言していない置き換えは実機で断る。** `replaces` に書いていない部品を `Replace` しても、組み込みの名前を `Set` しても、
+  ログに理由を出してエンジン標準のまま動く (ビルドが manifest に書いた `replacements` と照らす)。
+- `ReplaceEngineParts` は、エンジンがその部品を初めて使う直前に 1 回呼ばれる (シーンの `Start` より前のことがある。
+  `context.Host` はまだ無い)。
+- 部品が要るものをビルドが入れなくなることがある (`dropsFromBuild`)。`vrm-loader` を置き換えると、エンジンの
+  UniVRM 0.x は作業用の Unity プロジェクトから外れる (拡張機能が自分の UniVRM を持ってくるので、UniGLTF の版違いが
+  ぶつからないように)。拡張機能を外すと、次のビルドで元に戻る。
+
+**作例: 公式の拡張機能 `Extensions/vrm10`** — `vrm-loader` を UniVRM 0.131.3 の VRM 1.0 用 (UniVRM10) に置き換える。
+UniVRM10 は `Packages/VRM-0.131.3_011b.unitypackage` (UniVRM のリリースそのもの) を `unity.unitypackages` で持ってくる。
+VRM 0.x のモデルも読み込み時に 1.0 に変換して読む。表情と目は `Vrm10Face` (`IArsistVrmFace` / `IArsistVrmEyes`)。
+
+**エンジンに部品を足すとき:** インターフェースを作り (`Runtime/<場所>/IArsist….cs`)、エンジンがそれを使う場所を
+`ArsistEngineParts.Get<T>(id) ?? エンジン標準` にし、`engineParts.ts` の `ENGINE_PARTS` と `ArsistEngineParts.Parts` に
+1 行ずつ足す。インターフェースは小さく保つ (拡張機能が実装しやすく、エンジンが中を作り変えても形を保てるように)。
 
 ## 4. 作例: `quest-room` (Quest で部屋を理解する)
 

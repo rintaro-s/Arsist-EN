@@ -51,6 +51,11 @@ function someElement(project: ArsistProject, test: (el: UIElement) => boolean): 
   return (project.uiLayouts ?? []).some((layout) => visit(layout.root));
 }
 
+/** 有効なスクリプトのどれかに pattern が書かれているか (コメントの中でも当たるが、積みすぎる方に倒れるだけ)。 */
+function scriptsMention(project: ArsistProject, pattern: RegExp): boolean {
+  return (project.scripts ?? []).some((s) => s.enabled && pattern.test(s.code ?? ''));
+}
+
 export const ENGINE_FEATURES: EngineFeature[] = [
   {
     id: 'scripting',
@@ -99,6 +104,24 @@ export const ENGINE_FEATURES: EngineFeature[] = [
     summary: 'content placed on registered pictures',
     uses: (p) => (p.perception?.targets?.length ?? 0) > 0,
     requires: { all: ['cap:camera-access'] },
+  },
+  {
+    id: 'camera',
+    // スクリプトがカメラの画を取る (camera.* / model.runImage)。画像処理タスクが無くてもカメラを積む
+    summary: 'camera pictures from scripts (camera.*, model.runImage)',
+    uses: (p) => scriptsMention(p, /\bcamera\s*\.\s*(capture|project|available)\s*\(|\bmodel\s*\.\s*runImage\s*\(/),
+    requires: { all: ['cap:camera-access'] },
+  },
+  {
+    id: 'character-animation',
+    summary: 'VRM characters moving with FBX animations (Assets/Animations)',
+    uses: (p) => allObjects(p).some((o) => o.type === 'vrm' && !!o.character?.animation)
+      || scriptsMention(p, /\bvrm\s*\.\s*(playAnimation|walkTo)\s*\(/),
+  },
+  {
+    id: 'storage',
+    summary: 'store values kept on the device across launches',
+    uses: (p) => (p.storage?.persist?.length ?? 0) > 0,
   },
   {
     id: 'hand-tracking',

@@ -90,6 +90,30 @@ namespace Arsist.Runtime.VRM
         {
             Debug.Log($"[ArsistVRMLoader] Loading VRM from bytes: {vrmPath} ({vrmData.Length} bytes)");
 
+            // ── 拡張機能が VRM の読み込みを置き換えていれば、それに任せる (ArsistEngineParts "vrm-loader") ──
+            var replaced = Arsist.Runtime.Extensions.ArsistEngineParts.Get<IArsistVrmLoader>(Arsist.Runtime.Extensions.ArsistEngineParts.VrmLoader);
+            if (replaced != null)
+            {
+                var owner = Arsist.Runtime.Extensions.ArsistEngineParts.OwnerOf(Arsist.Runtime.Extensions.ArsistEngineParts.VrmLoader);
+                Debug.Log($"[ArsistVRMLoader] VRM loading is replaced by extension '{owner}'");
+                var finished = false;
+                IEnumerator routine = null;
+                try
+                {
+                    routine = replaced.Load(vrmData, vrmPath,
+                        go => { if (finished) return; finished = true; onLoaded?.Invoke(go); },
+                        err => { if (finished) return; finished = true; onError?.Invoke(err); });
+                }
+                catch (Exception ex)
+                {
+                    finished = true;
+                    onError?.Invoke($"VRM loader of extension '{owner}' failed: {ex.Message}");
+                }
+                if (routine != null) yield return routine;
+                if (!finished) onError?.Invoke($"VRM loader of extension '{owner}' finished without a model or an error");
+                yield break;
+            }
+
             // ── ステップ1: VRM1.0 ローダーを優先して試行 ──
             // UniVRM 0.131+ では Vrm10.LoadBytesAsync が VRM1.0 を正しく Humanoid で読める
             var vrm10Loaded = false;

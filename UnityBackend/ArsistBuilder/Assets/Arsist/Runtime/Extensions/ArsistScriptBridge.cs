@@ -21,12 +21,13 @@ namespace Arsist.Runtime.Extensions
     public sealed class ArsistScriptBridge
     {
         /// <summary>
-        /// 組み込みの名前。拡張機能はこれを上書きできない。
+        /// 組み込みの名前。拡張機能は、extension.json の replaces に "script:<名前>" と書いたときだけ上書きできる。
         /// src/shared/extensions.ts の BUILTIN_SCRIPT_GLOBALS と同じ並び (テストで照合している)。
         /// </summary>
         public static readonly string[] BuiltInNames =
         {
             "api", "ui", "store", "scene", "vrm", "remote", "viewer", "perception", "model", "log", "error",
+            "audio", "camera", "storage", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "__arsistTimers",
             "globalThis", "window", "console",
         };
 
@@ -65,9 +66,12 @@ namespace Arsist.Runtime.Extensions
                 Debug.LogError($"[Arsist:{_owner}] script global without a name was ignored");
                 return false;
             }
-            if (Array.IndexOf(BuiltInNames, name) >= 0)
+            var builtIn = Array.IndexOf(BuiltInNames, name) >= 0;
+            if (builtIn && ArsistExtensions.ReplacementOwner(ArsistEngineParts.ScriptPrefix + name) != _owner)
             {
-                Debug.LogError($"[Arsist:{_owner}] '{name}' is a built-in script name; the extension cannot replace it");
+                Debug.LogError(
+                    $"[Arsist:{_owner}] '{name}' is a built-in script name; to replace it, list \"{ArsistEngineParts.ScriptPrefix}{name}\" " +
+                    "in this extension's \"replaces\" (extension.json)");
                 return false;
             }
             if (Owners.TryGetValue(name, out var owner) && owner != _owner)
@@ -77,7 +81,9 @@ namespace Arsist.Runtime.Extensions
             }
             Owners[name] = _owner;
             _engine.SetValue(name, value);
-            Debug.Log($"[Arsist:{_owner}] script global '{name}' registered");
+            Debug.Log(builtIn
+                ? $"[Arsist:{_owner}] script global '{name}' replaces the engine's built-in '{name}'"
+                : $"[Arsist:{_owner}] script global '{name}' registered");
             return true;
         }
 

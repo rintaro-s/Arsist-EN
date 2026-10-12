@@ -2,6 +2,9 @@
 // Arsist Engine - UI Wrapper
 // Assets/Arsist/Runtime/Scripting/UiWrapper.cs
 // ==============================================
+using System;
+using System.Collections.Generic;
+using Jint.Native;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -14,6 +17,46 @@ namespace Arsist.Runtime.Scripting
     [UnityEngine.Scripting.Preserve]
     public class UiWrapper
     {
+        private readonly JsBridge _js;
+        // ui.on で登録したもの (ui.off で外すため)
+        private readonly Dictionary<string, List<Action>> _listeners = new Dictionary<string, List<Action>>();
+
+        public UiWrapper() { }
+
+        public UiWrapper(JsBridge js)
+        {
+            _js = js;
+        }
+
+        // ─────────────────────────────────────
+        // ui.on(eventName, fn) / ui.off(eventName)
+        // ボタンの bindingId ("start")・入力の確定 ("name:submit")・拡張機能の出来事 ("quest-room:ready") など、
+        // スクリプトのイベントを 1 つのスクリプトの中で受ける。ボタンごとにスクリプトを分けなくてよい。
+        // trigger { type: "event" } のスクリプトと一緒に使ってよい (両方呼ばれる)。
+        // ─────────────────────────────────────
+        [UnityEngine.Scripting.Preserve]
+        public void on(string eventName, JsValue callback)
+        {
+            if (string.IsNullOrEmpty(eventName)) { Debug.LogWarning("[ArsistJS] ui.on: the event name is empty"); return; }
+            if (_js == null || !_js.IsFunction(callback))
+            {
+                Debug.LogWarning($"[ArsistJS] ui.on('{eventName}'): the second argument must be a function");
+                return;
+            }
+            Action handler = () => _js.Call(callback, $"ui.on('{eventName}')", eventName);
+            if (!_listeners.TryGetValue(eventName, out var list)) _listeners[eventName] = list = new List<Action>();
+            list.Add(handler);
+            ArsistScriptEvent.Register(eventName, handler);
+        }
+
+        [UnityEngine.Scripting.Preserve]
+        public void off(string eventName)
+        {
+            if (string.IsNullOrEmpty(eventName) || !_listeners.TryGetValue(eventName, out var list)) return;
+            foreach (var handler in list) ArsistScriptEvent.Unregister(eventName, handler);
+            _listeners.Remove(eventName);
+        }
+
         // ─────────────────────────────────────
         // ui.setText(id, text)
         // ─────────────────────────────────────

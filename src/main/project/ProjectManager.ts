@@ -150,6 +150,7 @@ export class ProjectManager {
         uiLayouts: [],
         models: [],
         extensions: {},
+        storage: { persist: [] },
         buildSettings: {
           packageName: `com.arsist.${options.name.toLowerCase().replace(/\s+/g, '')}`,
           version: '1.0.0',

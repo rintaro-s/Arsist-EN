@@ -81,6 +81,8 @@ function pickFirstExisting(paths) {
     scripts: scripts
       .filter((sc) => sc.enabled)
       .map((sc) => ({ id: sc.id, name: sc.name, trigger: sc.trigger, code: sc.code, enabled: sc.enabled })),
+    // エディタの exportScriptBundle と同じ (実機の ArsistPersistentStore が読む)
+    storage: { persist: (project.storage && project.storage.persist) || [] },
   };
 
   const logFilePath = pickFirstExisting([

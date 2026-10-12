@@ -2,6 +2,8 @@
 // Arsist Engine - Viewer Wrapper (user viewpoint)
 // Assets/Arsist/Runtime/Scripting/ViewerWrapper.cs
 // ==============================================
+using System.Collections.Generic;
+using Jint.Native;
 using UnityEngine;
 
 namespace Arsist.Runtime.Scripting
@@ -25,6 +27,75 @@ namespace Arsist.Runtime.Scripting
         public ViewerWrapper(SceneWrapper scene)
         {
             _scene = scene;
+        }
+
+        /// <summary>JS の値の受け渡し (ScriptEngineManager が入れる)</summary>
+        public JsBridge Js { get; set; }
+
+        /// <summary>ユーザーの頭 (視点カメラ)。無ければ null。他のラッパー (scene / camera / audio) が使う。</summary>
+        public Transform HeadTransform
+        {
+            get
+            {
+                var cam = ResolveCamera();
+                return cam != null ? cam.transform : null;
+            }
+        }
+
+        /// <summary>
+        /// viewer.pose() → { x, y, z, yaw, pitch, forward: { x, y, z }, tracking }。
+        /// 頭の向きであって目の向きではない。yaw は +Z からの水平の角度 (右回りが +)、pitch は上を向くと +。
+        /// </summary>
+        [UnityEngine.Scripting.Preserve]
+        public JsValue pose()
+        {
+            var head = HeadTransform;
+            if (head == null || Js == null) return JsValue.Null;
+            var p = head.position;
+            var f = head.forward;
+            double yaw = Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
+            double pitch = Mathf.Asin(Mathf.Clamp(f.y, -1f, 1f)) * Mathf.Rad2Deg;
+            return Js.ToJs(new Dictionary<string, object>
+            {
+                ["x"] = (double)p.x, ["y"] = (double)p.y, ["z"] = (double)p.z,
+                ["yaw"] = yaw,
+                ["pitch"] = pitch,
+                ["forward"] = new Dictionary<string, object> { ["x"] = (double)f.x, ["y"] = (double)f.y, ["z"] = (double)f.z },
+                ["tracking"] = IsTracking(),
+            });
+        }
+
+        /// <summary>
+        /// viewer.isLookingAt(id[, degrees]) — 頭の正面とその物の方向の角度が degrees (既定 15) 以内か。
+        /// VRM (人型) は頭のボーン、他は見た目の中心 (描画範囲の中心。無ければ物の位置) で測る。
+        /// </summary>
+        [UnityEngine.Scripting.Preserve]
+        public bool isLookingAt(string id, double degrees = 15)
+        {
+            var head = HeadTransform;
+            if (head == null || _scene == null || !_scene.TryGetObject(id, out var obj)) return false;
+            var target = AimPoint(obj);
+            var to = target - head.position;
+            if (to.sqrMagnitude < 1e-6f) return true;
+            return Vector3.Angle(head.forward, to) <= degrees;
+        }
+
+        private static Vector3 AimPoint(GameObject obj)
+        {
+            var animator = obj.GetComponentInChildren<Animator>();
+            if (animator != null && animator.isHuman)
+            {
+                var bone = animator.GetBoneTransform(HumanBodyBones.Head);
+                if (bone != null) return bone.position;
+            }
+            var renderers = obj.GetComponentsInChildren<Renderer>();
+            if (renderers.Length > 0)
+            {
+                var bounds = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+                return bounds.center;
+            }
+            return obj.transform.position;
         }
 
         /// <summary>

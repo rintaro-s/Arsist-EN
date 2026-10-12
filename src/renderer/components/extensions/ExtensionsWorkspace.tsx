@@ -8,9 +8,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, BookOpen, Check, Clock, Download, FileCode2, FolderInput, FolderOpen, Glasses, Link2, Package, Puzzle,
-  RefreshCw, Search, Smartphone, Trash2, Unlink, Wrench,
+  RefreshCw, Replace, Search, Smartphone, Trash2, Unlink, Wrench,
 } from 'lucide-react';
 import type { ExtensionManifest } from '../../../shared/extensions';
+import { enginePart, enginePartLabel, SCRIPT_PART_PREFIX } from '../../../shared/engineParts';
 import type { TagQuery } from '../../../shared/tags';
 import { useI18n, useT } from '../../i18n';
 import { useProjectStore } from '../../stores/projectStore';
@@ -225,6 +226,14 @@ function Switch({ on, onChange, label }: { on: boolean; onChange: (on: boolean) 
 
 function SourceBadge({ item }: { item: ExtensionListItem }) {
   const t = useT();
+  // エンジンに同梱 (Extensions/) = 公式
+  if (item.source === 'repo' || item.source === 'bundled') {
+    return (
+      <span className="text-[10px] text-arsist-success whitespace-nowrap" title={t('ext.sourceOfficialHint')}>
+        {t('ext.sourceOfficial')}
+      </span>
+    );
+  }
   if (item.source !== 'user' && item.source !== 'linked') return null;
   return (
     <span className="text-[10px] text-arsist-accent whitespace-nowrap" title={item.root ?? item.dir}>
@@ -259,6 +268,11 @@ function ListRow({ item, selected, enabled, fit, onSelect, onToggle }: {
       <div className="flex items-center gap-1.5 mt-0.5 pl-10">
         <span className="text-[10px] text-arsist-muted">{m.version}</span>
         <SourceBadge item={item} />
+        {(m.replaces?.length ?? 0) > 0 && (
+          <span className="text-[10px] text-arsist-warning whitespace-nowrap flex items-center gap-0.5" title={m.replaces!.map((p) => enginePartLabel(p, lang)).join(', ')}>
+            <Replace size={10} />{t('extTab.replacesBadge')}
+          </span>
+        )}
       </div>
       <p className="text-[11px] text-arsist-muted leading-snug mt-1 pl-10 line-clamp-2">{localized(m.description, lang)}</p>
     </div>
@@ -335,6 +349,13 @@ function ExtensionDetail({ item, enabled, settings, onToggle, onMessage, onChang
     onChanged();
   };
   const requires: TagQuery = m.requires ?? {};
+  // 同じ部品を置き換える、このプロジェクトで有効な別の拡張機能 (両方有効だとビルドが止まる)
+  const rivals = (m.replaces ?? []).map((part) => ({
+    part,
+    ids: (data?.extensions ?? [])
+      .filter((e) => e.manifest.id !== m.id && project?.extensions?.[e.manifest.id]?.enabled && (e.manifest.replaces ?? []).includes(part))
+      .map((e) => localized(e.manifest.name, lang)),
+  })).filter((r) => r.ids.length > 0);
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-4">
@@ -393,6 +414,7 @@ function ExtensionDetail({ item, enabled, settings, onToggle, onMessage, onChang
             {(m.script?.globals?.length ?? 0) > 0 && <li><FileCode2 size={12} className="inline mr-1.5 text-arsist-muted" />{t('ext.scriptGlobals', { names: m.script!.globals!.join(', ') })}</li>}
             {(m.provides?.adapters?.length ?? 0) > 0 && <li><Glasses size={12} className="inline mr-1.5 text-arsist-muted" />{t('ext.providesDevices', { names: m.provides!.adapters!.join(', ') })}</li>}
             {Object.keys(m.unity?.packages ?? {}).length > 0 && <li className="break-all">{t('ext.sdkPackages', { names: Object.entries(m.unity!.packages!).map(([k, v]) => `${k} (${v})`).join(', ') })}</li>}
+            {(m.unity?.unitypackages?.length ?? 0) > 0 && <li className="break-all"><Package size={12} className="inline mr-1.5 text-arsist-muted" />{t('extTab.unitypackages', { names: m.unity!.unitypackages!.map((p) => p.split('/').pop()).join(', ') })}</li>}
             {(m.unity?.overrides?.length ?? 0) > 0 && (
               <li className="text-arsist-warning">
                 {t('ext.overridesEngine', { count: m.unity!.overrides!.length })}
@@ -402,11 +424,38 @@ function ExtensionDetail({ item, enabled, settings, onToggle, onMessage, onChang
             {(m.android?.permissions?.length ?? 0) > 0 && <li className="break-all">{t('extTab.androidPermissions', { names: m.android!.permissions!.join(', ') })}</li>}
             {(m.android?.features?.length ?? 0) > 0 && <li className="break-all">{t('extTab.androidFeatures', { names: m.android!.features!.map((f) => f.name).join(', ') })}</li>}
             {!m.script?.globals?.length && !m.provides?.adapters?.length && !Object.keys(m.unity?.packages ?? {}).length
-              && !m.unity?.overrides?.length && !m.android?.permissions?.length && !m.android?.features?.length
+              && !m.unity?.unitypackages?.length && !m.unity?.overrides?.length && !m.android?.permissions?.length && !m.android?.features?.length
               && <li className="text-arsist-muted">{t('extTab.addsNothing')}</li>}
           </ul>
         </Section>
       </div>
+
+      {/* エンジンの部品の置き換え */}
+      {(m.replaces?.length ?? 0) > 0 && (
+        <Section icon={<Replace size={13} />} title={t('extTab.replaces')}>
+          <ul className="text-xs space-y-2">
+            {m.replaces!.map((part) => {
+              const info = enginePart(part);
+              return (
+                <li key={part}>
+                  <span className="font-medium text-arsist-text">{enginePartLabel(part, lang)}</span>
+                  <code className="ml-2 text-[10px] font-mono text-arsist-muted">{part}</code>
+                  <span className="block text-arsist-muted leading-snug mt-0.5">
+                    {info ? localized(info.description, lang) : part.startsWith(SCRIPT_PART_PREFIX) ? t('extTab.replacesScript', { name: part.slice(SCRIPT_PART_PREFIX.length) }) : ''}
+                  </span>
+                  {info?.dropsFromBuild && <span className="block text-arsist-muted leading-snug">{t('extTab.replacesDrops', { what: localized(info.dropsFromBuild, lang) })}</span>}
+                </li>
+              );
+            })}
+          </ul>
+          {rivals.map((r) => (
+            <p key={r.part} className="text-xs text-arsist-warning flex items-start gap-1.5">
+              <AlertTriangle size={13} className="shrink-0 mt-0.5" />{t('extTab.replacesConflict', { part: enginePartLabel(r.part, lang), names: r.ids.join(', ') })}
+            </p>
+          ))}
+          <p className="text-[11px] text-arsist-muted leading-snug">{t(enabled ? 'extTab.replacesOn' : 'extTab.replacesOff')}</p>
+        </Section>
+      )}
 
       {/* 設定 */}
       <Section icon={<Wrench size={13} />} title={t('extTab.settings')}>

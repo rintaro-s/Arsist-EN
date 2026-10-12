@@ -140,6 +140,11 @@ async function checkFiles(manifest: ExtensionManifest, dir: string): Promise<str
       problems.push(`unity.packages.${name}: ${ref} does not exist in the extension`);
     }
   }
+  for (const ref of manifest.unity?.unitypackages ?? []) {
+    if (!await fs.pathExists(path.join(dir, ref))) {
+      problems.push(`unity.unitypackages: ${ref} does not exist in the extension`);
+    }
+  }
   for (const o of manifest.unity?.overrides ?? []) {
     if (!await fs.pathExists(path.join(dir, 'Overrides', o.path))) {
       problems.push(`unity.overrides: Overrides/${o.path} does not exist in the extension`);

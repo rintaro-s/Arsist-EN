@@ -130,6 +130,13 @@ const electronAPI = {
         import: (params) => electron_1.ipcRenderer.invoke('assets:import', params),
         list: (params) => electron_1.ipcRenderer.invoke('assets:list', params),
     },
+    // キャラクターの動き (Assets/Animations/<名前>.fbx。名前 = スクリプトの vrm.playAnimation の名前)
+    animations: {
+        import: (params) => electron_1.ipcRenderer.invoke('animations:import', params),
+        list: (params) => electron_1.ipcRenderer.invoke('animations:list', params),
+        // VRM の形式 ('1.0' / '0.x')。エンジン標準の読み込みは 0.x だけなので、インスペクタが 1.0 を知らせる
+        vrmSpec: (params) => electron_1.ipcRenderer.invoke('animations:vrm-spec', params),
+    },
     // 設定ストア
     store: {
         get: (key) => electron_1.ipcRenderer.invoke('store:get', key),

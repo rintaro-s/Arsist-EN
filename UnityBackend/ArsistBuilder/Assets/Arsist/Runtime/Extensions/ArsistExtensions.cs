@@ -208,6 +208,38 @@ namespace Arsist.Runtime.Extensions
             }
         }
 
+        private static bool _partsReplaced;
+
+        /// <summary>
+        /// 有効な拡張機能に、エンジンの部品を置き換えさせる (ArsistEngineParts.Get の初回)。1 回だけ。
+        /// 失敗した拡張機能があっても、その部品はエンジン標準のまま動く。
+        /// </summary>
+        internal static void EnsureEnginePartsReplaced()
+        {
+            if (_partsReplaced) return;
+            _partsReplaced = true;
+            foreach (var e in Active())
+            {
+                try
+                {
+                    e.Extension.ReplaceEngineParts(new ArsistEngineParts.Replacer(e.Extension.Id), e.Context);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[Arsist:{e.Extension.Id}] ReplaceEngineParts failed: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+        }
+
+        /// <summary>manifest.replacements: その部品を置き換えてよい拡張機能の id。無ければ null。</summary>
+        internal static string ReplacementOwner(string part)
+        {
+            if (string.IsNullOrEmpty(part)) return null;
+            Active();
+            var owner = MiniJson.Text(MiniJson.Obj(_manifest, "replacements"), part, null);
+            return string.IsNullOrEmpty(owner) ? null : owner;
+        }
+
         /// <summary>シーンの最初の Start で 1 回 (ArsistExtensionHost)。</summary>
         internal static void StartAll(MonoBehaviour host)
         {

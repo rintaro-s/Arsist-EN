@@ -14,6 +14,8 @@
 //   room.place(id, 'wall')             物を本物の面に置く (今見ている先)
 //   room.place(id, 'table', 'nearest') 置いた場所にいちばん近い机の上に
 //   room.place(id, 'wall', 'ahead', 0.05)
+//   room.place(id, 'table', 'nearest', 0.01, 'flat')   机の上に寝かせる (パネルなら机に置いた紙のように)
+//   room.raycast(x, y, z, dx, dy, dz[, 'table'])       その点から dx,dy,dz の向きに最初に当たる面 (lookAt と同じ形)
 //   room.isInside()                    ユーザーが部屋の中にいるか
 //   room.pin(id[, function (ok, detail) { … }])    今の場所を覚える (次に起動しても同じ場所)
 //   room.unpin(id[, function (ok, detail) { … }])
@@ -124,8 +126,33 @@ namespace Arsist.Extensions.QuestRoom
         [UnityEngine.Scripting.Preserve]
         public JsValue lookAt(string surface)
         {
+            RaycastHit hit = default;
+            MRUKAnchor anchor = null;
+            bool found = Service != null && Service.TryHitFromView(surface, out hit, out anchor);
+            return HitResult(found, hit, anchor, surface);
+        }
+
+        /// <summary>
+        /// 任意の点・向きの光線が最初に当たる面。手やコントローラーで指した先に「ここが席」を決めるときなどに
+        /// (quest-input の controller.aim / hands.joint の位置と forward をそのまま渡せる)。
+        /// </summary>
+        [UnityEngine.Scripting.Preserve]
+        public JsValue raycast(double x, double y, double z, double dx, double dy, double dz) => raycast(x, y, z, dx, dy, dz, "any");
+
+        [UnityEngine.Scripting.Preserve]
+        public JsValue raycast(double x, double y, double z, double dx, double dy, double dz, string surface)
+        {
+            RaycastHit hit = default;
+            MRUKAnchor anchor = null;
+            var ray = new Ray(new Vector3((float)x, (float)y, (float)z), new Vector3((float)dx, (float)dy, (float)dz).normalized);
+            bool found = Service != null && Service.TryHit(ray, surface, out hit, out anchor);
+            return HitResult(found, hit, anchor, surface);
+        }
+
+        private JsValue HitResult(bool found, RaycastHit hit, MRUKAnchor anchor, string surface)
+        {
             var result = new Dictionary<string, object> { ["hit"] = false };
-            if (Service != null && Service.TryHitFromView(surface, out var hit, out var anchor))
+            if (found)
             {
                 result["hit"] = true;
                 result["label"] = anchor != null ? RoomGeometry.NameOf(anchor.Label) : surface;
@@ -148,7 +175,11 @@ namespace Arsist.Extensions.QuestRoom
         public bool place(string id, string surface, string pick) => place(id, surface, pick, 0.02);
 
         [UnityEngine.Scripting.Preserve]
-        public bool place(string id, string surface, string pick, double offset)
+        public bool place(string id, string surface, string pick, double offset) => place(id, surface, pick, offset, "upright");
+
+        /// <summary>lie: "upright" (立てて、こちらを向く。既定) / "flat" (寝かせる。机・床・ソファの上だけ)</summary>
+        [UnityEngine.Scripting.Preserve]
+        public bool place(string id, string surface, string pick, double offset, string lie)
         {
             var service = Service;
             if (service == null) { Debug.LogWarning("[ArsistJS] room.place: the room service has not started yet"); return false; }
@@ -158,7 +189,7 @@ namespace Arsist.Extensions.QuestRoom
             // 留めていた物を動かすなら、留めた場所は忘れる (次の起動で古い場所に戻らないように)
             if (service.Pins.IsPinned(id)) service.Pins.Forget(id);
 
-            var ok = service.Place(go, surface, string.IsNullOrEmpty(pick) ? "gaze" : pick, (float)offset, out var detail);
+            var ok = service.Place(go, surface, string.IsNullOrEmpty(pick) ? "gaze" : pick, (float)offset, out var detail, lie == "flat");
             if (!ok) Debug.LogWarning($"[ArsistJS] room.place('{id}', '{surface}'): {detail}");
             return ok;
         }

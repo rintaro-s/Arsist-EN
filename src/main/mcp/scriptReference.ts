@@ -1,53 +1,22 @@
 /**
  * エージェント (MCP / 内蔵エージェント) に渡す、Arsist のスクリプトと IR の早見表。
  *
- * 中身は実装 (Runtime/Scripting/*Wrapper.cs・ScriptEngineManager.cs・src/shared/types.ts) から写したもの。
- * ラッパーにメソッドを足したら、ここにも足す (書いていない API はエージェントが使えない)。
+ * スクリプトの API は src/shared/scriptApi.ts (エディタのスクリプトタブの早見表と同じ元)。
+ * ラッパーにメソッドを足したら、そちらに足す (書いていない API はエージェントにも人にも見えない)。
  * 拡張機能の API は、入っている拡張機能の README の「スクリプト」の節をそのまま添える (scriptReferenceFor)。
  */
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import type { ExtensionManifest } from '../../shared/extensions';
+import { renderScriptApiText, SCRIPT_RULES_TEXT, SCRIPT_TRIGGERS_TEXT } from '../../shared/scriptApi';
 
-export const ENGINE_SCRIPT_REFERENCE = `# Arsist scripts (JavaScript, runs on the device with Jint — ES2020 without modules)
-
-A script has { name, trigger, code, enabled }. Triggers:
-  { type: "onStart" }                    once when the app starts
-  { type: "onUpdate" }                   every frame (keep it cheap)
-  { type: "interval", value: 5000 }      every N milliseconds
-  { type: "event", value: "<name>" }     when that event fires. A UI Button/Input with bindingId "x" fires "x";
-                                         an Input fires "x:submit" when confirmed; extensions fire "<extension-id>:<what>".
-
-Globals (all calls are synchronous unless they take a callback):
-  log(msg) / error(msg) / console.log(...)   — shows up in "npm run logs"
-  store.get(key) / store.set(key, value) / store.has(key) / store.remove(key) / store.clear()
-      The one value store of the app. UI elements with bind.key = "a.b" show store "a.b" live.
-  ui.setText(bindingId, text) / ui.setVisibility(bindingId, bool) / ui.setColor(bindingId, "#RRGGBB")
-  ui.setAlpha(bindingId, 0..1) / ui.triggerEvent(name)
-  scene.setPosition(id, x, y, z) / scene.move(id, dx, dy, dz) / scene.setRotation(id, pitch, yaw, roll)
-  scene.rotate(id, dp, dy, dr) / scene.setScale(id, x, y, z) / scene.setUniformScale(id, s)
-  scene.setVisible(id, bool) / scene.exists(id) / scene.getPositionX|Y|Z(id)
-  scene.playAnimation(id, name) / scene.stopAnimation(id) / scene.setAnimationSpeed(id, s)
-  scene.setBlendShapeWeight(id, name, 0..100) / scene.setBoneRotation(id, bone, p, y, r)
-      id = the object's assetId (or its name). Coordinates here are RUNTIME Unity world space (x = right).
-  viewer.placeInFront(id, distanceMeters[, faceUser]) / viewer.recenter()
-  vrm.setExpression(id, name, 0..1) / vrm.resetExpressions(id) / vrm.lookAt(id, x, y, z) / vrm.clearLookAt(id)
-  vrm.setBoneRotation(id, bone, p, y, r) / vrm.setHandTarget(id, "left"|"right", x, y, z) / vrm.playAnimation(id, name)
-  api.get(url[, headersJson], function (text) { ... })            text is null on failure
-  api.post(url, bodyJson[, headersJson], function (text) { ... })  headersJson e.g. JSON.stringify({ Authorization: "Bearer …" })
-  model.list() / model.info(id) / model.busy(id) / model.stop([id])
-  model.generate(id, prompt, { onToken: function (piece, textSoFar) {} }, function (r) { r.ok, r.text })
-  model.embed(id, text, function (r) { r.vector }) / model.similarity(a, b) / model.classifyText(id, text, cb)
-  model.run(id, inputs, cb) / model.runImage(id, cb) / model.tokenize(id, text) / model.detokenize(id, ids)
-  perception.isTracked(targetId) / perception.isVisible(targetId) / perception.getPose(targetId) / perception.listTargets()
-  perception.run(taskId[, function (r) { r.Ok, r.Text, r.Lines }]) / perception.value(storeAs, key) / perception.lastResult(taskId)
-  remote.startServer(port, password) / remote.stopServer() / remote.isRunning()
-
-Rules of thumb:
-  - Bind UI to the store instead of calling ui.setText in a loop: set bind.key on the element, then store.set(key, value).
-  - Callbacks arrive later on the main thread; never busy-wait.
-  - A global of an extension that is not in a device's build is a harmless stand-in there (calls do nothing).
-`;
+export const ENGINE_SCRIPT_REFERENCE = [
+  '# Arsist scripts (JavaScript, runs on the device with Jint — ES2020 without modules)',
+  SCRIPT_TRIGGERS_TEXT,
+  'Globals (all calls are synchronous unless they take a callback):',
+  renderScriptApiText(),
+  SCRIPT_RULES_TEXT,
+].join('\n\n') + '\n';
 
 export const IR_REFERENCE = `# Arsist project (IR) essentials
 
@@ -58,11 +27,19 @@ Rotation is Euler degrees. Content facing the user needs rotation { x: 0, y: 0, 
 Scene object types: primitive (primitiveType cube|sphere|plane|cylinder|capsule), model (GLB/glTF, modelPath),
 vrm, light, empty, canvas (a UI layout shown as a panel in space: canvasSettings { layoutId, widthMeters, heightMeters, pixelsPerUnit }).
 assetId is how scripts address an object.
+A vrm object may have character { animation, blink, breathe, lookAtUser: "off"|"always"|"nearby" } (IR v5): it then
+plays that animation in a loop, blinks, breathes and looks at the user. Animations are FBX files in Assets/Animations/
+(humanoid, e.g. Mixamo; walking downloaded "In Place"); the name is the file name without extension — the same name
+scripts pass to vrm.playAnimation / vrm.walkTo. Without character a VRM stands still (as before v5).
 
 UI layouts: scope "uhd" (fixed to the view) or "canvas" (placed in space through a canvas object).
 Element types: Panel, Text, Button, Image, Slider, Input, Gauge, Graph, Keyboard. Elements nest (children).
 Useful fields: content (text), bindingId (scripts/events: a Button fires an event with this name),
+reveal { speed } (Text/Button: the text appears letter by letter, speed letters per second, whenever it changes),
 bind { key, format } (shows a store value), style { width, height, fontSize, color, backgroundColor, ... }, layout FlexRow|FlexColumn|Absolute.
+
+Saved on the device: project.storage.persist lists store keys kept across launches ("memory." = every key starting
+with memory.; otherwise an exact key). Everything else in the store starts empty on each launch.
 
 Data flow: dataSources (polling/event inputs written to the store) and transforms (store → store).
 

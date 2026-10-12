@@ -152,9 +152,18 @@ const electronAPI = {
 
   // アセット管理
   assets: {
-    import: (params: { projectPath: string; sourcePath: string; kind?: 'model' | 'texture' | 'video' | 'other' }) =>
+    import: (params: { projectPath: string; sourcePath: string; kind?: 'model' | 'texture' | 'video' | 'animation' | 'other' }) =>
       ipcRenderer.invoke('assets:import', params),
     list: (params: { projectPath: string }) => ipcRenderer.invoke('assets:list', params),
+  },
+
+  // キャラクターの動き (Assets/Animations/<名前>.fbx。名前 = スクリプトの vrm.playAnimation の名前)
+  animations: {
+    import: (params: { projectPath: string; sourcePath: string; name?: string }) =>
+      ipcRenderer.invoke('animations:import', params),
+    list: (params: { projectPath: string }) => ipcRenderer.invoke('animations:list', params),
+    // VRM の形式 ('1.0' / '0.x')。エンジン標準の読み込みは 0.x だけなので、インスペクタが 1.0 を知らせる
+    vrmSpec: (params: { projectPath: string; modelPath: string }) => ipcRenderer.invoke('animations:vrm-spec', params),
   },
 
   // 設定ストア

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  UniVRM10 の読み込みは型をリフレクションで探す所がある (glTF の拡張・シリアライザ・マテリアル)。
+  IL2CPP がそれを消すと、エディタでは読めるのに実機でだけモデルが出ない。UniVRM の推奨どおり丸ごと残す。
+-->
+<linker>
+  <assembly fullname="UniGLTF" preserve="all" />
+  <assembly fullname="UniGLTF.Utils" preserve="all" />
+  <assembly fullname="UniGLTF.UniUnlit" preserve="all" />
+  <assembly fullname="UniHumanoid" preserve="all" />
+  <assembly fullname="SpringBoneJobs" preserve="all" />
+  <assembly fullname="VrmLib" preserve="all" />
+  <assembly fullname="VRM10" preserve="all" />
+  <assembly fullname="VRM10.MToon10" preserve="all" />
+  <assembly fullname="FastSpringBone10" preserve="all" />
+</linker>

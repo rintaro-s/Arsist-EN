@@ -16,6 +16,9 @@ import { trackChild, longRunningOptions, killTree } from '../platform/childProce
 import { isUnityTextureExtension, UNITY_TEXTURE_EXTENSIONS } from '../../shared/assets';
 import type { ArsistProject, BackgroundMode, ProjectExtensionState } from '../../shared/types';
 import { adapterTags } from '../../shared/adapterTags';
+import { listAnimations } from '../project/animationAssets';
+import { readVrmSpec } from '../project/vrmInfo';
+import { characterAnimationIssues } from '../../shared/characterChecks';
 import { projectFeatureTags, unsupportedFeatures } from '../../shared/engineFeatures';
 import { resolveExtensions, type ResolvedExtension } from '../../shared/extensions';
 import { CURRENT_IR_VERSION } from '../../shared/irVersion';
@@ -24,6 +27,8 @@ import { describeCatalogProblems, type InstalledExtension } from '../extensions/
 import { getExtensionCatalog, setUserExtensionsDir } from '../extensions/catalogService';
 import { resolveAdapter } from '../adapters/adapterDirs';
 import { isLocalPackageRef } from '../../shared/extensions';
+import { enginePart, enginePartLabel, planReplacements } from '../../shared/engineParts';
+import { extractUnityPackage, readUnityPackage, removeUnityPackageFiles, unityPackageLayout, type UnityPackageEntry } from '../extensions/unitypackage';
 import {
   collectAndroidAdditions,
   EXTENSIONS_ASSET_DIR,
@@ -102,6 +107,8 @@ interface BuildExtensionPlan {
    * 「何もしない代役」が入る (同じプロジェクトのスクリプトが、別の端末で落ちないように)。
    */
   absent: Array<{ id: string; globals: string[]; reason: string }>;
+  /** 置き換えられたエンジンの部品 → 置き換えた拡張機能 (src/shared/engineParts.ts) */
+  replacements: Record<string, string>;
 }
 
 export interface BuildProgress {
@@ -544,7 +551,11 @@ export class UnityBuilder extends EventEmitter {
       await this.writeAndroidToolchainSettings(unityProjectPath);
 
       // Phase 3.6: VRMプロジェクトならUniVRMパッケージをインポート
-      if (this.projectUsesVRM(config)) {
+      // (VRM の読み込みを拡張機能が置き換えているときは、その拡張機能の UniVRM を使う。stageExtensions が済ませている)
+      const vrmLoaderOwner = this.buildExtensions?.replacements?.['vrm-loader'];
+      if (vrmLoaderOwner && this.projectUsesVRM(config)) {
+        this.emit('log', `[Arsist] VRM models are loaded by extension '${vrmLoaderOwner}' (engine UniVRM 0.x not imported)`);
+      } else if (this.projectUsesVRM(config)) {
         this.emitProgress('sdk-vrm', 45, 'UniVRMパッケージをインポート中...');
         
         // UniVRMパッケージを解決
@@ -563,7 +574,7 @@ export class UnityBuilder extends EventEmitter {
         const importResult = await this.ensureUnityPackageImported(
           unityProjectPath,
           univrmPackage,
-          '.arsist-univrm.json',
+          UnityBuilder.UNIVRM_MARKER,
           importLog,
         );
 
@@ -577,7 +588,17 @@ export class UnityBuilder extends EventEmitter {
         }
 
         this.emit('log', '[Arsist] UniVRM package imported successfully');
-        
+
+        // VRM 1.0 のモデル (VRoid などの今の書き出し) は、エンジン標準の UniVRM 0.x では読めない。
+        // 読むには VRM の読み込みを置き換える拡張機能 (Extensions/vrm10) を有効にする。ビルドは止めずにはっきり言う。
+        const vrm10Models = await this.vrm10ModelsInProject(config);
+        if (vrm10Models.length > 0) {
+          this.emit('log',
+            `[Arsist] WARNING: ${vrm10Models.join(', ')} is a VRM 1.0 model, but the engine's own VRM loader (UniVRM 0.x) reads VRM 0.x only. ` +
+            'The build continues, but the character will not appear on the device. Enable the "VRM 1.0" extension (vrm10) for this project ' +
+            '(Extensions tab), or convert the model to VRM 0.x.');
+        }
+
         // link.xml更新：IL2CPP stripping対策
         this.emitProgress('sdk-vrm-protect', 48, 'VRM型保護を設定中...');
         const linkXmlPath = path.join(unityProjectPath, 'Assets', 'link.xml');
@@ -1374,6 +1395,24 @@ export class UnityBuilder extends EventEmitter {
     }
   }
 
+  /** 物が使っている VRM のうち、VRM 1.0 のもの (プロジェクトからの相対パス)。 */
+  private async vrm10ModelsInProject(config: UnityBuildConfig): Promise<string[]> {
+    if (!config.sourceProjectPath) return [];
+    const paths = new Set<string>();
+    const visit = (objects: any[]) => {
+      for (const obj of objects ?? []) {
+        if (String(obj?.type).toLowerCase() === 'vrm' && typeof obj.modelPath === 'string') paths.add(obj.modelPath);
+        if (Array.isArray(obj?.children)) visit(obj.children);
+      }
+    };
+    for (const scene of (Array.isArray(config.scenesData) ? config.scenesData : []) as any[]) visit(scene?.objects);
+    const out: string[] = [];
+    for (const rel of paths) {
+      if (await readVrmSpec(path.join(config.sourceProjectPath, rel)) === '1.0') out.push(rel);
+    }
+    return out;
+  }
+
   private async resolveUniVRMUnityPackagePath(): Promise<string | null> {
     const roots = [
       this.resolveSdkDir(),
@@ -1764,6 +1803,8 @@ export class UnityBuilder extends EventEmitter {
       features: this.buildExtensions?.features ?? [],
       extensions: manifestEntries(this.buildExtensions?.active ?? []),
       absentExtensions: this.buildExtensions?.absent ?? [],
+      // 拡張機能が置き換えたエンジンの部品 (部品 → 拡張機能の id)。実機は宣言の無い置き換えを断る
+      replacements: this.buildExtensions?.replacements ?? {},
     };
 
     await fs.writeJSON(
@@ -1838,6 +1879,18 @@ export class UnityBuilder extends EventEmitter {
         );
       } else {
         this.emit('log', `[Arsist] Project Assets folder not found: ${sourceAssets}`);
+      }
+
+      // スクリプトの audio.play('Assets/Audio/x.wav') は実機で StreamingAssets/ArsistAssets/<Assets/ の後> を読む
+      // (AudioWrapper)。音のファイルは Unity の取り込みを通さず、そのままの形で置く。
+      const sourceAudio = path.join(sourceAssets, 'Audio');
+      const destAudio = path.join(unityProjectPath, 'Assets', 'StreamingAssets', 'ArsistAssets', 'Audio');
+      if (await fs.pathExists(sourceAudio)) {
+        const sync = await this.syncDirectory(sourceAudio, destAudio, { prune: 'mirror' });
+        this.emit('log', `[Arsist] Project audio for scripts (StreamingAssets/ArsistAssets/Audio): ${sync.copied} updated, ${sync.removed} removed`);
+      } else if (await fs.pathExists(destAudio)) {
+        await fs.remove(destAudio).catch(() => {});
+        await fs.remove(`${destAudio}.meta`).catch(() => {});
       }
     }
 
@@ -3176,6 +3229,12 @@ export class UnityBuilder extends EventEmitter {
 
     this.emit('log', `[Arsist] Device tags (${config.targetDevice}): ${deviceTags.join(' ') || '(none)'}`);
     this.emit('log', `[Arsist] Features used: ${features.join(' ') || '(none)'}`);
+    // キャラクターの動きの名前の食い違い (実機では「動かない」だけで何も言わないので、ここで言う)
+    if (config.sourceProjectPath) {
+      const animations = (await listAnimations(config.sourceProjectPath).catch(() => [])).map((a) => a.name);
+      if (animations.length) this.emit('log', `[Arsist] Character animations (Assets/Animations): ${animations.join(', ')}`);
+      for (const issue of characterAnimationIssues(projectLike, animations)) this.emit('log', `[Arsist] WARNING: ${issue}`);
+    }
     for (const issue of unsupportedFeatures(projectLike, deviceTags)) {
       this.emit('log',
         `[Arsist] WARNING: ${issue.feature} (${issue.summary}) is used, but ${config.targetDevice} lacks ${issue.missing.join(' / ')}. ` +
@@ -3237,7 +3296,20 @@ export class UnityBuilder extends EventEmitter {
         (a.because === 'device' ? ' — provides the target device' : '') +
         (from?.overrides ? ` (overrides ${from.overrides})` : ''));
     }
-    return { deviceTags, features: allFeatures, active, absent };
+
+    // エンジンの部品の置き換え (replaces)。1 つの部品を置き換えられるのは 1 つの拡張機能だけ
+    const plan = planReplacements(active.map((a) => ({ id: a.manifest.id, replaces: a.manifest.replaces })));
+    if (plan.conflicts.length > 0) {
+      throw new Error(
+        'Two extensions replace the same engine part; only one can:\n' +
+        plan.conflicts.map((c) => `- ${enginePartLabel(c.part, 'en')} (${c.part}): ${c.ids.join(', ')}`).join('\n') +
+        '\nDisable one of them for this project.');
+    }
+    for (const [part, id] of Object.entries(plan.owners)) {
+      const drops = enginePart(part)?.dropsFromBuild?.en;
+      this.emit('log', `[Arsist] Engine part '${part}' (${enginePartLabel(part, 'en')}) is replaced by extension '${id}'${drops ? `; ${drops}` : ''}`);
+    }
+    return { deviceTags, features: allFeatures, active, absent, replacements: plan.owners };
   }
 
   /** sdk/ に置いてあり、この端末のビルドに入る SDK のタグ。 */
@@ -3268,6 +3340,8 @@ export class UnityBuilder extends EventEmitter {
     // エンジンの上書きと Unity パッケージは、拡張機能が 1 つも無いビルドでも「前回の分を戻す」が要る
     await this.stageEngineOverrides(unityProjectPath, active);
     await this.stageExtensionPackages(unityProjectPath, active);
+    const placed = await this.stageExtensionUnityPackages(unityProjectPath, active);
+    await this.dropReplacedEngineSdks(unityProjectPath, this.buildExtensions?.replacements ?? {}, placed);
 
     if (active.length === 0) {
       if (await fs.pathExists(root)) {
@@ -3325,6 +3399,91 @@ export class UnityBuilder extends EventEmitter {
 
   private static readonly OVERRIDES_RECORD = '.arsist-overrides.json';
   private static readonly PACKAGES_RECORD = '.arsist-extension-packages.json';
+  private static readonly UNITYPACKAGES_RECORD = '.arsist-extension-unitypackages.json';
+  private static readonly UNIVRM_MARKER = '.arsist-univrm.json';
+
+  /**
+   * 拡張機能の .unitypackage (unity.unitypackages) を作業用の Unity プロジェクトに展開する。
+   * Unity のインポートを使わずに自分で展開するのは、置いたファイルを正確に覚えておき、
+   * 拡張機能が入らなくなったときにそれだけを消すため (記録: <作業用プロジェクト>/.arsist-extension-unitypackages.json)。
+   * 2 つの拡張機能が同じファイルを置こうとしたら止める。
+   *
+   * @returns 今回置いた (置いてある) ファイルとフォルダ。エンジンの SDK を外すときに残すもの。
+   */
+  private async stageExtensionUnityPackages(unityProjectPath: string, active: Array<ResolvedExtension & { dir: string }>): Promise<Set<string>> {
+    type Placed = { extension: string; package: string; stamp: string; files: string[]; dirs: string[] };
+    const recordFile = path.join(unityProjectPath, UnityBuilder.UNITYPACKAGES_RECORD);
+    const previous: Placed[] = (await fs.readJSON(recordFile).catch(() => [])) ?? [];
+
+    const wanted: Array<Placed & { entries: UnityPackageEntry[] }> = [];
+    const owner = new Map<string, string>();
+    for (const ext of active) {
+      for (const ref of ext.manifest.unity?.unitypackages ?? []) {
+        const file = path.join(ext.dir, ref);
+        const entries = readUnityPackage(await fs.readFile(file));
+        const layout = unityPackageLayout(entries);
+        for (const f of layout.files) {
+          const other = owner.get(f);
+          if (other && other !== ext.manifest.id) {
+            throw new Error(`Extensions '${other}' and '${ext.manifest.id}' both bring ${f} in their .unitypackage; only one can.`);
+          }
+          owner.set(f, ext.manifest.id);
+        }
+        wanted.push({ extension: ext.manifest.id, package: ref, stamp: this.stampOf(await fs.stat(file)), ...layout, entries });
+      }
+    }
+
+    const keep = new Set<string>();
+    for (const w of wanted) { w.files.forEach((f) => keep.add(f)); w.dirs.forEach((d) => keep.add(d)); }
+
+    // 前回置いて今回は要らないものを消す (今回も置くファイルは残す)
+    for (const prev of previous) {
+      if (wanted.some((w) => w.extension === prev.extension && w.package === prev.package && w.stamp === prev.stamp)) continue;
+      const removed = await removeUnityPackageFiles(prev, unityProjectPath, keep);
+      if (removed > 0) this.emit('log', `[Arsist] ${path.basename(prev.package)} (extension '${prev.extension}'): removed ${removed} file(s) from the workspace`);
+    }
+
+    for (const w of wanted) {
+      const written = await extractUnityPackage(w.entries, unityProjectPath);
+      this.emit('log',
+        `[Arsist] ${path.basename(w.package)} from extension '${w.extension}': ` +
+        (written > 0 ? `${written} file(s) written` : 'already in the workspace') +
+        ` (${w.dirs.filter((d) => d.split('/').length === 2).join(', ')})`);
+    }
+
+    if (wanted.length > 0) {
+      await fs.writeJSON(recordFile, wanted.map(({ entries: _e, ...rest }) => rest));
+    } else {
+      await fs.remove(recordFile).catch(() => {});
+    }
+    return keep;
+  }
+
+  /**
+   * 置き換えられた部品のために、エンジンが入れていた SDK を作業用の Unity プロジェクトから外す
+   * (src/shared/engineParts.ts の dropsFromBuild)。今は VRM の読み込みだけ: 拡張機能が自分の UniVRM を
+   * 持ってくるので、エンジンの UniVRM 0.x を残すと UniGLTF の版違いがぶつかる。
+   * 拡張機能が外れたら、次のビルドで Phase 3.6 がエンジンの UniVRM をもう一度取り込む。
+   */
+  private async dropReplacedEngineSdks(unityProjectPath: string, replacements: Record<string, string>, placed: Set<string>): Promise<void> {
+    if (!replacements['vrm-loader']) return;
+    const marker = path.join(unityProjectPath, UnityBuilder.UNIVRM_MARKER);
+    const univrm = await this.resolveUniVRMUnityPackagePath();
+    if (!univrm) {
+      await fs.remove(marker).catch(() => {});
+      return;
+    }
+    const layout = unityPackageLayout(readUnityPackage(await fs.readFile(univrm)));
+    const present = await Promise.all(layout.files.map((f) => fs.pathExists(path.join(unityProjectPath, ...f.split('/')))));
+    const stray = layout.files.filter((f, i) => present[i] && !placed.has(f));
+    if (stray.length > 0) {
+      const removed = await removeUnityPackageFiles(layout, unityProjectPath, placed);
+      this.emit('log',
+        `[Arsist] VRM loading is replaced by extension '${replacements['vrm-loader']}': removed the engine's UniVRM 0.x ` +
+        `(${path.basename(univrm)}) from the workspace (${removed} file(s))`);
+    }
+    await fs.remove(marker).catch(() => {});
+  }
 
   /**
    * 拡張機能によるエンジンの改変 (unity.overrides)。

@@ -46,6 +46,10 @@ namespace Arsist.Runtime.Scripting
         private ViewerWrapper _viewerWrapper;
         private PerceptionWrapper _perceptionWrapper;
         private ModelWrapper _modelWrapper;
+        private JsBridge _js;
+        private AudioWrapper _audioWrapper;
+        private CameraWrapper _cameraWrapper;
+        private StorageWrapper _storageWrapper;
 
         /// <summary>
         /// 非同期ロード結果を保持するフィールド
@@ -58,6 +62,8 @@ namespace Arsist.Runtime.Scripting
         public VRMWrapper VRMWrapper => _vrmWrapper;
         public ViewerWrapper ViewerWrapper => _viewerWrapper;
         public PerceptionWrapper PerceptionWrapper => _perceptionWrapper;
+        /// <summary>JS ⇄ C# の受け渡しとコールバック呼び出し (拡張機能からも使える)</summary>
+        public JsBridge Js => _js;
 
         private void Awake()
         {
@@ -82,15 +88,26 @@ namespace Arsist.Runtime.Scripting
                 .TimeoutInterval(TimeSpan.FromSeconds(5)) // タイムアウト（無限ループ防止）
             );
 
-            _apiWrapper = new ApiWrapper(_engine);
-            _uiWrapper = new UiWrapper();
-            _storeWrapper = new StoreWrapper();
+            _js = new JsBridge(_engine);
+            _apiWrapper = new ApiWrapper(_engine, _js);
+            _uiWrapper = new UiWrapper(_js);
+            _storeWrapper = new StoreWrapper(_js);
             _sceneWrapper = new SceneWrapper();
             _vrmWrapper = new VRMWrapper();
             _remoteControlWrapper = new RemoteControlWrapper();
             _viewerWrapper = new ViewerWrapper(_sceneWrapper);
             _perceptionWrapper = new PerceptionWrapper(_engine);
             _modelWrapper = new ModelWrapper(_engine);
+            _sceneWrapper.Js = _js;
+            _sceneWrapper.Viewer = _viewerWrapper;
+            _viewerWrapper.Js = _js;
+            _audioWrapper = new AudioWrapper(_js);
+            _cameraWrapper = new CameraWrapper(_js, _viewerWrapper);
+            _storageWrapper = new StorageWrapper(_js);
+
+            // タイマー・後で呼ぶ仕事 (scene.moveTo など)・端末に保存する値は、この GameObject で回す
+            ScriptRuntimeHost.Ensure(gameObject, _js);
+            Arsist.Runtime.Data.ArsistPersistentStore.Ensure(gameObject);
 
             // JS 環境に安全なラッパーのみを公開
             _engine.SetValue("api", _apiWrapper);
@@ -102,6 +119,10 @@ namespace Arsist.Runtime.Scripting
             _engine.SetValue("viewer", _viewerWrapper);
             _engine.SetValue("perception", _perceptionWrapper);
             _engine.SetValue("model", _modelWrapper);
+            _engine.SetValue("audio", _audioWrapper);
+            _engine.SetValue("camera", _cameraWrapper);
+            _engine.SetValue("storage", _storageWrapper);
+            _engine.SetValue("__arsistTimers", new TimersWrapper());
             _engine.SetValue("log", new Action<object>(msg =>
                 Debug.Log($"[ArsistJS] {msg}")));
             _engine.SetValue("error", new Action<object>(msg =>
@@ -121,6 +142,15 @@ namespace Arsist.Runtime.Scripting
                   warn: function(m){ log('[warn] ' + m); },
                   error: function(m){ error(m); }
                 };
+                // ブラウザと同じタイマー。余分な引数は fn に渡す。呼ばれるのはメインスレッドの次のフレーム以降。
+                var setTimeout = function (fn, ms) {
+                  return __arsistTimers.add(fn, +ms || 0, false, Array.prototype.slice.call(arguments, 2));
+                };
+                var setInterval = function (fn, ms) {
+                  return __arsistTimers.add(fn, +ms || 0, true, Array.prototype.slice.call(arguments, 2));
+                };
+                var clearTimeout = function (id) { if (id) __arsistTimers.clear(+id); };
+                var clearInterval = clearTimeout;
             ");
 
             Debug.Log("[Arsist] ScriptEngineManager: Jint engine initialized.");
@@ -234,6 +264,7 @@ namespace Arsist.Runtime.Scripting
         private void ParseAndStoreScripts(string json)
         {
             var bundle = JObject.Parse(json);
+            ApplyStorageSettings(bundle);
             var arr = bundle["scripts"] as JArray;
             if (arr == null)
             {
@@ -258,6 +289,31 @@ namespace Arsist.Runtime.Scripting
 
             _loadedScripts = list.ToArray();
             Debug.Log($"[Arsist] Loaded {_loadedScripts.Length} script(s).");
+        }
+
+        /// <summary>
+        /// 端末に保存する値 (scripts.json の storage.persist) を設定し、保存してあった値をストアに戻す。
+        /// スクリプトの登録 (ScriptTriggerManager) より前に呼ばれるので、onStart の時点で値は戻っている。
+        /// </summary>
+        private static void ApplyStorageSettings(JObject bundle)
+        {
+            var rules = new List<string>();
+            if (bundle?["storage"]?["persist"] is JArray persist)
+                foreach (var item in persist) { var rule = item?.ToString(); if (!string.IsNullOrWhiteSpace(rule)) rules.Add(rule); }
+            Arsist.Runtime.Data.ArsistPersistentStore.Instance?.Configure(rules);
+        }
+
+        // ---- アプリが裏に回る / 戻る ----
+
+        private bool _paused;
+
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused == _paused) return;
+            _paused = paused;
+            if (paused) Arsist.Runtime.Data.ArsistPersistentStore.Instance?.Save();
+            // スクリプトのイベント。トリガー { type: "event", value: "app:pause" } で受けられる
+            ArsistScriptEvent.Fire(paused ? "app:pause" : "app:resume", false);
         }
 
         /// <summary>

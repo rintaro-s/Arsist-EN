@@ -168,6 +168,9 @@ export const MIGRATIONS: IrMigration[] = [
   defineMigration(3, { apply: migrate2to3 }),
   // 拡張機能の置き場。中身 (extensions.<id> / 物の ext.<id>) は拡張機能ごとの版で移行する。
   defineMigration(4, { ops: [{ op: 'default', path: 'extensions', value: {} }] }),
+  // キャラクターと保存。VRM の character・文字の reveal は無ければ「今までどおり」なので補わない
+  // (補うと古い VRM がいきなり瞬きを始める)。端末に保存するキーの置き場だけ足す。
+  defineMigration(5, { ops: [{ op: 'default', path: 'storage', value: { persist: [] } }] }),
   // @ir-migrations-end (npm run ir:new はこの行の上に足す)
 ];
 

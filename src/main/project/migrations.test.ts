@@ -119,6 +119,20 @@ describe('IR migrations', () => {
     expect(prefilled.extensions['quest-room'].settings.loadRoom).toBe(false);
   });
 
+  it('4 → 5 adds the saved-keys slot and leaves old VRMs without character motion', () => {
+    const vrm = { id: 'v', name: 'Sis', type: 'vrm', modelPath: 'Assets/Models/s.vrm', transform: {} };
+    const raw: Record<string, any> = { ...legacyProject(), irVersion: 4, extensions: {}, scenes: [{ id: 's', name: 'S', objects: [vrm] }] };
+    const outcome = migrateProject(raw);
+    expect(outcome.applied).toEqual(MIGRATIONS.filter((m) => m.from >= 4).map((m) => m.id));
+    expect(raw.storage).toEqual({ persist: [] });
+    // 無い = 今までどおり (瞬きも呼吸もしない)。補うと古いプロジェクトの見た目が変わる
+    expect('character' in raw.scenes[0].objects[0]).toBe(false);
+
+    const prefilled: Record<string, any> = { ...legacyProject(), irVersion: 4, storage: { persist: ['memory.'] } };
+    migrateProject(prefilled);
+    expect(prefilled.storage.persist).toEqual(['memory.']);
+  });
+
   // ---- すべての移行に対して自動で確かめること (版を足しても書き足さなくてよい) ----
 
   it('ends exactly at CURRENT_IR_VERSION, one step at a time', () => {

@@ -676,7 +676,28 @@ export interface SceneObject {
      * Unity に渡す (実機では ArsistObjectExt から引ける)。src/shared/extensions.ts。
      */
     ext?: Record<string, Record<string, unknown>>;
+    /**
+     * キャラクターとしての振る舞い (type === 'vrm'、IR v5〜)。無ければ v4 までと同じ (動かない)。
+     * エディタで新しく置いた VRM には CHARACTER_DEFAULTS が入る。
+     */
+    character?: CharacterSettings;
 }
+/**
+ * VRM をキャラクターとして動かす設定。動きの中身は Assets/Animations/ の FBX (人型、Mixamo など)。
+ * 名前はファイル名 (拡張子なし)。スクリプトの vrm.playAnimation(id, name) と同じ名前。
+ */
+export interface CharacterSettings {
+    /** 起動したら流す動き (ループ)。空なら動かさない */
+    animation?: string;
+    /** まばたきする */
+    blink?: boolean;
+    /** 呼吸で胸がわずかに動く */
+    breathe?: boolean;
+    /** ユーザーの頭の方を見る。off / always / nearby (近く (2.5 m 以内) で、こちらが見ているとき) */
+    lookAtUser?: 'off' | 'always' | 'nearby';
+}
+/** エディタで新しく置いた VRM の既定。 */
+export declare const CHARACTER_DEFAULTS: Required<Omit<CharacterSettings, 'animation'>>;
 /** 3D空間に配置するUIキャンバスの設定 */
 export interface CanvasSettings {
     /** アタッチする UILayout の ID */
@@ -735,6 +756,15 @@ export interface UIElement {
     layout?: 'FlexRow' | 'FlexColumn' | 'Absolute';
     style: UIStyle;
     children: UIElement[];
+    /**
+     * 文字を「書いていくように」出す (Text / Button の文字、IR v5〜)。
+     * 文字が変わるたびに、先頭から 1 文字ずつ現れる。無ければ一度に出す。
+     */
+    reveal?: TextReveal;
+}
+export interface TextReveal {
+    /** 1 秒に出す文字数 */
+    speed: number;
 }
 /** DataStore キーへのバインド定義 */
 export interface UIBinding {
@@ -818,6 +848,8 @@ export interface ScriptBundle {
         code: string;
         enabled: boolean;
     }>;
+    /** 端末に保存する store のキー (project.storage)。実機の ArsistPersistentStore がスクリプトより先に読む */
+    storage?: StorageSettings;
 }
 export interface ArsistProject {
     id: string;
@@ -853,7 +885,22 @@ export interface ArsistProject {
      * src/shared/extensions.ts / doc/17-extensions.md。
      */
     extensions?: Record<string, ProjectExtensionState>;
+    /** 端末に保存する値 (IR v5〜)。無ければ何も保存しない */
+    storage?: StorageSettings;
 }
+/**
+ * store の値のうち、アプリを閉じても端末に残すもの。
+ * persist の各項目は、キーそのもの ('user.name') か、末尾が '.' の前方一致 ('memory.' = memory.〜 すべて)。
+ * 実機では変わってから約 1 秒後と、アプリが裏に回ったときに書き出し、次の起動でスクリプトより先に読み戻す。
+ */
+export interface StorageSettings {
+    persist: string[];
+}
+/**
+ * store のキーが persist の指定に当たるか。'memory.' は前方一致、それ以外は完全一致。
+ * 大文字小文字は区別しない (実機の store がそうなので。ArsistPersistentStore と同じ規則)。
+ */
+export declare function isPersistedKey(key: string, persist: readonly string[] | undefined): boolean;
 export interface BuildConfig {
     targetDevice: string;
     buildTarget: 'Android';

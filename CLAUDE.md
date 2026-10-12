@@ -72,11 +72,18 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   an extension's data change never needs an IR bump. `doc/17-extensions.md`; worked examples
   `samples/extensions/{quest-room,quest-input}/` — **samples, not part of the engine**: they load because that
   folder is registered (`npm run ext:link -- samples/extensions`, stored as `extensionFolders` in config.json and
-  read by the editor, builds and the MCP server). `Extensions/` is the engine's own bundled slot (empty now).
+  read by the editor, builds and the MCP server). `Extensions/` holds the **official** extensions that ship with the engine (now `vrm10`); put only general-purpose ones there.
 - **Extensions may add devices (`provides.adapters` + `Adapters/<name>/`), SDKs (`unity.packages`) and engine
   modifications (`unity.overrides`, files under `Overrides/` replacing `Assets/Arsist/<path>` in the build workspace
   only, guarded by the original's SHA-256).** Never edit the engine to support one device or one app when an
   extension can carry it. Adapter lookup for every caller goes through `src/main/adapters/adapterDirs.ts`.
+- **To swap out part of the engine, prefer a replaceable part over an override.** `extension.json` `"replaces"` names
+  parts from `src/shared/engineParts.ts` (`vrm-loader`, `storage-backend`, `script:<built-in name>`); the entry passes an
+  implementation of the part's C# interface in `ReplaceEngineParts` (or `script.Set` for a script name). Only one enabled
+  extension may replace a part (the build stops otherwise), and the runtime refuses undeclared replacements. To make
+  another engine piece replaceable: add an interface, route the engine's use through `ArsistEngineParts.Get`, and add one
+  line to both `engineParts.ts` and `ArsistEngineParts.cs` (a test checks they match). `unity.unitypackages` brings a
+  `.unitypackage` (unpacked by the build, removed again when the extension leaves). doc/17 §2.6.
 - **A project that enables an extension (or targets a device) this editor lacks does not open** — the load returns
   `requirementsMissing` and the editor offers to import the `.arsist` / folder. Builds apply the same rule.
 - **Devices, engine features and extensions meet through tags, not names.** `adapter.json` (`capabilities` +
@@ -118,6 +125,20 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   reloads via `ProjectWatcher` — never write project files any other way. Registration into agents' settings
   (`agentTargets.ts`) only touches the `arsist` entry and backs the file up first. Test it with a fake `HOME`;
   never against your real `~/.claude.json` etc. See `doc/09-mcp-server.md`.
+
+- **Script APIs are listed once, in [src/shared/scriptApi.ts](src/shared/scriptApi.ts).** The Script tab's reference and
+  the agents' reference (`src/main/mcp/scriptReference.ts`) are both generated from it; a wrapper method that is not listed
+  there is invisible to people and agents alike. Extension APIs come from each extension's README "スクリプト" section.
+
+- **Characters (IR v5).** A VRM object's `character` (starting animation, blink, breathe, lookAtUser) makes it move; without
+  it a VRM stands still. A VRM never shows a T-pose: whenever no animation plays, `ArsistCharacter` holds a relaxed standing
+  pose (arms down, swaying a little) — `vrm.stopAnimation`, `then: "stand"`. Animations are humanoid FBX files in `Assets/Animations/<name>.fbx` (the file
+  name is the animation name everywhere: `character.animation`, `vrm.playAnimation`, the generated AnimatorController's
+  state names) — import them through `src/main/project/animationAssets.ts`, never with a hash suffix. The build imports
+  them as Humanoid and generates the controller; `src/shared/characterChecks.ts` reports names that do not exist.
+  The engine's own UniVRM is 0.x only (VRM 0.x models, no VRMA); VRM 1.0 models need the official `vrm10` extension
+  (`Extensions/vrm10`, replaces `vrm-loader`), and while it is on the build leaves the engine's UniVRM 0.x out. `project.storage.persist` lists store keys kept on the device
+  ("memory." = prefix, else exact key; `isPersistedKey` in types.ts and the runtime must agree).
 
 - **Agents may edit the IR files directly** and the open editor reloads them (~0.45 s). Scenes / UI layouts exist in
   `project.json` *and* `Scenes/` / `UI/`; `src/main/project/sceneCopies.ts` picks the copy that changed and writes it
@@ -177,6 +198,11 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   the line's *material* whenever `points` is a new array (always, with inline literals), so every re-render of the 3D
   view — a reload, a selection, a gizmo drag — threw away the line shaders and froze the editor ~2 s recompiling them.
   More generally: never let a re-render dispose materials that are still on screen.
+- **A dynamic TMP font drops characters silently when its atlas is full.** The bundled JKG-M3 samples at 90pt into one
+  1024² atlas (~80 glyphs), so Japanese UI lost characters on the device ("ここに座れないな" → "こにれないな").
+  `ConfigureDynamicFontAtlas` in the build pipeline turns on multi-atlas and makes the atlas 2048²; keep that if the font changes.
+- **VRM expressions take 0..100**, not 0..1 (`VRMExpressionController.SetExpression`), and `VRMWrapper.setExpression` logs
+  every call — anything that sets expressions every frame (lip sync, blinking) must call the controller directly.
 - Inside any `Arsist.Runtime.*` namespace, a bare `Input` resolves to the sibling namespace
   `Arsist.Runtime.Input`, **not** `UnityEngine.Input` (C# walks up the namespace chain before it looks
   at `using` directives). Always write `UnityEngine.Input.gyro` etc. — this broke the build once.

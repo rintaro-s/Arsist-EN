@@ -107,10 +107,24 @@ declare const electronAPI: {
         import: (params: {
             projectPath: string;
             sourcePath: string;
-            kind?: "model" | "texture" | "video" | "other";
+            kind?: "model" | "texture" | "video" | "animation" | "other";
         }) => Promise<any>;
         list: (params: {
             projectPath: string;
+        }) => Promise<any>;
+    };
+    animations: {
+        import: (params: {
+            projectPath: string;
+            sourcePath: string;
+            name?: string;
+        }) => Promise<any>;
+        list: (params: {
+            projectPath: string;
+        }) => Promise<any>;
+        vrmSpec: (params: {
+            projectPath: string;
+            modelPath: string;
         }) => Promise<any>;
     };
     store: {
