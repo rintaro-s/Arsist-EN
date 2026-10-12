@@ -103,6 +103,10 @@ const electronAPI = {
         import: (kind) => electron_1.ipcRenderer.invoke('extensions:import', kind),
         install: (source, force) => electron_1.ipcRenderer.invoke('extensions:install', source, force),
         uninstall: (id) => electron_1.ipcRenderer.invoke('extensions:uninstall', id),
+        linkFolder: () => electron_1.ipcRenderer.invoke('extensions:link-folder'),
+        readme: (id) => electron_1.ipcRenderer.invoke('extensions:readme', id),
+        openDir: (id) => electron_1.ipcRenderer.invoke('extensions:open-dir', id),
+        unlinkFolder: (dir) => electron_1.ipcRenderer.invoke('extensions:unlink-folder', dir),
         export: (id) => electron_1.ipcRenderer.invoke('extensions:export', id),
     },
     // ファイルシステム

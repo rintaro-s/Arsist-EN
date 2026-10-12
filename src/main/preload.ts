@@ -124,6 +124,10 @@ const electronAPI = {
     import: (kind: 'package' | 'folder') => ipcRenderer.invoke('extensions:import', kind),
     install: (source: string, force?: boolean) => ipcRenderer.invoke('extensions:install', source, force),
     uninstall: (id: string) => ipcRenderer.invoke('extensions:uninstall', id),
+    linkFolder: () => ipcRenderer.invoke('extensions:link-folder'),
+    readme: (id: string) => ipcRenderer.invoke('extensions:readme', id),
+    openDir: (id: string) => ipcRenderer.invoke('extensions:open-dir', id),
+    unlinkFolder: (dir: string) => ipcRenderer.invoke('extensions:unlink-folder', dir),
     export: (id: string) => ipcRenderer.invoke('extensions:export', id),
   },
 

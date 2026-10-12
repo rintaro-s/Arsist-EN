@@ -30,8 +30,8 @@
     <Compile Include="InferenceChecks.cs" />
     <Compile Include="DataStoreChecks.cs" />
     <Compile Include="QuestInputChecks.cs" />
-    <Compile Include="../../Extensions/quest-input/Runtime/HandGestureMath.cs" />
-    <Compile Include="../../Extensions/quest-input/Runtime/MicMath.cs" />
+    <Compile Include="../../samples/extensions/quest-input/Runtime/HandGestureMath.cs" />
+    <Compile Include="../../samples/extensions/quest-input/Runtime/MicMath.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/MiniJson.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/ModelTensor.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Inference/InferenceService.cs" />

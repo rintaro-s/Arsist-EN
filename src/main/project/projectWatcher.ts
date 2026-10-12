@@ -10,6 +10,11 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import chokidar from 'chokidar';
 
+// ARSIST_DEBUG_WATCH=1 で、変化を見てから知らせるまでの時刻を出す (取りこぼし・遅れの調査用)
+const debug = process.env.ARSIST_DEBUG_WATCH === '1'
+  ? (...a: unknown[]) => console.log(`[watch ${Date.now()}]`, ...a)
+  : () => {};
+
 const digest = (text: string | Buffer) => crypto.createHash('sha1').update(text).digest('hex');
 
 export class ProjectWatcher {
@@ -19,19 +24,34 @@ export class ProjectWatcher {
   private pending = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly onExternalChange: (projectPath: string, files: string[]) => void, private readonly debounceMs = 400) {}
+  constructor(private readonly onExternalChange: (projectPath: string, files: string[]) => void, private readonly debounceMs = 250) {}
+
+  /** もう見ているか (読み直しのたびに見張りを作り直すと、その間に来た書き込みを取りこぼす) */
+  isWatching(projectPath: string): boolean {
+    return this.watcher !== null && this.root !== null && path.resolve(this.root) === path.resolve(projectPath);
+  }
 
   watch(projectPath: string): void {
+    if (this.isWatching(projectPath)) return;
     this.close();
     this.root = projectPath;
-    const targets = ['project.json', 'Scenes', 'UI'].map((p) => path.join(projectPath, p));
-    this.watcher = chokidar.watch(targets, {
+    const root = path.resolve(projectPath);
+    // ファイルではなくフォルダを見る。保存は「一時ファイル → rename」なので、ファイルそのものを見ていると
+    // 置き換わるたびに見張りが外れ、付け直すまで (数秒) 変更を取りこぼす
+    const wanted = (p: string) => {
+      const rel = path.relative(root, path.resolve(p));
+      if (rel === '') return true;
+      const [top, ...rest] = rel.split(path.sep);
+      if (rest.length === 0) return top === 'project.json' || top === 'Scenes' || top === 'UI';
+      return (top === 'Scenes' || top === 'UI') && rest.length === 1;
+    };
+    this.watcher = chokidar.watch(root, {
       ignoreInitial: true,
       depth: 1,
-      ignored: (p: string) => p.includes('.tmp-') || p.includes('.arsist-'),
-      awaitWriteFinish: { stabilityThreshold: 150, pollInterval: 50 },
+      ignored: (p: string) => p.includes('.tmp-') || p.includes('.arsist-') || !wanted(p),
+      awaitWriteFinish: { stabilityThreshold: 120, pollInterval: 40 },
     });
-    const handle = (file: string) => { void this.consider(file); };
+    const handle = (file: string) => { debug('event', file); void this.consider(file); };
     this.watcher.on('add', handle).on('change', handle).on('unlink', handle);
   }
 
@@ -55,7 +75,7 @@ export class ProjectWatcher {
     const own = this.ownWrites.get(key);
     if (own) {
       const now = await fs.readFile(key).catch(() => null);
-      if (now && digest(now) === own) return;
+      if (now && digest(now) === own) { debug('own write', key); return; }
     }
     this.pending.add(path.relative(this.root ?? '', key));
     if (this.timer) clearTimeout(this.timer);
@@ -63,6 +83,7 @@ export class ProjectWatcher {
       const files = [...this.pending].sort();
       this.pending.clear();
       this.timer = null;
+      debug('notify', files);
       if (this.root && files.length > 0) this.onExternalChange(this.root, files);
     }, this.debounceMs);
   }

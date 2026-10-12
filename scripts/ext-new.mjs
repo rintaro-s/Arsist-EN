@@ -12,7 +12,8 @@
  *                Adapters/My_Glasses/ (adapter.json・AndroidManifest.xml) と、XR の設定を書くビルドフックの
  *                雛形ができ、プロジェクトの targetDevice に My_Glasses を選べるようになる
  *   --dir        置き場。既定は Extensions/ (エンジンに同梱)。自分用なら
- *                <ユーザーデータ>/extensions (エディタの「自分の拡張機能のフォルダを開く」)
+ *                <ユーザーデータ>/extensions (エディタの「自分の拡張機能のフォルダを開く」)か、
+ *                好きなフォルダに作って登録する (npm run ext:link -- <そのフォルダ>。コピーせずに使われる)
  *
  * できるもの:
  *   extension.json                設定 1 つ・物ごとの指定 1 つ・スクリプトの名前 1 つ入りの見本
@@ -20,7 +21,7 @@
  *   Editor/<Name>BuildHook.cs     ビルド時のフック (中身は空。要らなければ消してよい)
  *   README.md
  *
- * 作ったあとは: エディタで右パネル (何も選んでいない状態) の「拡張機能」から有効にしてビルド。
+ * 作ったあとは: エディタの拡張機能タブでスイッチを入れてビルド。
  * 詳しくは doc/17-extensions.md。
  */
 import fs from 'node:fs';
@@ -307,5 +308,5 @@ if (opts.device) {
   console.log(`Next: エディタで targetDevice に ${opts.device} を選ぶと、この拡張機能が自動で入ります。`);
   console.log('      SDK は Packages/ に置いて extension.json の unity.packages に書き、Editor のフックで XR を設定します。');
 }
-console.log('Next: エディタの右パネル (何も選んでいない状態) →「拡張機能」で有効にして、ビルド。');
+console.log('Next: エディタの拡張機能タブでスイッチを入れて、ビルド。');
 console.log('      npm test で extension.json の形も確かめられます (Extensions/ に置いた場合)。');

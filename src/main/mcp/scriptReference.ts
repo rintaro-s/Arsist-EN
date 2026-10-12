@@ -66,6 +66,16 @@ bind { key, format } (shows a store value), style { width, height, fontSize, col
 
 Data flow: dataSources (polling/event inputs written to the store) and transforms (store → store).
 
+Editing the files directly (the IR is plain JSON; any agent that can edit text can use it):
+- project.json — everything: settings, scripts[] (code inline), dataFlow, extensions, models, and copies of scenes[] and uiLayouts[].
+- Scenes/<id>.json and UI/<id>.json — one scene / one UI layout each. Edit either copy: the editor uses the one that
+  changed. A scene listed in project.json scenes[] with full content needs no Scenes/ file; a Scenes/ file whose id is not
+  listed in project.json is ignored.
+- The open editor reloads within about a second, keeping the user's view and selection. While a file is not valid JSON it
+  keeps the last good version and reloads once it is valid again. Missing fields (transform, ids, children, style) are
+  filled with defaults rather than failing. ir_validate_project lists what was filled in and which copy was used.
+- Do not change irVersion. A project with an older irVersion must be upgraded in the editor first.
+
 Extensions add features, devices and script globals. Enable them per project; settings live in extensions.<id>.settings,
 per-object options in object.ext.<id>. A device may lack what an extension requires — the build then leaves it out.
 `;

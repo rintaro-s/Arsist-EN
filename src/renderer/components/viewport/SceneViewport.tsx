@@ -1,19 +1,20 @@
-import { Suspense, useEffect, useRef, useMemo, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Suspense, memo, useEffect, useRef, useMemo, useState } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { 
   OrbitControls, 
   Grid, 
   GizmoHelper, 
   GizmoViewport,
   useGLTF,
-  Line,
-  Text
+  Text,
+  Billboard
 } from '@react-three/drei';
+import { StableLine } from './StableLine';
 import * as THREE from 'three';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { SceneObject } from '../../../shared/types';
-import { Eye, HelpCircle, Box, Circle, Square, Cylinder } from 'lucide-react';
+import { Eye, HelpCircle, Box, Circle, Square, Cylinder, PersonStanding, Focus } from 'lucide-react';
 import { VRMViewer } from './VRMViewer';
 import { AnchorPlane } from './AnchorPlane';
 import { SceneTransformControls } from './SceneTransformControls';
@@ -23,20 +24,24 @@ import { resolvePlacement, regionToBase } from '../../../shared/placement';
 import type { PerceptionTarget } from '../../../shared/types';
 import { useT } from '../../i18n';
 import { useDeviceFov, type DeviceFov } from '../../utils/deviceFov';
+import { defaultViewpoint, useSceneView, type SceneViewpoint, type Vec3Tuple } from './sceneView';
+import { resolveModelUrl } from './modelUrl';
+import { pruneVrmCache, vrmKey } from './vrmCache';
+import { transformOf, type SceneObjectProps } from './sceneObjectProps';
 
 // Origin axis display
 function OriginAxes() {
   return (
     <group>
       {/* X-axis (red) */}
-      <Line points={[[0, 0, 0], [2, 0, 0]]} color="#f14c4c" lineWidth={2} />
-      <Line points={[[1.8, 0.1, 0], [2, 0, 0], [1.8, -0.1, 0]]} color="#f14c4c" lineWidth={2} />
+      <StableLine points={[[0, 0, 0], [2, 0, 0]]} color="#f14c4c" lineWidth={2} />
+      <StableLine points={[[1.8, 0.1, 0], [2, 0, 0], [1.8, -0.1, 0]]} color="#f14c4c" lineWidth={2} />
       {/* Y-axis (green) */}
-      <Line points={[[0, 0, 0], [0, 2, 0]]} color="#4ec9b0" lineWidth={2} />
-      <Line points={[[-0.1, 1.8, 0], [0, 2, 0], [0.1, 1.8, 0]]} color="#4ec9b0" lineWidth={2} />
+      <StableLine points={[[0, 0, 0], [0, 2, 0]]} color="#4ec9b0" lineWidth={2} />
+      <StableLine points={[[-0.1, 1.8, 0], [0, 2, 0], [0.1, 1.8, 0]]} color="#4ec9b0" lineWidth={2} />
       {/* Z-axis (blue) */}
-      <Line points={[[0, 0, 0], [0, 0, 2]]} color="#569cd6" lineWidth={2} />
-      <Line points={[[0, 0.1, 1.8], [0, 0, 2], [0, -0.1, 1.8]]} color="#569cd6" lineWidth={2} />
+      <StableLine points={[[0, 0, 0], [0, 0, 2]]} color="#569cd6" lineWidth={2} />
+      <StableLine points={[[0, 0.1, 1.8], [0, 0, 2], [0, -0.1, 1.8]]} color="#569cd6" lineWidth={2} />
     </group>
   );
 }
@@ -68,6 +73,7 @@ function SpawnViewMarker({ fov, distance }: { fov: DeviceFov | null; distance: n
     return { halfW, halfH, corners };
   }, [fov, distance]);
 
+  // 文字は Billboard でいつもこちらを向かせる (既定の視点はユーザーの後ろからなので、そのままだと裏返って見える)
   return (
     <group>
       {/* 視点そのもの */}
@@ -77,67 +83,71 @@ function SpawnViewMarker({ fov, distance }: { fov: DeviceFov | null; distance: n
       </mesh>
 
       {/* 正面 (+Z) */}
-      <Line points={[[0, 0, 0], [0, 0, 0.6]]} color={color} lineWidth={2} />
-      <Line points={[[0, 0, 0.6], [0.06, 0, 0.5]]} color={color} lineWidth={2} />
-      <Line points={[[0, 0, 0.6], [-0.06, 0, 0.5]]} color={color} lineWidth={2} />
-      <Text position={[0, -0.12, 0.62]} fontSize={0.1} color={color} anchorX="center" anchorY="middle">
-        {t('scene.spawnViewForward')}
-      </Text>
+      <StableLine points={[[0, 0, 0], [0, 0, 0.6]]} color={color} lineWidth={2} />
+      <StableLine points={[[0, 0, 0.6], [0.06, 0, 0.5]]} color={color} lineWidth={2} />
+      <StableLine points={[[0, 0, 0.6], [-0.06, 0, 0.5]]} color={color} lineWidth={2} />
+      <Billboard position={[0, -0.12, 0.62]}>
+        <Text fontSize={0.1} color={color} anchorX="center" anchorY="middle">
+          {t('scene.spawnViewForward')}
+        </Text>
+      </Billboard>
 
       {/* 視錐台 */}
       {frustum && (
         <group>
           {frustum.corners.map((corner, i) => (
-            <Line key={`edge-${i}`} points={[[0, 0, 0], corner]} color={color} lineWidth={1} transparent opacity={0.5} />
+            <StableLine key={`edge-${i}`} points={[[0, 0, 0], corner]} color={color} lineWidth={1} transparent opacity={0.5} />
           ))}
-          <Line
+          <StableLine
             points={[...frustum.corners, frustum.corners[0]]}
             color={color}
             lineWidth={1.5}
             transparent
             opacity={0.8}
           />
-          <Text
-            position={[0, frustum.halfH + 0.12, distance]}
-            fontSize={0.12}
-            color={color}
-            anchorX="center"
-            anchorY="middle"
-          >
-            {t('scene.spawnViewFov', {
-              h: String(fov!.horizontal),
-              v: String(fov!.vertical),
-              d: String(distance),
-            })}
-          </Text>
+          <Billboard position={[0, frustum.halfH + 0.12, distance]}>
+            <Text fontSize={0.12} color={color} anchorX="center" anchorY="middle">
+              {t('scene.spawnViewFov', {
+                h: String(fov!.horizontal),
+                v: String(fov!.vertical),
+                d: String(distance),
+              })}
+            </Text>
+          </Billboard>
         </group>
       )}
 
       {/* 1m スケール */}
-      <Line points={[[0, 0, 0], [1, 0, 0]]} color="#f14c4c" lineWidth={2} />
-      <Text position={[1.05, 0.02, 0]} fontSize={0.15} color="#f14c4c" anchorX="left" anchorY="middle">
-        1m
-      </Text>
+      <StableLine points={[[0, 0, 0], [1, 0, 0]]} color="#f14c4c" lineWidth={2} />
+      <Billboard position={[1.05, 0.02, 0]}>
+        <Text fontSize={0.15} color="#f14c4c" anchorX="left" anchorY="middle">
+          1m
+        </Text>
+      </Billboard>
 
-      <Text position={[0, 0.3, 0]} fontSize={0.16} color={color} anchorX="center" anchorY="middle">
-        {t('scene.spawnView')}
-      </Text>
-      <Text position={[0, 0.16, 0]} fontSize={0.1} color="#9a9a9a" anchorX="center" anchorY="middle">
-        {fov ? t('scene.spawnViewOrigin') : t('scene.spawnViewFovUnknown')}
-      </Text>
+      <Billboard position={[0, 0.3, 0]}>
+        <Text fontSize={0.16} color={color} anchorX="center" anchorY="middle">
+          {t('scene.spawnView')}
+        </Text>
+      </Billboard>
+      <Billboard position={[0, 0.16, 0]}>
+        <Text fontSize={0.1} color="#9a9a9a" anchorX="center" anchorY="middle">
+          {fov ? t('scene.spawnViewOrigin') : t('scene.spawnViewFovUnknown')}
+        </Text>
+      </Billboard>
     </group>
   );
 }
 
-export function SceneViewport() {
+export function SceneViewport({ active = true }: { active?: boolean }) {
   const t = useT();
   const { showGrid, showAxes, showSpawnView, transformMode, transformSpace, setTransformMode } = useUIStore();
   const {
     project, projectPath, currentSceneId, selectedObjectIds,
-    selectObjects, updateObject, addObject,
+    addObject,
     selectedPerceptionTargetId, selectPerceptionTarget,
   } = useProjectStore();
-  const [cameraPos, setCameraPos] = useState({ x: 5, y: 5, z: 5 });
+  const requestView = useSceneView((s) => s.request);
   const [showHelp, setShowHelp] = useState(false);
   const trackingMode = project?.arSettings?.trackingMode || '6dof';
   const presentationMode = project?.arSettings?.presentationMode || 'world_anchored';
@@ -151,6 +161,17 @@ export function SceneViewport() {
   const currentScene = project?.scenes.find(s => s.id === currentSceneId);
 
   const perceptionTargets = project?.perception?.targets ?? [];
+
+  // プロジェクトから消えた VRM は、覚えておいた読み込み結果も捨てる (他のシーンの VRM は残す: シーンを切り替えても読み直さない)
+  useEffect(() => {
+    const keep = new Set<string>();
+    for (const scene of project?.scenes ?? []) {
+      for (const obj of scene.objects ?? []) {
+        if (obj.type === 'vrm') keep.add(vrmKey(obj.id, resolveModelUrl(obj.modelPath, projectPath)));
+      }
+    }
+    pruneVrmCache(keep);
+  }, [project?.scenes, projectPath]);
 
   // 貼り付け済みのオブジェクトは、対応するアンカーのグループ内で描く。
   // 参照先が消えているものは通常のオブジェクトとして扱う（画面から消さない）。
@@ -197,18 +218,19 @@ export function SceneViewport() {
   };
 
   const renderSceneObject = (obj: SceneObject) => {
-    const shared = {
-      key: obj.id,
-      object: obj,
-      isSelected: selectedObjectIds.includes(obj.id),
-      onSelect: () => selectObjects([obj.id]),
-      onUpdate: (updates: Partial<SceneObject>) => updateObject(obj.id, updates),
-      transformMode,
-      transformSpace,
-    };
-    if (obj.type === 'vrm') return <VRMViewer {...shared} />;
-    if (obj.type === 'model') return <ModelObject {...shared} />;
-    return <SceneObjectMesh {...shared} />;
+    const isSelected = selectedObjectIds.includes(obj.id);
+    if (obj.type === 'vrm') {
+      return <VRMViewer key={obj.id} object={obj} isSelected={isSelected} transformMode={transformMode} transformSpace={transformSpace} />;
+    }
+    if (obj.type === 'model') {
+      // モデルごとに Suspense を分ける。1 つにまとめると、1 つ読み込むあいだ全部のオブジェクトが消える
+      return (
+        <Suspense key={obj.id} fallback={<LoadingPlaceholder object={obj} />}>
+          <ModelObject object={obj} isSelected={isSelected} transformMode={transformMode} transformSpace={transformSpace} />
+        </Suspense>
+      );
+    }
+    return <SceneObjectMesh key={obj.id} object={obj} isSelected={isSelected} transformMode={transformMode} transformSpace={transformSpace} />;
   };
 
   const handleAddObject = (type: string, primitiveType?: string) => {
@@ -220,23 +242,26 @@ export function SceneViewport() {
   };
 
   useEffect(() => {
+    // 他のタブを開いているあいだも 3D ビューは残っているので、キーは見えているときだけ受ける
+    if (!active) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat) return;
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
 
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
-      const isTypingTarget = tag === 'input' || tag === 'textarea' || (target?.getAttribute('contenteditable') === 'true');
+      const isTypingTarget = tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable === true;
       if (isTypingTarget) return;
 
       const key = event.key.toLowerCase();
       if (key === 'w') setTransformMode('translate');
       if (key === 'e') setTransformMode('rotate');
       if (key === 'r') setTransformMode('scale');
+      if (key === 'f') requestView('focus');
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setTransformMode]);
+  }, [active, setTransformMode, requestView]);
 
   return (
     <div className="w-full h-full relative">
@@ -277,15 +302,20 @@ export function SceneViewport() {
       <div className="absolute top-2 right-2 z-10 bg-arsist-surface/90 backdrop-blur border border-arsist-border rounded-lg p-2 text-xs">
         <div className="flex items-center gap-2 text-arsist-muted mb-1">
           <Eye size={12} />
-          <span>{t('scene.camera')}</span>
+          <span className="flex-1">{t('scene.camera')}</span>
+          <button className="btn-icon p-0.5" title={t('scene.resetView')} onClick={() => requestView('reset')}>
+            <PersonStanding size={13} />
+          </button>
+          <button
+            className="btn-icon p-0.5 disabled:opacity-40"
+            title={`${t('scene.focusSelected')} (F)`}
+            disabled={selectedObjectIds.length === 0}
+            onClick={() => requestView('focus')}
+          >
+            <Focus size={13} />
+          </button>
         </div>
-        <div className="font-mono text-arsist-text">
-          <span className="text-red-400">X</span>: {cameraPos.x.toFixed(1)} 
-          <span className="mx-1 text-arsist-border">|</span>
-          <span className="text-green-400">Y</span>: {cameraPos.y.toFixed(1)} 
-          <span className="mx-1 text-arsist-border">|</span>
-          <span className="text-blue-400">Z</span>: {cameraPos.z.toFixed(1)}
-        </div>
+        <CameraReadout />
         <div className="mt-2 text-[10px] text-arsist-muted">
           <div>{t('scene.trackingLabel')}: <span className="text-arsist-text">{trackingMode.toUpperCase()}</span></div>
           <div>{t('scene.modeLabel')}: <span className="text-arsist-text">{presentationMode.replace('_', ' ')}</span></div>
@@ -331,6 +361,10 @@ export function SceneViewport() {
               <span>{t('scene.scaleMode')}</span>
               <span className="kbd">R</span>
             </div>
+            <div className="flex justify-between">
+              <span>{t('scene.focusSelected')}</span>
+              <span className="kbd">F</span>
+            </div>
           </div>
         </div>
       )}
@@ -347,18 +381,10 @@ export function SceneViewport() {
 
       <Canvas 
         shadows
+        // 他のタブを開いているあいだは描かない (ビューは残すが GPU は使わない)
+        frameloop={active ? 'always' : 'never'}
         gl={{ antialias: true, alpha: false }}
-        camera={{ position: [5, 5, 5], fov: 50 }}
-        onCreated={({ camera }: { camera: THREE.PerspectiveCamera }) => {
-          const updateCameraPos = () => {
-            setCameraPos({
-              x: camera.position.x,
-              y: camera.position.y,
-              z: camera.position.z,
-            });
-          };
-          updateCameraPos();
-        }}
+        camera={{ position: defaultViewpoint(spawnViewDistance).position, fov: 50, near: 0.05, far: 500 }}
       >
         {/* 背景色 */}
         <color attach="background" args={['#1e1e1e']} />
@@ -411,7 +437,7 @@ export function SceneViewport() {
           </mesh>
         )}
 
-        {/* Scene objects */}
+        {/* Scene objects (読み込みを待つものは、それぞれの中で待つ) */}
         <Suspense fallback={null}>
           {unanchoredObjects.map(renderSceneObject)}
 
@@ -422,12 +448,14 @@ export function SceneViewport() {
             const placement = anchorPlacement(index, perceptionTargets.length);
             return (
               <group key={target.id} position={placement.position} rotation={[0, placement.rotationY, 0]}>
-                <AnchorPlane
-                  target={target}
-                  projectPath={projectPath}
-                  isSelected={selectedPerceptionTargetId === target.id}
-                  onSelect={() => selectPerceptionTarget(target.id)}
-                />
+                <Suspense fallback={null}>
+                  <AnchorPlane
+                    target={target}
+                    projectPath={projectPath}
+                    isSelected={selectedPerceptionTargetId === target.id}
+                    onSelect={() => selectPerceptionTarget(target.id)}
+                  />
+                </Suspense>
                 {(anchoredObjects.get(target.id) ?? []).map((obj) => {
                   const offset = placementOffset(obj, target);
                   // placement 指定のオブジェクトは、計算した基準位置のグループの中に置く。
@@ -445,24 +473,15 @@ export function SceneViewport() {
         {/* カメラ操作 */}
         <OrbitControls 
           makeDefault 
-          minDistance={trackingMode === '3dof' ? 2 : 1}
+          minDistance={trackingMode === '3dof' ? 2 : 0.3}
           maxDistance={trackingMode === '3dof' ? 2 : 50}
           enableDamping
-          dampingFactor={0.05}
+          dampingFactor={0.1}
           enablePan={trackingMode === '6dof'}
           enableZoom={trackingMode === '6dof'}
           enableRotate={trackingMode !== 'head_locked'}
-          onChange={(e: any) => {
-            if (e?.target) {
-              const cam = e.target.object;
-              setCameraPos({
-                x: cam.position.x,
-                y: cam.position.y,
-                z: cam.position.z,
-              });
-            }
-          }}
         />
+        <CameraRig viewKey={projectPath ?? ''} depth={spawnViewDistance} />
 
         {/* ギズモヘルパー */}
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
@@ -476,25 +495,133 @@ export function SceneViewport() {
   );
 }
 
-interface SceneObjectMeshProps {
-  object: SceneObject;
-  isSelected: boolean;
-  onSelect: () => void;
-  onUpdate: (updates: Partial<SceneObject>) => void;
-  transformMode: 'translate' | 'rotate' | 'scale';
-  transformSpace: 'local' | 'world';
+/** 右上のカメラ座標。ここだけが視点の変化で描き直される。 */
+function CameraReadout() {
+  const { x, y, z } = useSceneView((s) => s.readout);
+  return (
+    <div className="font-mono text-arsist-text">
+      <span className="text-red-400">X</span>: {x.toFixed(1)}
+      <span className="mx-1 text-arsist-border">|</span>
+      <span className="text-green-400">Y</span>: {y.toFixed(1)}
+      <span className="mx-1 text-arsist-border">|</span>
+      <span className="text-blue-400">Z</span>: {z.toFixed(1)}
+    </div>
+  );
 }
 
-function SceneObjectMesh({ 
-  object, 
-  isSelected, 
-  onSelect, 
-  onUpdate,
-  transformMode,
-  transformSpace
-}: SceneObjectMeshProps) {
-  if (object.type === 'model') return null;
-  const meshRef = useRef<THREE.Mesh>(null);
+/**
+ * 視点の出し入れ。
+ *   - 開いたとき / プロジェクトが変わったとき: 覚えている視点 (無ければ既定) に置く
+ *   - 操作を終えたとき・ビューが消えるとき: 今の視点を覚える
+ *   - 「ユーザーの視点に戻す」「選んだものに寄る (F)」の指示を受ける
+ */
+/** OrbitControls (makeDefault) のうち、ここで使うところだけ */
+interface OrbitControlsLike {
+  target: THREE.Vector3;
+  update(): void;
+  addEventListener(type: 'change' | 'end', listener: () => void): void;
+  removeEventListener(type: 'change' | 'end', listener: () => void): void;
+}
+
+function CameraRig({ viewKey, depth }: { viewKey: string; depth: number }) {
+  const camera = useThree((s: { camera: THREE.Camera }) => s.camera);
+  const scene = useThree((s: { scene: THREE.Scene }) => s.scene);
+  const controls = useThree((s: { controls: unknown }) => s.controls) as unknown as OrbitControlsLike | null;
+  const command = useSceneView((s) => s.command);
+  // 作り直したときに、前に出た指示をもう一度実行しない
+  const handledNonce = useRef(command?.nonce ?? 0);
+
+  useEffect(() => {
+    if (!controls) return;
+    const store = useSceneView.getState();
+    const publish = () => store.setReadout(camera.position.x, camera.position.y, camera.position.z);
+    const current = (): SceneViewpoint => ({
+      position: camera.position.toArray() as Vec3Tuple,
+      target: controls.target.toArray() as Vec3Tuple,
+    });
+
+    const view = store.viewpoints[viewKey] ?? defaultViewpoint(depth);
+    camera.position.set(...view.position);
+    controls.target.set(...view.target);
+    controls.update();
+    publish();
+
+    // 表示の更新は間引く (毎フレーム React を動かさない)
+    let last = 0;
+    let trailing: ReturnType<typeof setTimeout> | null = null;
+    const onChange = () => {
+      const now = performance.now();
+      if (now - last > 100) {
+        last = now;
+        publish();
+      } else if (!trailing) {
+        trailing = setTimeout(() => { trailing = null; last = performance.now(); publish(); }, 120);
+      }
+    };
+    const onEnd = () => useSceneView.getState().saveViewpoint(viewKey, current());
+    controls.addEventListener('change', onChange);
+    controls.addEventListener('end', onEnd);
+    return () => {
+      controls.removeEventListener('change', onChange);
+      controls.removeEventListener('end', onEnd);
+      if (trailing) clearTimeout(trailing);
+      useSceneView.getState().saveViewpoint(viewKey, current());
+    };
+    // depth は既定の視点にしか使わない (奥行きを変えるたびに視点を飛ばさない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controls, camera, viewKey]);
+
+  useEffect(() => {
+    if (!command || !controls || command.nonce <= handledNonce.current) return;
+    handledNonce.current = command.nonce;
+
+    if (command.kind === 'reset') {
+      const view = defaultViewpoint(depth);
+      camera.position.set(...view.position);
+      controls.target.set(...view.target);
+    } else {
+      const id = useProjectStore.getState().selectedObjectIds[0];
+      let node: THREE.Object3D | undefined;
+      if (id) scene.traverse((o: THREE.Object3D) => { if (!node && o.userData?.arsistObjectId === id) node = o; });
+      if (!node) return;
+      const box = new THREE.Box3().setFromObject(node);
+      const center = box.isEmpty() ? node.getWorldPosition(new THREE.Vector3()) : box.getCenter(new THREE.Vector3());
+      const radius = box.isEmpty() ? 0.5 : Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.2);
+      const fov = (camera as THREE.PerspectiveCamera).fov ?? 50;
+      const distance = (radius / Math.sin(THREE.MathUtils.degToRad(fov) / 2)) * 1.1;
+      // 今見ている向きのまま近づく (向きまで変えると、どこを見ているか分からなくなる)
+      const direction = camera.position.clone().sub(controls.target);
+      if (direction.lengthSq() < 1e-6) direction.set(0, 0.3, -1);
+      direction.normalize();
+      controls.target.copy(center);
+      camera.position.copy(center).addScaledVector(direction, distance);
+    }
+    controls.update();
+    useSceneView.getState().saveViewpoint(viewKey, {
+      position: camera.position.toArray() as Vec3Tuple,
+      target: controls.target.toArray() as Vec3Tuple,
+    });
+    useSceneView.getState().setReadout(camera.position.x, camera.position.y, camera.position.z);
+  }, [command, controls, camera, scene, depth, viewKey]);
+
+  return null;
+}
+
+/** 読み込み中のモデルの仮置き (置き場所は分かっているので、そこに枠を出す) */
+function LoadingPlaceholder({ object }: { object: SceneObject }) {
+  return (
+    <mesh
+      position={[object.transform.position.x, object.transform.position.y, object.transform.position.z]}
+      onClick={(e) => { e.stopPropagation(); useProjectStore.getState().selectObjects([object.id]); }}
+    >
+      <boxGeometry args={[0.3, 0.3, 0.3]} />
+      <meshBasicMaterial color="#888888" wireframe />
+    </mesh>
+  );
+}
+
+const SceneObjectMesh = memo(function SceneObjectMesh({ object, isSelected, transformMode, transformSpace }: SceneObjectProps) {
+  const [mesh, setMesh] = useState<THREE.Mesh | null>(null);
 
   // Create geometry based on primitive type
   const geometry = useMemo(() => {
@@ -517,7 +644,7 @@ function SceneObjectMesh({
       default:
         return new THREE.BoxGeometry(1, 1, 1);
     }
-  }, [object.primitiveType, object.type, object.canvasSettings]);
+  }, [object.primitiveType, object.type, object.canvasSettings?.widthMeters, object.canvasSettings?.heightMeters]);
 
   // Create material
   const material = useMemo(() => {
@@ -539,33 +666,19 @@ function SceneObjectMesh({
       metalness: object.material?.metallic || 0,
       roughness: object.material?.roughness || 0.5,
     });
-  }, [object.material, object.type, object.canvasSettings]);
+  }, [object.type, object.material?.color, object.material?.metallic, object.material?.roughness]);
 
-  // Handle transform changes from gizmo
-  const handleTransformChange = () => {
-    if (!meshRef.current) return;
-    
-    const position = meshRef.current.position;
-    const rotation = meshRef.current.rotation;
-    const scale = meshRef.current.scale;
-
-    onUpdate({
-      transform: {
-        position: { x: position.x, y: position.y, z: position.z },
-        rotation: { 
-          x: THREE.MathUtils.radToDeg(rotation.x),
-          y: THREE.MathUtils.radToDeg(rotation.y),
-          z: THREE.MathUtils.radToDeg(rotation.z)
-        },
-        scale: { x: scale.x, y: scale.y, z: scale.z },
-      }
-    });
-  };
+  // 作り直した古いものは GPU から下ろす (色を変えるたびにメモリが増えないように)
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  useEffect(() => () => material.dispose(), [material]);
+  const edges = useMemo(() => (isSelected ? new THREE.EdgesGeometry(geometry) : null), [geometry, isSelected]);
+  useEffect(() => () => edges?.dispose(), [edges]);
 
   return (
     <>
       <mesh
-        ref={meshRef}
+        ref={setMesh}
+        userData={{ arsistObjectId: object.id }}
         geometry={geometry}
         material={material}
         position={[
@@ -585,127 +698,42 @@ function SceneObjectMesh({
         ]}
         onClick={(e) => {
           e.stopPropagation();
-          onSelect();
+          useProjectStore.getState().selectObjects([object.id]);
         }}
         castShadow
         receiveShadow
       >
         {/* Selection outline */}
-        {isSelected && (
-          <lineSegments>
-            <edgesGeometry args={[geometry]} />
+        {edges && (
+          <lineSegments geometry={edges}>
             <lineBasicMaterial color="#4ec9b0" linewidth={2} />
           </lineSegments>
         )}
       </mesh>
 
       {/* Transform Controls */}
-      {isSelected && meshRef.current && (
+      {isSelected && mesh && (
         <SceneTransformControls
-          object={meshRef.current}
+          object={mesh}
           mode={transformMode}
           space={transformSpace}
-          onObjectChange={handleTransformChange}
+          onObjectChange={() => useProjectStore.getState().updateObject(object.id, { transform: transformOf(mesh) })}
         />
       )}
     </>
   );
-}
+});
 
-function ModelObject({ 
-  object, 
-  isSelected, 
-  onSelect, 
-  onUpdate,
-  transformMode,
-  transformSpace
-}: SceneObjectMeshProps) {
-  const groupRef = useRef<THREE.Group>(null);
-
+const ModelObject = memo(function ModelObject({ object, isSelected, transformMode, transformSpace }: SceneObjectProps) {
+  const [group, setGroup] = useState<THREE.Group | null>(null);
   const projectPath = useProjectStore((s) => s.projectPath);
-
-  const toArsistFileUrl = (absPath: string) => {
-    // Windows パス（バックスラッシュ）をフォワードスラッシュに統一
-    let normalized = absPath.replace(/\\/g, '/');
-    // 先頭のスラッシュを除去（ただし //で始まる UNC パスは保護）
-    if (!normalized.startsWith('//')) {
-      normalized = normalized.replace(/^\/+/, '');
-    }
-    // Windows ドライブレター (C: など) の場合は arsist-file://C:/... 形式
-    if (/^[A-Za-z]:/.test(normalized)) {
-      return `arsist-file://${encodeURI(normalized)}`;
-    }
-    // Unix パスは arsist-file:///... 形式
-    return `arsist-file:///${encodeURI(normalized)}`;
-  };
-
-  const resolveModelUrl = (modelPath: string | undefined | null): string => {
-    if (!modelPath) return '';
-    if (modelPath.startsWith('arsist-file:')) return modelPath;
-    if (modelPath.startsWith('http://') || modelPath.startsWith('https://')) {
-      return modelPath;
-    }
-
-    if (modelPath.startsWith('file:')) {
-      try {
-        const u = new URL(modelPath);
-        let rawPath = u.pathname;
-        // Windows: file:///C:/Users/... の場合、/C: 部分を処理
-        if (rawPath.startsWith('/') && /^[A-Za-z]:/.test(rawPath.slice(1))) {
-          rawPath = rawPath.slice(1);
-        }
-        return toArsistFileUrl(rawPath);
-      } catch {
-        // fallthrough
-      }
-    }
-
-    const normalized = modelPath.replace(/\\/g, '/');
-    
-    // Absolute path (both /path and C:/path for Windows)
-    if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) {
-      return toArsistFileUrl(normalized);
-    }
-
-    // Project-relative asset path (e.g. Assets/Models/foo.glb)
-    if (projectPath) {
-      const base = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
-      const rel = normalized.replace(/^\/+/, '');
-      return toArsistFileUrl(`${base}/${rel}`);
-    }
-
-    // Fallback (legacy): interpret as absolute-ish
-    return toArsistFileUrl(normalized);
-  };
-
-  const url = resolveModelUrl(object.modelPath);
-
-  const gltf = useGLTF(url || '') as any;
-  const scene = useMemo(() => gltf?.scene ? gltf.scene.clone() : new THREE.Group(), [gltf]);
-
-  const handleTransformChange = () => {
-    if (!groupRef.current) return;
-    const position = groupRef.current.position;
-    const rotation = groupRef.current.rotation;
-    const scale = groupRef.current.scale;
-
-    onUpdate({
-      transform: {
-        position: { x: position.x, y: position.y, z: position.z },
-        rotation: { 
-          x: THREE.MathUtils.radToDeg(rotation.x),
-          y: THREE.MathUtils.radToDeg(rotation.y),
-          z: THREE.MathUtils.radToDeg(rotation.z)
-        },
-        scale: { x: scale.x, y: scale.y, z: scale.z },
-      }
-    });
-  };
+  const url = resolveModelUrl(object.modelPath, projectPath);
 
   return (
     <>
       <group
-        ref={groupRef}
+        ref={setGroup}
+        userData={{ arsistObjectId: object.id }}
         position={[
           object.transform.position.x,
           object.transform.position.y,
@@ -723,21 +751,32 @@ function ModelObject({
         ]}
         onClick={(e) => {
           e.stopPropagation();
-          onSelect();
+          useProjectStore.getState().selectObjects([object.id]);
         }}
       >
-        <primitive object={scene} />
+        {url ? <GltfScene url={url} /> : (
+          <mesh>
+            <boxGeometry args={[0.3, 0.3, 0.3]} />
+            <meshBasicMaterial color="#f14c4c" wireframe />
+          </mesh>
+        )}
       </group>
 
-      {isSelected && groupRef.current && (
+      {isSelected && group && (
         <SceneTransformControls
-          object={groupRef.current}
+          object={group}
           mode={transformMode}
           space={transformSpace}
-          onObjectChange={handleTransformChange}
+          onObjectChange={() => useProjectStore.getState().updateObject(object.id, { transform: transformOf(group) })}
         />
       )}
     </>
   );
-}
+});
 
+/** GLB / glTF の中身。読み込み結果は useGLTF が URL ごとに覚えているので、作り直しても読み直さない。 */
+function GltfScene({ url }: { url: string }) {
+  const gltf = useGLTF(url) as unknown as { scene: THREE.Group };
+  const scene = useMemo(() => gltf.scene.clone(), [gltf]);
+  return <primitive object={scene} />;
+}

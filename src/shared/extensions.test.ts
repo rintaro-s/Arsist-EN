@@ -17,7 +17,8 @@ import { adapterTags } from './adapterTags';
 import { matchAdapterName } from './adapterNames';
 
 const ROOT = path.resolve(__dirname, '../..');
-const EXTENSIONS = path.join(ROOT, 'Extensions');
+// 同梱のサンプル拡張機能 (quest-room / quest-input) を本物の定義として確かめる
+const EXTENSIONS = path.join(ROOT, 'samples', 'extensions');
 
 function manifest(overrides: Partial<ExtensionManifest> = {}): ExtensionManifest {
   return {

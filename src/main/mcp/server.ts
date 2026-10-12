@@ -12,7 +12,8 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { ARSIST_TOOLS, callArsistTool, ToolSession } from './tools';
 import { loadServerSdk } from './sdk';
-import { setUserExtensionsDir } from '../extensions/catalogService';
+import { setLinkedFoldersSource, setUserExtensionsDir } from '../extensions/catalogService';
+import { readLinkedFoldersFile } from '../extensions/linkedFolders';
 import { arsistConfigDir } from './configPaths';
 
 export const SERVER_NAME = 'arsist';
@@ -23,6 +24,7 @@ const INSTRUCTIONS = [
   'Start with arsist_open_project (or arsist_list_recent_projects), then ir_get_project.',
   'Read arsist_script_reference before writing scripts or placing objects (editor coordinates: +Z ahead, +X = user\'s left).',
   'Run ir_validate_project after changes. Projects in an old format are read-only until upgraded in the editor.',
+  'The project is plain JSON (project.json, Scenes/<id>.json, UI/<id>.json): editing those files directly also works, and the open editor reloads them within a second.',
 ].join(' ');
 
 /** 最近開いたプロジェクト (エディタの electron-store の設定から読む。無ければ空)。 */
@@ -38,6 +40,8 @@ export function readRecentProjects(): string[] {
 export async function runStdioServer(): Promise<void> {
   const sdk = loadServerSdk();
   setUserExtensionsDir(process.env.ARSIST_EXTENSIONS_DIR || path.join(arsistConfigDir(), 'extensions'));
+  // エディタで登録したフォルダ (コピーせずに使う拡張機能) も同じように見る
+  setLinkedFoldersSource(() => readLinkedFoldersFile(path.join(arsistConfigDir(), 'config.json')));
 
   const session = new ToolSession({
     projectPath: process.env.ARSIST_PROJECT_PATH || process.env.MCP_PROJECT_PATH || null,

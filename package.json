@@ -31,6 +31,9 @@
     "ext:new": "node scripts/ext-new.mjs",
     "ext:pack": "node scripts/ext-tools.mjs pack",
     "ext:install": "node scripts/ext-tools.mjs install",
+    "ext:link": "node scripts/ext-tools.mjs link",
+    "ext:unlink": "node scripts/ext-tools.mjs unlink",
+    "ext:links": "node scripts/ext-tools.mjs links",
     "ext:override": "node scripts/ext-tools.mjs override",
     "ir:new": "node scripts/ir-new.mjs"
   },

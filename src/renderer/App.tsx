@@ -168,6 +168,10 @@ declare global {
         import: (kind: 'package' | 'folder') => Promise<import('./extensions/useExtensions').InstallReply>;
         install: (source: string, force?: boolean) => Promise<import('./extensions/useExtensions').InstallReply>;
         uninstall: (id: string) => Promise<{ ok: boolean; error?: string }>;
+        linkFolder: () => Promise<{ ok: boolean; canceled?: boolean; dir?: string; ids?: string[]; error?: string }>;
+        readme: (id: string) => Promise<{ ok: boolean; text?: string | null; error?: string }>;
+        openDir: (id: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+        unlinkFolder: (dir: string) => Promise<{ ok: boolean; dir?: string; error?: string }>;
         export: (id: string) => Promise<{ ok: boolean; canceled?: boolean; file?: string; error?: string }>;
       };
       sdk?: {

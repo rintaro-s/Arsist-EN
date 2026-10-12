@@ -38,6 +38,17 @@ export interface IrUpgradeOffer {
 }
 
 /** Surface a project error to the console panel instead of failing silently. */
+/** 読むときの知らせ (どの写しを使った・何を補った・書きかけを待っている) をコンソールへ */
+function logLoadNotices(notices: string[] | undefined) {
+  if (!notices?.length) return;
+  try {
+    const add = useUIStore.getState().addConsoleLog;
+    for (const n of notices) add({ type: /not valid|filled in|both changed|skipped|not listed/.test(n) ? 'warning' : 'info', message: `[IR] ${n}` });
+  } catch {
+    // ignore
+  }
+}
+
 function notifyProjectError(action: string, detail?: string) {
   try {
     useUIStore.getState().addConsoleLog({
@@ -78,10 +89,12 @@ interface ProjectState {
    * 未保存の変更が無ければすぐ読み直し、あれば (ここに入れて) 利用者に訊く。
    */
   externalChange: { files: string[] } | null;
+  /** 外で変わったファイルが読めない (書きかけの JSON など)。直るまで今の中身のまま。直れば自動で読む */
+  externalProblem: string | null;
   handleExternalChange: (payload: { projectPath: string; files: string[] }) => Promise<void>;
   dismissExternalChange: () => void;
   /** 開いているプロジェクトを読み直す (見ているシーン・レイアウト・選択は、残っていれば保つ) */
-  reloadProject: () => Promise<boolean>;
+  reloadProject: (options?: { external?: boolean }) => Promise<boolean>;
 
   // Scene
   currentSceneId: string | null;
@@ -209,6 +222,7 @@ export const useProjectStore = create<ProjectState>()(
     missingRequirements: null,
     clearMissingRequirements: () => set((s) => { s.missingRequirements = null; }),
     externalChange: null,
+    externalProblem: null,
 
     handleExternalChange: async ({ projectPath, files }) => {
       const { project, projectPath: current, isDirty } = get();
@@ -217,25 +231,31 @@ export const useProjectStore = create<ProjectState>()(
         set((s) => { s.externalChange = { files }; });
         return;
       }
-      if (await get().reloadProject()) {
+      if (await get().reloadProject({ external: true })) {
         try {
           useUIStore.getState().addConsoleLog({ type: 'info', message: `Reloaded changes made outside the editor: ${files.join(', ')}` });
         } catch { /* ignore */ }
       }
     },
 
-    dismissExternalChange: () => set((s) => { s.externalChange = null; }),
+    dismissExternalChange: () => set((s) => { s.externalChange = null; s.externalProblem = null; }),
 
-    reloadProject: async () => {
+    reloadProject: async (options) => {
       const { projectPath, currentSceneId, currentUILayoutId, selectedObjectIds, currentScriptId } = get();
       if (!projectPath || !window.electronAPI) return false;
       const result = await window.electronAPI.project.load(projectPath);
       if (!result.success) {
         if (result.error === 'requirementsMissing') set((s) => { s.missingRequirements = { path: projectPath, missing: result.missing ?? [] }; });
-        else notifyProjectError('Failed to reload project', result.error);
+        else {
+          notifyProjectError('Failed to reload project', result.error);
+          // 外での変更なら、書きかけのことが多い。今の中身のまま待ち、直ったら (次の変更で) 自動で読む
+          if (options?.external) set((s) => { s.externalProblem = result.error ?? 'unknown error'; });
+        }
         return false;
       }
+      logLoadNotices(result.notices);
       set((s) => {
+        s.externalProblem = null;
         const p = result.project;
         s.project = p;
         s.isDirty = false;
@@ -294,8 +314,11 @@ export const useProjectStore = create<ProjectState>()(
       try {
         const result = await window.electronAPI.project.load(path);
         if (result.success) {
+          logLoadNotices(result.notices);
           set((s) => {
             s.missingRequirements = null;
+            s.externalProblem = null;
+            s.externalChange = null;
             s.project = result.project;
             s.projectPath = path;
             s.isDirty = false;

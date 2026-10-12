@@ -12,7 +12,8 @@ import { spawn, ChildProcess } from 'child_process';
 import { UnityBuilder } from './unity/UnityBuilder';
 import { ProjectManager } from './project/ProjectManager';
 import { AdapterManager } from './adapters/AdapterManager';
-import { getExtensionCatalog, getUserExtensionsDir, invalidateExtensionCatalog, setUserExtensionsDir } from './extensions/catalogService';
+import { getExtensionCatalog, getLinkedFolders, getUserExtensionsDir, invalidateExtensionCatalog, setLinkedFoldersSource, setUserExtensionsDir } from './extensions/catalogService';
+import { LINKED_FOLDERS_KEY, checkLinkableFolder, normalizeLinkedFolders } from './extensions/linkedFolders';
 import { installExtension, packExtension, uninstallExtension, PACKAGE_EXTENSION } from './extensions/packages';
 import { describeCatalogProblems } from './extensions/ExtensionCatalog';
 import { registerAiIpc } from './ipc/aiIpc';
@@ -1033,10 +1034,11 @@ ipcMain.handle('extensions:list', async (_, targetDevice?: string) => {
     }
     return {
       success: true,
-      extensions: catalog.extensions.map((e) => ({ manifest: e.manifest, source: e.source, dir: e.dir, overrides: e.overrides })),
+      extensions: catalog.extensions.map((e) => ({ manifest: e.manifest, source: e.source, dir: e.dir, root: e.root, overrides: e.overrides })),
       problems: describeCatalogProblems(catalog),
       deviceTags,
       userDir: getUserExtensionsDir(),
+      linkedFolders: getLinkedFolders(),
     };
   } catch (error) {
     return { success: false, error: (error as Error).message, extensions: [], problems: [], deviceTags: [] };
@@ -1093,6 +1095,55 @@ ipcMain.handle('extensions:export', async (_, id: string) => {
   } catch (error) {
     return { ok: false, error: (error as Error).message };
   }
+});
+
+// フォルダを登録する (コピーしない)。サンプルや作っている途中の拡張機能を、その場所のまま使う
+ipcMain.handle('extensions:link-folder', async () => {
+  const options: Electron.OpenDialogOptions = { properties: ['openDirectory'], title: 'Extension folder, or a folder of extensions' };
+  const picked = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true };
+  const dir = path.resolve(picked.filePaths[0]);
+  const check = await checkLinkableFolder(dir);
+  if (!check.ok) return { ok: false, error: check.error };
+  const s = store as unknown as { get(k: string): unknown; set(k: string, v: unknown): void };
+  s.set(LINKED_FOLDERS_KEY, normalizeLinkedFolders([...normalizeLinkedFolders(s.get(LINKED_FOLDERS_KEY)), dir]));
+  invalidateExtensionCatalog();
+  return { ok: true, dir, ids: check.ids };
+});
+
+// 登録を外す (フォルダの中身には触れない)
+ipcMain.handle('extensions:unlink-folder', async (_, dir: string) => {
+  const s = store as unknown as { get(k: string): unknown; set(k: string, v: unknown): void };
+  const before = normalizeLinkedFolders(s.get(LINKED_FOLDERS_KEY));
+  const after = before.filter((d) => d !== path.resolve(dir));
+  if (after.length === before.length) return { ok: false, error: `${dir} is not registered` };
+  s.set(LINKED_FOLDERS_KEY, after);
+  invalidateExtensionCatalog();
+  return { ok: true, dir };
+});
+
+// 拡張機能の説明書 (README.md)。拡張機能タブに出す
+ipcMain.handle('extensions:readme', async (_, id: string) => {
+  const catalog = await getExtensionCatalog();
+  const ext = catalog.extensions.find((e) => e.manifest.id === id);
+  if (!ext) return { ok: false, error: `"${id}" is not installed` };
+  const file = path.join(ext.dir, 'README.md');
+  try {
+    const stat = await fs.stat(file);
+    if (stat.size > 512 * 1024) return { ok: false, error: 'README.md is larger than 512 KB' };
+    return { ok: true, text: await fs.readFile(file, 'utf8') };
+  } catch {
+    return { ok: true, text: null };
+  }
+});
+
+// その拡張機能のフォルダを開く
+ipcMain.handle('extensions:open-dir', async (_, id: string) => {
+  const catalog = await getExtensionCatalog();
+  const ext = catalog.extensions.find((e) => e.manifest.id === id);
+  if (!ext) return { success: false, error: `"${id}" is not installed` };
+  const error = await shell.openPath(ext.dir);
+  return error ? { success: false, error } : { success: true, path: ext.dir };
 });
 
 // 自分の拡張機能を置くフォルダを開く (無ければ作る)
@@ -1431,6 +1482,8 @@ ipcMain.handle('window:close', () => {
 app.whenReady().then(() => {
   // ユーザーが自分で置く拡張機能の場所 (同梱のものと同じ id なら、こちらが優先される)
   setUserExtensionsDir(path.join(app.getPath('userData'), 'extensions'));
+  // 登録したフォルダ (コピーせずに使う拡張機能。サンプル samples/extensions など)
+  setLinkedFoldersSource(() => normalizeLinkedFolders((store as unknown as { get(k: string): unknown }).get(LINKED_FOLDERS_KEY)));
 
   try {
     protocol.registerFileProtocol('arsist-file', (request, callback) => {

@@ -10,6 +10,12 @@
  *       ユーザーの拡張機能フォルダ (<ユーザーデータ>/extensions) に入れる。エディタの「インポート」と同じ。
  *       同じ id が入っていれば止まる (--force で入れ替え)。
  *
+ *   npm run ext:link -- <フォルダ>      /   npm run ext:unlink -- <フォルダ>   /   npm run ext:links
+ *       フォルダを登録する (コピーしない)。エディタの拡張機能 →「フォルダを登録」と同じ。登録したフォルダの
+ *       拡張機能は、その場所のままエディタ・ビルド・MCP から見える (書き換えがそのまま次のビルドに入る)。
+ *       フォルダ自体が拡張機能でも、拡張機能を並べたフォルダ (samples/extensions など) でもよい。
+ *       外しても、フォルダの中身には触れない。
+ *
  *   npm run ext:override -- <拡張機能のフォルダ> <Assets/Arsist からのパス> [--reset]
  *       エンジンのファイルを改変する準備。エンジンの元ファイルを Overrides/<パス> に写し、
  *       extension.json の unity.overrides にパスと元の SHA-256 (replaces) を書く。あとは写しを編集する。
@@ -110,9 +116,45 @@ function override() {
   console.log(`extension.json: unity.overrides ← ${clean}${entry.replaces ? ` (replaces ${entry.replaces.slice(0, 12)}…)` : ' (new file)'}`);
 }
 
+function configFile() {
+  const { getConfigStorePath } = require(path.join(ROOT, 'scripts', 'lib', 'config-path'));
+  return getConfigStorePath('arsist-engine');
+}
+
+/** mode: 'add' | 'remove' | 'list' */
+async function link(mode) {
+  const [dir] = args;
+  const lf = dist('main/extensions/linkedFolders');
+  const file = configFile();
+  const current = lf.readLinkedFoldersFile(file);
+  if (mode === 'list' || !dir) {
+    console.log(current.length ? current.join('\n') : '(no registered folders)');
+    return;
+  }
+  const abs = path.resolve(dir);
+  if (mode === 'add') {
+    const check = await lf.checkLinkableFolder(abs);
+    if (!check.ok) fail(check.error);
+    if (current.includes(abs)) {
+      console.log(`already registered: ${abs}`);
+      return;
+    }
+    await lf.writeLinkedFoldersFile(file, [...current, abs]);
+    console.log(`registered ${abs} (${check.ids.join(', ')})`);
+  } else {
+    if (!current.includes(abs)) fail(`${abs} is not registered`);
+    await lf.writeLinkedFoldersFile(file, current.filter((d) => d !== abs));
+    console.log(`unregistered ${abs} (the folder itself is untouched)`);
+  }
+  console.log(`  ${file}`);
+}
+
 switch (command) {
   case 'pack': await pack(); break;
   case 'install': await install(); break;
+  case 'link': await link('add'); break;
+  case 'unlink': await link('remove'); break;
+  case 'links': await link('list'); break;
   case 'override': override(); break;
-  default: fail('commands: pack | install | override  (npm run ext:pack / ext:install / ext:override)');
+  default: fail('commands: pack | install | link | unlink | links | override  (npm run ext:pack / ext:install / ext:link / ext:unlink / ext:links / ext:override)');
 }

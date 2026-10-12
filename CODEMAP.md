@@ -80,17 +80,21 @@ Each = `adapter.json` (metadata + **tags**) + `AndroidManifest.xml` + a C# build
 `Meta_Quest/`, `Android_Phone/`. A device's tags = `id` → `device:*`, `build.platform` → `platform:*`,
 `capabilities` (true) → `cap:*`, plus `tags` (`src/shared/adapterTags.ts`).
 
-### Extensions — `Extensions/<id>/` (doc/17)
+### Extensions — `Extensions/<id>/`, samples in `samples/extensions/<id>/` (doc/17)
 One folder per extension: `extension.json` (what, `requires` tags, settings/per-object fields, data version +
 migrations, script globals, Android permissions, C# entry), `Runtime/*.cs`, optional `Editor/*.cs`.
 - Shared model: [src/shared/extensions.ts](src/shared/extensions.ts) (validate / resolve / migrate data),
   [tags.ts](src/shared/tags.ts), [irOps.ts](src/shared/irOps.ts), [engineFeatures.ts](src/shared/engineFeatures.ts).
-- Main: `src/main/extensions/` (catalog from `Extensions/`, `resources/Extensions`, `<userData>/extensions`;
-  staging helpers). Build: `UnityBuilder.planExtensions` / `stageExtensions`.
+- Main: `src/main/extensions/` (catalog from `Extensions/`, `resources/Extensions`, `<userData>/extensions` and
+  registered folders — `linkedFolders.ts`, config key `extensionFolders`, used in place without copying; staging helpers). Build: `UnityBuilder.planExtensions` / `stageExtensions`.
 - Unity: `Runtime/Extensions/` (`ArsistRuntimeExtension`, `ArsistExtensionContext`, `ArsistScriptBridge`,
   `ArsistExtensions`, `ArsistExtensionHost`, `ArsistObjectExt`), `Editor/Extensions/ArsistBuildExtensions.cs`.
-- Editor UI: `components/panels/ExtensionsSection.tsx` (forms generated from `extension.json`).
-- Bundled: `quest-room` (Quest scene understanding via MRUK: snap to real surfaces, room colliders, outlines,
+- Editor UI: the **Extensions tab** `components/extensions/ExtensionsWorkspace.tsx` (list with on/off switches, description,
+  where it runs, settings, per-object options and which objects use them, README via `components/common/MiniMarkdown.tsx`);
+  `components/panels/ExtensionsSection.tsx` keeps the right-panel summary and the per-object inspector section
+  (all forms generated from `extension.json`).
+- Samples (`samples/extensions/`, not part of the engine; loaded here because the folder is registered with
+  `npm run ext:link -- samples/extensions`): `quest-room` (Quest scene understanding via MRUK: snap to real surfaces, room colliders, outlines,
   spatial-anchor pins, `room.*`) and `quest-input` (every Quest input — Touch buttons/sticks/haptics, XR Hands
   joints + gestures, system and Bluetooth keyboards, microphone with speech detection and WAV, headset events —
   as scripts `controller`/`hands`/`mic`/`keyboard`/`headset`, store `input.*`, script events `quest-input:*`, and

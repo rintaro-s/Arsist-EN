@@ -16,7 +16,7 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as vm from 'vm';
 import * as fs from 'fs-extra';
-import { readProjectFiles, withProjectWrite } from '../project/projectIO';
+import { projectReadNotes, readProjectFiles, withProjectWrite } from '../project/projectIO';
 import { getExtensionCatalog } from '../extensions/catalogService';
 import { listAdapterLocations, listBuiltinAdapterNames } from '../adapters/adapterDirs';
 import { adapterTags } from '../../shared/adapterTags';
@@ -273,7 +273,8 @@ export const ARSIST_TOOLS: ArsistTool[] = [
     async run(args, session) {
       const p = await read(session, args);
       const problems: string[] = [];
-      const warnings: string[] = [];
+      // ファイルを直接書き換えたときに分かるように: どの写しを使ったか・足りない項目を何で埋めたか
+      const warnings: string[] = (projectReadNotes.get(p) ?? []).map((n) => `files: ${n}`);
       const catalog = await catalogManifests();
       for (const m of checkProjectRequirements(p, catalog.map((c) => c.manifest), await listBuiltinAdapterNames(), CURRENT_IR_VERSION)) {
         problems.push(`${m.kind}: ${m.detail}`);

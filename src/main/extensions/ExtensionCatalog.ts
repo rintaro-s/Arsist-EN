@@ -5,6 +5,9 @@
  *   1. <リポジトリ>/Extensions            開発中・エンジンに同梱するもの
  *   2. <resources>/Extensions             パッケージ版に同梱したもの (electron-builder の extraResources)
  *   3. <ユーザーデータ>/extensions        ユーザーが自分で置いたもの (同梱のものを差し替えて更新できる)
+ *   4. 登録したフォルダ (設定の extensionFolders)  コピーせずにその場所のまま使うもの。サンプルや、
+ *      作っている途中の拡張機能 (書き換えがそのまま次のビルドに入る)。フォルダ自体が拡張機能
+ *      (extension.json がある) でも、拡張機能を並べたフォルダでもよい
  *
  * 形の崩れた拡張機能は一覧に入れず、problems に理由を積む (エディタとビルドログに出す)。
  * 半端な拡張機能を通すと、壊れ方が実機でしか分からないため。
@@ -18,7 +21,9 @@ export interface InstalledExtension {
   /** 拡張機能のフォルダ (extension.json のある場所) */
   dir: string;
   /** どこから来たか */
-  source: 'repo' | 'bundled' | 'user';
+  source: 'repo' | 'bundled' | 'user' | 'linked';
+  /** source が 'linked' のとき、登録したフォルダ (登録を外すときに使う。拡張機能のフォルダそのものとは限らない) */
+  root?: string;
   /** 同じ id の拡張機能を上書きしたなら、その場所 */
   overrides?: string;
 }
@@ -41,11 +46,12 @@ export interface ExtensionRoot {
 }
 
 /** 探す場所を決める。repoRoot / userDir が無ければその分は探さない。 */
-export function extensionRoots(options: { repoRoot?: string | null; resourcesPath?: string | null; userDir?: string | null }): ExtensionRoot[] {
+export function extensionRoots(options: { repoRoot?: string | null; resourcesPath?: string | null; userDir?: string | null; linked?: string[] }): ExtensionRoot[] {
   const roots: ExtensionRoot[] = [];
   if (options.repoRoot) roots.push({ dir: path.join(options.repoRoot, 'Extensions'), source: 'repo' });
   if (options.resourcesPath) roots.push({ dir: path.join(options.resourcesPath, 'Extensions'), source: 'bundled' });
   if (options.userDir) roots.push({ dir: options.userDir, source: 'user' });
+  for (const dir of options.linked ?? []) roots.push({ dir, source: 'linked' });
   // 同じ場所を二度読まない (開発中は repo と resources が同じことがある)
   const seen = new Set<string>();
   return roots.filter((r) => {
@@ -61,18 +67,32 @@ export async function loadExtensionCatalog(roots: ExtensionRoot[]): Promise<Exte
   const problems: ExtensionProblem[] = [];
 
   for (const root of roots) {
-    if (!await fs.pathExists(root.dir)) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = await fs.readdir(root.dir, { withFileTypes: true });
-    } catch (e) {
-      problems.push({ dir: root.dir, problems: [`cannot read folder: ${(e as Error).message}`] });
+    if (!await fs.pathExists(root.dir)) {
+      // 登録したフォルダが消えている (動かした・消した) ことは知らせる。決まった置き場は無くてもよい
+      if (root.source === 'linked') problems.push({ dir: root.dir, problems: ['registered extension folder does not exist'] });
       continue;
     }
+    // 登録したフォルダは、それ自体が拡張機能のこともある
+    const single = root.source === 'linked' && await fs.pathExists(path.join(root.dir, 'extension.json'));
+    let candidates: string[];
+    if (single) {
+      candidates = [root.dir];
+    } else {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fs.readdir(root.dir, { withFileTypes: true });
+      } catch (e) {
+        problems.push({ dir: root.dir, problems: [`cannot read folder: ${(e as Error).message}`] });
+        continue;
+      }
+      candidates = entries
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !entry.name.startsWith('_'))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b))
+        .map((name) => path.join(root.dir, name));
+    }
 
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name.startsWith('_')) continue;
-      const dir = path.join(root.dir, entry.name);
+    for (const dir of candidates) {
       const file = path.join(dir, 'extension.json');
       if (!await fs.pathExists(file)) continue;
 
@@ -84,7 +104,7 @@ export async function loadExtensionCatalog(roots: ExtensionRoot[]): Promise<Exte
         continue;
       }
 
-      const { manifest, problems: found } = validateExtensionManifest(raw, entry.name);
+      const { manifest, problems: found } = validateExtensionManifest(raw, path.basename(dir));
       const extra = manifest ? await checkFiles(manifest, dir) : [];
       if (!manifest || extra.length > 0) {
         problems.push({ dir, problems: [...found, ...extra] });
@@ -92,7 +112,7 @@ export async function loadExtensionCatalog(roots: ExtensionRoot[]): Promise<Exte
       }
 
       const previous = byId.get(manifest.id);
-      byId.set(manifest.id, { manifest, dir, source: root.source, overrides: previous?.dir });
+      byId.set(manifest.id, { manifest, dir, source: root.source, overrides: previous?.dir, ...(root.source === 'linked' ? { root: root.dir } : {}) });
     }
   }
 

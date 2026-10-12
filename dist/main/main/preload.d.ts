@@ -83,6 +83,10 @@ declare const electronAPI: {
         import: (kind: "package" | "folder") => Promise<any>;
         install: (source: string, force?: boolean) => Promise<any>;
         uninstall: (id: string) => Promise<any>;
+        linkFolder: () => Promise<any>;
+        readme: (id: string) => Promise<any>;
+        openDir: (id: string) => Promise<any>;
+        unlinkFolder: (dir: string) => Promise<any>;
         export: (id: string) => Promise<any>;
     };
     fs: {

@@ -1,6 +1,6 @@
 # 17. 拡張機能・タグ・IR の変え方 (`doc/17-extensions.md`)
 
-`Extensions/<id>/` ・ `src/shared/{tags,irOps,extensions,engineFeatures,adapterTags}.ts`
+`Extensions/<id>/` ・ `samples/extensions/` ・ `src/shared/{tags,irOps,extensions,engineFeatures,adapterTags}.ts`
 ・ `src/main/extensions/` ・ `Runtime/Extensions/` ・ `Editor/Extensions/`
 ・ `scripts/{ext-new,ir-new}.mjs`
 
@@ -27,7 +27,7 @@
 | `ext:` | 拡張機能 | 拡張機能ごとに自動で付く |
 
 ```
- Adapters/Meta_Quest/adapter.json          src/shared/engineFeatures.ts         Extensions/quest-room/extension.json
+ Adapters/Meta_Quest/adapter.json          src/shared/engineFeatures.ts         samples/extensions/quest-room/extension.json
    capabilities.handTracking: true  ─┐       feature:hand-tracking                 requires:
    tags: [cap:scene-understanding]   ├─▶ 端末のタグ ◀── requires: cap:hand-tracking   all: [cap:scene-understanding,
  sdk/quest/…mrutilitykit-*.tgz ─────┘    (+ sdk:meta-mruk)                              sdk:meta-mruk]
@@ -62,13 +62,28 @@ Extensions/<id>/
 雛形: `npm run ext:new -- <id> [--requires cap:hand-tracking] [--name "表示名"]`。
 そのままビルドが通り、スクリプトから `<名前>.hello('x')` が呼べる見本になっている。
 
-置き場は 3 つ (後ほど優先、同じ id なら後が勝つ):
+置き場は 4 つ (後ほど優先、同じ id なら後が勝つ):
 
-1. `Extensions/` (リポジトリ。エンジンに同梱するもの)
+1. `Extensions/` (リポジトリ。エンジンに同梱するもの。今は空)
 2. `<resources>/Extensions` (パッケージ版に同梱されたもの)
-3. `<ユーザーデータ>/extensions` (自分で置くもの。エディタの右パネル → 拡張機能 → フォルダのボタン)
+3. `<ユーザーデータ>/extensions` (自分で置くもの。エディタの拡張機能タブ → フォルダのボタン)
+4. **登録したフォルダ** (設定の `extensionFolders`)。コピーせず、その場所のまま使う。
+   フォルダ自体が拡張機能でも、拡張機能を並べたフォルダでもよい
 
 3 があるので、同梱の拡張機能をエンジンごと更新しなくても、同じ id のフォルダを置けば差し替えられる。
+4 は、作っている途中の拡張機能やサンプル向け: 書き換えがそのまま次のビルドに入り、`.arsist` に固め直す手間が無い。
+
+```bash
+npm run ext:link -- samples/extensions     # 登録 (エディタ: 拡張機能 → 鎖のボタン「フォルダを登録」)
+npm run ext:links                          # 登録しているフォルダの一覧
+npm run ext:unlink -- samples/extensions   # 登録を外す (フォルダの中身には触れない)
+```
+
+エディタ・ビルド (`scripts/run-unity-build.js` も)・MCP サーバーは、同じ一覧 (`config.json` の `extensionFolders`) を見る。
+登録したフォルダが消えていると、拡張機能の一覧に「registered extension folder does not exist」と出る。
+
+**サンプル**: 作例の `quest-room` と `quest-input` (§4, §5) はエンジンの一部ではなく、`samples/extensions/` にある見本。
+使うにはそのフォルダを登録するか、`.arsist` にして読み込む。
 
 ### 2.2 エンジンとの約束
 
@@ -125,7 +140,7 @@ Extensions/<id>/
 拡張機能はファイルの集まり (上のフォルダ) で、そのまま配っても、1 つのファイルにまとめても配れる。
 
 ```bash
-npm run ext:pack -- Extensions/quest-input            # → Extensions/quest-input-1.0.0.arsist
+npm run ext:pack -- samples/extensions/quest-input    # → samples/extensions/quest-input-1.0.0.arsist
 npm run ext:install -- quest-input-1.0.0.arsist        # エディタの「インポート」と同じ (同じ id があれば --force)
 npm run ext:install -- path/to/extension-folder        # フォルダからも
 ```
@@ -134,8 +149,8 @@ npm run ext:install -- path/to/extension-folder        # フォルダからも
 パスが外に出ないか (`../`・絶対パス・シンボリックリンク)、全ファイルのハッシュ、`extension.json` と参照先のファイルを
 確かめてから入れ替える (失敗したら既存のものはそのまま)。手でフォルダを zip にしたもの (ハッシュ無し) も受け付ける。
 
-エディタでは、右パネル (何も選んでいない状態) → 拡張機能 の
-**.arsist を読み込む / フォルダから読み込む / .arsist に書き出す / 削除**。入れ先は `<ユーザーデータ>/extensions/<id>`
+エディタでは、拡張機能タブ (上のタブ) の
+**.arsist を読み込む / フォルダから読み込む (コピー) / フォルダを登録 (コピーしない) / .arsist に書き出す / 削除 (登録したものは「登録を外す」)**。入れ先は `<ユーザーデータ>/extensions/<id>`
 (同梱の同じ id より優先)。同じ id が入っていれば、上書きか (古い版に戻すか) を訊く。
 
 ### 2.2.3 プロジェクトを開くときの確認
@@ -243,7 +258,7 @@ defineMigration(5, { ops: [
 
 ## 4. 作例: `quest-room` (Quest で部屋を理解する)
 
-`Extensions/quest-room/README.md`。ヘッドセットがスキャンした部屋 (壁・床・天井・机・ソファ) を Meta の MRUK で読み、
+`samples/extensions/quest-room/README.md`。ヘッドセットがスキャンした部屋 (壁・床・天井・机・ソファ) を Meta の MRUK で読み、
 
 - パネルや物を本物の壁・机・床に置く (物のインスペクタで「本物の面に置く」)
 - 本物の家具に当たり判定を付ける (UI を指す邪魔はしない)
@@ -257,7 +272,7 @@ defineMigration(5, { ops: [
 
 ## 5. 作例: `quest-input` (Quest の入力ぜんぶ)
 
-`Extensions/quest-input/README.md`。Touch コントローラー (全ボタン・タッチ・スティック・振動・姿勢)、
+`samples/extensions/quest-input/README.md`。Touch コントローラー (全ボタン・タッチ・スティック・振動・姿勢)、
 ハンドトラッキング (26 関節・つまみ・ジェスチャー)、システムキーボードと Bluetooth キーボード、マイク
 (音量・話し始め / 終わり・WAV)、ヘッドセット (着脱・リセンター・リフレッシュレート) を
 

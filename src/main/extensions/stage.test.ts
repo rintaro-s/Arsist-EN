@@ -80,10 +80,37 @@ describe('extension staging', () => {
 });
 
 describe('extension catalog', () => {
-  it('loads the repo extensions without problems', async () => {
-    const catalog = await loadExtensionCatalog(extensionRoots({ repoRoot: ROOT }));
+  it('loads the repo extensions and the registered sample folder without problems', async () => {
+    const samples = path.join(ROOT, 'samples', 'extensions');
+    const catalog = await loadExtensionCatalog(extensionRoots({ repoRoot: ROOT, linked: [samples] }));
     expect(catalog.problems).toEqual([]);
-    expect(catalog.extensions.map((e) => e.manifest.id)).toContain('quest-room');
+    const room = catalog.extensions.find((e) => e.manifest.id === 'quest-room');
+    expect(room?.source).toBe('linked');
+    expect(room?.root).toBe(samples);
+    expect(catalog.extensions.map((e) => e.manifest.id)).toContain('quest-input');
+  });
+
+  it('accepts a registered folder that is itself one extension, and reports a registered folder that is gone', async () => {
+    const one = path.join(ROOT, 'samples', 'extensions', 'quest-input');
+    const gone = path.join(os.tmpdir(), `arsist-missing-${Date.now()}`);
+    const catalog = await loadExtensionCatalog(extensionRoots({ linked: [one, gone] }));
+    expect(catalog.extensions.map((e) => [e.manifest.id, e.root])).toEqual([['quest-input', one]]);
+    expect(catalog.problems).toEqual([{ dir: gone, problems: ['registered extension folder does not exist'] }]);
+  });
+
+  it('lets a registered folder win over an installed copy (it is the one being worked on)', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arsist-ext-'));
+    try {
+      const user = path.join(tmp, 'user');
+      fs.cpSync(path.join(ROOT, 'samples', 'extensions', 'quest-input'), path.join(user, 'quest-input'), { recursive: true });
+      const linked = path.join(ROOT, 'samples', 'extensions');
+      const catalog = await loadExtensionCatalog(extensionRoots({ userDir: user, linked: [linked] }));
+      const input = catalog.extensions.find((e) => e.manifest.id === 'quest-input');
+      expect(input?.source).toBe('linked');
+      expect(input?.overrides).toBe(path.join(user, 'quest-input'));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('lets a user copy override the bundled one, and rejects broken ones with a reason', async () => {

@@ -19,6 +19,7 @@ import { CURRENT_IR_VERSION } from '../../shared/irVersion';
 import { IrVersionError, migrateProject, type MigrationOutcome } from './migrations';
 import { checkProjectRequirements, migrateExtensionData, type ExtensionDataUpgrade, type MissingRequirement } from '../../shared/extensions';
 import { getExtensionCatalog } from '../extensions/catalogService';
+import { describeJsonError, resolveSceneAndUiCopies, seenAfterSave, stableStringify, syncStaleCopies, type CopySeen } from './sceneCopies';
 import { listBuiltinAdapterNames } from '../adapters/adapterDirs';
 import { atomicWriteJson } from './projectIO';
 import { createARSettings, createInitialDataFlow } from './defaults';
@@ -73,6 +74,11 @@ export interface LoadProjectResult {
   missing?: MissingRequirement[];
   /** 古い版だったとき。メモリ上は移行済みだが、承諾されるまで保存できない */
   upgrade?: PendingUpgrade;
+  /**
+   * 読むときに起きたこと (project.json の写しを使った・書きかけの JSON を待っている・足りない項目を補った…)。
+   * エディタはコンソールに出す。AI エージェントが JSON を直接書いたとき、何がどう読まれたかが分かるように。
+   */
+  notices?: string[];
 }
 
 // ========================================
@@ -95,6 +101,8 @@ export class ProjectManager {
    * 古いエディタに戻れなくなるうえ、何が変わったかも残らない。
    */
   private readOnly = false;
+  /** シーン・UI の 2 つの写しを前回どう見たか (sceneCopies.ts)。プロジェクトが変わったら捨てる */
+  private copiesSeen: { path: string; seen: Map<string, CopySeen> } | null = null;
   private pendingUpgrade: PendingUpgrade | null = null;
 
   /* ------------------------------------------------
@@ -200,7 +208,14 @@ export class ProjectManager {
         return { success: false, error: 'project.json not found' };
       }
 
-      const raw = await fs.readJSON(projectFile);
+      const rawText = await fs.readFile(projectFile, 'utf8');
+      let raw: any;
+      try {
+        raw = JSON.parse(rawText);
+      } catch (e) {
+        // 書きかけ・書き間違い。どこが悪いかを行と桁で返す (エディタは今の中身のまま、直れば読み直す)
+        return { success: false, error: `project.json: ${describeJsonError(rawText, e)}` };
+      }
 
       let migration: MigrationOutcome;
       try {
@@ -231,9 +246,13 @@ export class ProjectManager {
         ? { from: migration.from, to: migration.to, applied: migration.applied, changes: migration.changes }
         : undefined;
 
-      // シーン、UIの詳細を読み込み
-      project.scenes = await this.loadScenes(projectPath, project.scenes);
-      project.uiLayouts = await this.loadUILayouts(projectPath, project.uiLayouts);
+      // シーン、UIの詳細を読み込み (project.json の写しと個別ファイルのうち、変わった方を使う。sceneCopies.ts)
+      const copies = await resolveSceneAndUiCopies(projectPath, project, {
+        seen: this.copiesSeen && path.resolve(this.copiesSeen.path) === path.resolve(projectPath) ? this.copiesSeen.seen : undefined,
+      });
+      project.scenes = copies.scenes;
+      project.uiLayouts = copies.uiLayouts;
+      if (!Array.isArray(project.scripts)) project.scripts = [];
 
       // 拡張機能のデータ (extensions.<id> と物の ext.<id>)。拡張機能ごとの版で移行する。
       // シーンの物にも掛けるので、シーンを読んだ後。本体の IR と同じく、承諾までは書き戻さない。
@@ -256,8 +275,28 @@ export class ProjectManager {
       this.projectPath = projectPath;
       this.readOnly = upgrade !== undefined;
       this.pendingUpgrade = upgrade ?? null;
+      this.copiesSeen = { path: projectPath, seen: copies.seen };
 
-      return { success: true, project, upgrade };
+      // 外でどちらか一方の写しだけが書き換えられていたら、もう一方にも同じ中身を写して揃える。
+      // 揃えないと、次にエージェントが古い方を読んで書き換え、今の編集を消してしまう。
+      // 写すのはエージェントが書いた中身そのもの (補った値は入れない)。古い版のプロジェクト (承諾待ち) には書かない。
+      if (!upgrade && copies.stale.length > 0) {
+        try {
+          const written = await syncStaleCopies(projectPath, copies.stale, async (file, data) => {
+            const text = await atomicWriteJson(file, data);
+            this.writeObserver?.(file, text);
+          });
+          for (const item of copies.stale) {
+            const v = stableStringify(item.value);
+            copies.seen.set(`${item.kind}:${item.id}`, { file: v, embedded: v, chosen: v });
+          }
+          if (written.length > 0) copies.notes.push(`made the two copies match again: wrote ${written.join(', ')}`);
+        } catch (e) {
+          copies.notes.push(`could not make the two copies match: ${(e as Error).message}`);
+        }
+      }
+
+      return { success: true, project, upgrade, notices: copies.notes.length > 0 ? copies.notes : undefined };
     } catch (error) {
       return { success: false, error: (error as Error).message };
     }
@@ -345,6 +384,8 @@ export class ProjectManager {
       for (const ui of this.currentProject.uiLayouts) {
         await save(path.join(this.projectPath, 'UI', `${ui.id}.json`), ui);
       }
+      // 2 つの写しは今同じ中身。次に外で変わったら、変わった方が分かる
+      this.copiesSeen = { path: this.projectPath, seen: seenAfterSave(this.currentProject.scenes, this.currentProject.uiLayouts) };
 
       return { success: true };
     } catch (error) {
@@ -515,62 +556,6 @@ export class ProjectManager {
     }
 
     return ui;
-  }
-
-  private async loadScenes(projectPath: string, sceneRefs: SceneData[]): Promise<SceneData[]> {
-    const scenes: SceneData[] = [];
-    for (const ref of sceneRefs) {
-      try {
-        const scenePath = path.join(projectPath, 'Scenes', `${ref.id}.json`);
-        if (await fs.pathExists(scenePath)) {
-          const scene = await fs.readJSON(scenePath);
-          // 後方互換: objects.type === 'ui_surface' → 'canvas'
-          for (const obj of scene.objects || []) {
-            if (obj.type === 'ui_surface') {
-              obj.type = 'canvas';
-              if (obj.uiSurface) {
-                obj.canvasSettings = {
-                  layoutId: obj.uiSurface.layoutId || '',
-                  widthMeters: obj.uiSurface.width || 1.2,
-                  heightMeters: obj.uiSurface.height || 0.7,
-                  pixelsPerUnit: obj.uiSurface.pixelsPerUnit || 1000,
-                };
-                delete obj.uiSurface;
-              }
-            }
-            // 旧 components フィールド削除
-            delete obj.components;
-          }
-          scenes.push(scene);
-        }
-      } catch (e) {
-        console.error(`Failed to load scene ${ref.id}:`, e);
-      }
-    }
-    return scenes;
-  }
-
-  private async loadUILayouts(projectPath: string, uiRefs: UILayoutData[]): Promise<UILayoutData[]> {
-    const layouts: UILayoutData[] = [];
-    for (const ref of uiRefs) {
-      try {
-        const uiPath = path.join(projectPath, 'UI', `${ref.id}.json`);
-        if (await fs.pathExists(uiPath)) {
-          const layout = await fs.readJSON(uiPath);
-          // 後方互換
-          if (!layout.scope) layout.scope = 'uhd';
-          if (!layout.resolution) {
-            layout.resolution = layout.scope === 'canvas'
-              ? { width: 1024, height: 1024 }
-              : { width: 1920, height: 1080 };
-          }
-          layouts.push(layout);
-        }
-      } catch (e) {
-        console.error(`Failed to load UI layout ${ref.id}:`, e);
-      }
-    }
-    return layouts;
   }
 
   private generateUnityManifest(): object {

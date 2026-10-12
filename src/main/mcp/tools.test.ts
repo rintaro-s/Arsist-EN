@@ -4,6 +4,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { ARSIST_TOOLS, callArsistTool, checkScriptSyntax, ToolSession } from './tools';
 import { CURRENT_IR_VERSION } from '../../shared/irVersion';
+import { setLinkedFoldersSource } from '../extensions/catalogService';
+
+// サンプルの拡張機能 (quest-room / quest-input) を、この環境と同じく登録したフォルダとして見せる
+setLinkedFoldersSource(() => [path.resolve(__dirname, '../../../samples/extensions')]);
 
 let dir: string;
 

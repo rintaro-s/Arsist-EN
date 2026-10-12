@@ -2,9 +2,11 @@
  * プロジェクトのファイルの読み書き (エディタの外から触るもの用: MCP のツール・内蔵エージェント・書き出し)。
  *
  * エディタ (ProjectManager) と同じ配置で読み書きする:
- *   project.json        プロジェクト全体 (シーン・UI も中に持つ)
- *   Scenes/<id>.json    シーン 1 つずつ (エディタはこちらを正として読む)
- *   UI/<id>.json        UI レイアウト 1 つずつ (同上)
+ *   project.json        プロジェクト全体 (シーン・UI の写しも中に持つ)
+ *   Scenes/<id>.json    シーン 1 つずつ
+ *   UI/<id>.json        UI レイアウト 1 つずつ
+ * シーン・UI は 2 か所にあり、外でどちらか一方だけ書き換えられたら、変わった方を使う (sceneCopies.ts)。
+ * 書くときは両方を同じ中身で書く。
  *
  * 守ること:
  *   - 書くときは 1 ファイルずつ「一時ファイルに書いて rename」(atomicWriteJson)。途中で落ちても、
@@ -16,6 +18,10 @@
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { CURRENT_IR_VERSION, readIrVersion } from '../../shared/irVersion';
+import { describeJsonError, resolveSceneAndUiCopies } from './sceneCopies';
+
+/** readProjectFiles が読んだときの知らせ (どの写しを使った・何を補った)。ir_validate_project がエージェントに返す */
+export const projectReadNotes = new WeakMap<object, string[]>();
 
 export class ProjectFormatError extends Error {
   constructor(message: string, public readonly code: 'notFound' | 'tooNew' | 'needsUpgrade' | 'invalid') {
@@ -48,10 +54,11 @@ export async function readProjectFiles(projectPath: string, options: { forWrite?
   const file = path.join(projectPath, 'project.json');
   if (!await fs.pathExists(file)) throw new ProjectFormatError(`project.json not found in ${projectPath}`, 'notFound');
   let project: Record<string, any>;
+  const text = await fs.readFile(file, 'utf8');
   try {
-    project = await fs.readJSON(file);
+    project = JSON.parse(text);
   } catch (e) {
-    throw new ProjectFormatError(`project.json is not valid JSON: ${(e as Error).message}`, 'invalid');
+    throw new ProjectFormatError(`project.json is not valid JSON: ${describeJsonError(text, e)}`, 'invalid');
   }
   const version = readIrVersion(project);
   if (version > CURRENT_IR_VERSION) {
@@ -63,20 +70,12 @@ export async function readProjectFiles(projectPath: string, options: { forWrite?
       'it is not rewritten silently.', 'needsUpgrade');
   }
 
-  project.scenes = await Promise.all((Array.isArray(project.scenes) ? project.scenes : []).map(async (ref: any) => {
-    const sceneFile = ref?.id ? path.join(projectPath, 'Scenes', `${ref.id}.json`) : null;
-    if (sceneFile && await fs.pathExists(sceneFile)) {
-      try { return await fs.readJSON(sceneFile); } catch { /* 壊れていれば project.json の中を使う */ }
-    }
-    return { ...ref, objects: Array.isArray(ref?.objects) ? ref.objects : [] };
-  }));
-  project.uiLayouts = await Promise.all((Array.isArray(project.uiLayouts) ? project.uiLayouts : []).map(async (ref: any) => {
-    const uiFile = ref?.id ? path.join(projectPath, 'UI', `${ref.id}.json`) : null;
-    if (uiFile && await fs.pathExists(uiFile)) {
-      try { return await fs.readJSON(uiFile); } catch { /* 同上 */ }
-    }
-    return ref;
-  }));
+  // シーン・UI は project.json の写しと個別ファイルのうち、新しく変わった方を使う (エディタと同じ規則。sceneCopies.ts)。
+  // エージェントが project.json の中を直接書き換えたあとにツールを呼んでも、その編集を消さない
+  const copies = await resolveSceneAndUiCopies(projectPath, project);
+  project.scenes = copies.scenes;
+  project.uiLayouts = copies.uiLayouts;
+  projectReadNotes.set(project, copies.notes);
   if (!project.dataFlow || typeof project.dataFlow !== 'object') project.dataFlow = { dataSources: [], transforms: [] };
   if (!Array.isArray(project.dataFlow.dataSources)) project.dataFlow.dataSources = [];
   if (!Array.isArray(project.dataFlow.transforms)) project.dataFlow.transforms = [];

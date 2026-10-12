@@ -69,8 +69,10 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   `ArsistExtensionContext` / `ArsistScriptBridge` (runtime) and `ArsistBuildContext` (build). Its settings and
   per-object options are declared in `extension.json` (the editor forms are generated from that) and live in
   `project.extensions.<id>` / `SceneObject.ext.<id>`, with their **own** `dataVersion` + declarative migrations —
-  an extension's data change never needs an IR bump. `doc/17-extensions.md`; worked example
-  `Extensions/quest-room/`.
+  an extension's data change never needs an IR bump. `doc/17-extensions.md`; worked examples
+  `samples/extensions/{quest-room,quest-input}/` — **samples, not part of the engine**: they load because that
+  folder is registered (`npm run ext:link -- samples/extensions`, stored as `extensionFolders` in config.json and
+  read by the editor, builds and the MCP server). `Extensions/` is the engine's own bundled slot (empty now).
 - **Extensions may add devices (`provides.adapters` + `Adapters/<name>/`), SDKs (`unity.packages`) and engine
   modifications (`unity.overrides`, files under `Overrides/` replacing `Assets/Arsist/<path>` in the build workspace
   only, guarded by the original's SHA-256).** Never edit the engine to support one device or one app when an
@@ -116,6 +118,11 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   reloads via `ProjectWatcher` — never write project files any other way. Registration into agents' settings
   (`agentTargets.ts`) only touches the `arsist` entry and backs the file up first. Test it with a fake `HOME`;
   never against your real `~/.claude.json` etc. See `doc/09-mcp-server.md`.
+
+- **Agents may edit the IR files directly** and the open editor reloads them (~0.45 s). Scenes / UI layouts exist in
+  `project.json` *and* `Scenes/` / `UI/`; `src/main/project/sceneCopies.ts` picks the copy that changed and writes it
+  into the other one, and `src/shared/irRepair.ts` fills in missing fields instead of crashing the view. Never make a
+  loader that silently prefers one copy again (doc/09).
 
 ## Gotchas
 
@@ -166,6 +173,10 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   was set, so `ArsistHandInteraction` shipped as an empty class. Both are now set on Quest builds. Do not also enable
   "Meta Hand Tracking Aim": it makes hands appear as controllers, and the controller ray and the hand ray then both
   fire.
+- **Do not use drei's `<Line>` in the editor; use `StableLine`** (`components/viewport/StableLine.tsx`). drei disposes
+  the line's *material* whenever `points` is a new array (always, with inline literals), so every re-render of the 3D
+  view — a reload, a selection, a gizmo drag — threw away the line shaders and froze the editor ~2 s recompiling them.
+  More generally: never let a re-render dispose materials that are still on screen.
 - Inside any `Arsist.Runtime.*` namespace, a bare `Input` resolves to the sibling namespace
   `Arsist.Runtime.Input`, **not** `UnityEngine.Input` (C# walks up the namespace chain before it looks
   at `using` directives). Always write `UnityEngine.Input.gyro` etc. — this broke the build once.

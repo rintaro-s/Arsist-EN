@@ -14,8 +14,10 @@ import type { Lang } from '../i18n';
 
 export interface ExtensionListItem {
   manifest: ExtensionManifest;
-  source: 'repo' | 'bundled' | 'user';
+  source: 'repo' | 'bundled' | 'user' | 'linked';
   dir: string;
+  /** source が 'linked' のとき、登録したフォルダ */
+  root?: string;
   overrides?: string;
 }
 
@@ -26,6 +28,8 @@ export interface ExtensionListResult {
   problems: string[];
   deviceTags: string[];
   userDir?: string | null;
+  /** 登録したフォルダ (コピーせずに使う拡張機能) */
+  linkedFolders?: string[];
 }
 
 /** main の extensions:import / extensions:install の返事 (src/main/extensions/packages.ts の InstallResult + source) */

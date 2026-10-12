@@ -108,6 +108,44 @@ The agent edits the files; the editor holds its own copy in memory. To keep both
 
 ---
 
+## Editing the files directly (no MCP needed)
+
+The IR is plain JSON, so any agent that can edit text can work on a project, and the open editor follows along.
+
+| File | Holds |
+|---|---|
+| `project.json` | everything: settings, `scripts[]` (code inline), `dataFlow`, `extensions`, `models`, and copies of `scenes[]` / `uiLayouts[]` |
+| `Scenes/<id>.json`, `UI/<id>.json` | one scene / one UI layout each |
+
+**Two copies.** Scenes and UI layouts are written in both places. Before, the per-file copy always won, so an edit
+inside `project.json` was ignored and then erased by the next save (a scene without a `Scenes/` file was dropped).
+Now `src/main/project/sceneCopies.ts` decides:
+
+1. Both copies the same → nothing to decide.
+2. The editor remembers what each copy looked like last time (`CopySeen`) → it uses the copy that changed. If both
+   changed differently, the per-file copy wins and the console says so.
+3. On first open (and in the MCP server, which has no history) → the newer file by mtime; a tie goes to the per-file copy.
+4. Then the editor **writes the chosen content into the other copy**, so the next reader (an agent, MCP, a build) never
+   edits a stale copy. It writes exactly what was chosen (not the filled-in defaults), and never into a file that is
+   being written or into a project waiting for an IR upgrade.
+
+**Live reload.** `ProjectWatcher` watches the project folder (not single files — the editor saves by rename, which
+would detach a per-file watch) and the editor reloads about 0.45 s after a write, keeping the view, selection, camera
+and loaded models. With unsaved edits it asks first.
+
+**Half-written / invalid files.** While `project.json` or a `Scenes/` / `UI/` file is not valid JSON, the editor keeps the
+last good content and shows a banner with the line and column (`describeJsonError`, which locates the error itself —
+V8 does not always say where). It reloads by itself once the file is valid.
+
+**Tolerant loading.** Missing fields are filled in rather than crashing the view (`src/shared/irRepair.ts`): object ids
+(stable, from the position), `type` (guessed from `modelPath`), `transform` (`[x, y, z]` arrays accepted), UI element ids,
+`style`, `children`, layout `scope` / `resolution`. Every fill-in is reported in the console as `[IR] …`, and
+`ir_validate_project` returns the same notes (`files: …`) so an agent can see how its text was read.
+
+Debugging: `ARSIST_DEBUG_WATCH=1` prints when each change is seen and when the editor is told.
+
+---
+
 ## Tools (38)
 
 `projectPath` is optional everywhere once a project is open (`ARSIST_PROJECT_PATH` / `arsist_open_project`).

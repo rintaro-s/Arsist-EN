@@ -1,4 +1,4 @@
-import { Box, Layout, Move, RotateCw, Maximize2, Grid3X3, Axis3D, Magnet, PersonStanding, Settings, Download, Eye, Save, FolderOpen, Plus, Server, Zap, Radar, ScanEye, Cpu, Bot, PackageOpen, PackagePlus } from 'lucide-react';
+import { Box, Layout, Move, RotateCw, Maximize2, Grid3X3, Axis3D, Magnet, PersonStanding, Settings, Download, Eye, Save, FolderOpen, Plus, Server, Zap, Radar, ScanEye, Cpu, Bot, PackageOpen, PackagePlus, Puzzle } from 'lucide-react';
 import { exportCurrentProject, importArsistPackage } from '../ai/packageActions';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
@@ -87,6 +87,12 @@ export function Toolbar() {
             label={t('toolbar.tabModels')}
             active={currentView === 'models'}
             onClick={() => setCurrentView('models')}
+          />
+          <ViewTab
+            icon={<Puzzle size={15} />}
+            label={t('toolbar.tabExtensions')}
+            active={currentView === 'extensions'}
+            onClick={() => setCurrentView('extensions')}
           />
         </div>
       </div>
