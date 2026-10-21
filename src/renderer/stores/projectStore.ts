@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { useUIStore } from './uiStore';
+import { newExtensionState, type ExtensionManifest } from '../../shared/extensions';
 import type {
   ArsistProject,
   SceneData,
@@ -25,6 +26,7 @@ import type {
   PerceptionTask,
   ModelDefinition,
 } from '../../shared/types';
+import { CHARACTER_DEFAULTS } from '../../shared/types';
 
 /** 古い版の IR を開いたときの提案 (main の PendingUpgrade と同じ形)。 */
 export interface IrUpgradeOffer {
@@ -32,9 +34,22 @@ export interface IrUpgradeOffer {
   to: number;
   applied: string[];
   changes: string[];
+  /** 拡張機能のデータの移行 (本体の版と独立) */
+  extensions?: Array<{ id: string; from: number; to: number; changes: string[] }>;
 }
 
 /** Surface a project error to the console panel instead of failing silently. */
+/** 読むときの知らせ (どの写しを使った・何を補った・書きかけを待っている) をコンソールへ */
+function logLoadNotices(notices: string[] | undefined) {
+  if (!notices?.length) return;
+  try {
+    const add = useUIStore.getState().addConsoleLog;
+    for (const n of notices) add({ type: /not valid|filled in|both changed|skipped|not listed/.test(n) ? 'warning' : 'info', message: `[IR] ${n}` });
+  } catch {
+    // ignore
+  }
+}
+
 function notifyProjectError(action: string, detail?: string) {
   try {
     useUIStore.getState().addConsoleLog({
@@ -64,6 +79,23 @@ interface ProjectState {
   irUpgrade: IrUpgradeOffer | null;
   /** 提案のダイアログを出しているか。見送っても、保存しようとしたらもう一度出る */
   showIrUpgrade: boolean;
+  /**
+   * 開こうとしたプロジェクトが要る拡張機能・端末が無かったとき (main の 'requirementsMissing')。
+   * MissingRequirementsDialog が見せ、拡張機能を入れたら同じパスで開き直す。
+   */
+  missingRequirements: { path: string; missing: Array<{ kind: string; id: string; detail: string }> } | null;
+  clearMissingRequirements: () => void;
+  /**
+   * 開いているプロジェクトのファイルが外 (AI エージェント・MCP・別のエディタ) で変わった。
+   * 未保存の変更が無ければすぐ読み直し、あれば (ここに入れて) 利用者に訊く。
+   */
+  externalChange: { files: string[] } | null;
+  /** 外で変わったファイルが読めない (書きかけの JSON など)。直るまで今の中身のまま。直れば自動で読む */
+  externalProblem: string | null;
+  handleExternalChange: (payload: { projectPath: string; files: string[] }) => Promise<void>;
+  dismissExternalChange: () => void;
+  /** 開いているプロジェクトを読み直す (見ているシーン・レイアウト・選択は、残っていれば保つ) */
+  reloadProject: (options?: { external?: boolean }) => Promise<boolean>;
 
   // Scene
   currentSceneId: string | null;
@@ -135,6 +167,16 @@ interface ProjectState {
   // --- AR ---
   updateARSettings: (updates: Partial<ARSettings>) => void;
 
+  /** 端末に保存する store のキー (project.storage.persist, IR v5) */
+  setPersistedKeys: (persist: string[]) => void;
+
+  // Extensions (IR v4: project.extensions / SceneObject.ext)
+  /** 有効にする (初めてなら既定の設定で作る) / 無効にする (設定は残す) */
+  setExtensionEnabled: (manifest: ExtensionManifest, enabled: boolean) => void;
+  updateExtensionSettings: (id: string, updates: Record<string, unknown>) => void;
+  /** 物の ext.<id> を書き換える。null で消す */
+  updateObjectExtension: (objectId: string, id: string, updates: Record<string, unknown> | null) => void;
+
   // --- Perception ---
   addPerceptionTarget: (target: Pick<PerceptionTarget, 'name' | 'imagePath' | 'physicalWidth'> &
     Partial<PerceptionTarget>) => string | null;
@@ -181,6 +223,58 @@ export const useProjectStore = create<ProjectState>()(
     readOnly: false,
     irUpgrade: null,
     showIrUpgrade: false,
+    missingRequirements: null,
+    clearMissingRequirements: () => set((s) => { s.missingRequirements = null; }),
+    externalChange: null,
+    externalProblem: null,
+
+    handleExternalChange: async ({ projectPath, files }) => {
+      const { project, projectPath: current, isDirty } = get();
+      if (!project || !current || current !== projectPath) return;
+      if (isDirty) {
+        set((s) => { s.externalChange = { files }; });
+        return;
+      }
+      if (await get().reloadProject({ external: true })) {
+        try {
+          useUIStore.getState().addConsoleLog({ type: 'info', message: `Reloaded changes made outside the editor: ${files.join(', ')}` });
+        } catch { /* ignore */ }
+      }
+    },
+
+    dismissExternalChange: () => set((s) => { s.externalChange = null; s.externalProblem = null; }),
+
+    reloadProject: async (options) => {
+      const { projectPath, currentSceneId, currentUILayoutId, selectedObjectIds, currentScriptId } = get();
+      if (!projectPath || !window.electronAPI) return false;
+      const result = await window.electronAPI.project.load(projectPath);
+      if (!result.success) {
+        if (result.error === 'requirementsMissing') set((s) => { s.missingRequirements = { path: projectPath, missing: result.missing ?? [] }; });
+        else {
+          notifyProjectError('Failed to reload project', result.error);
+          // 外での変更なら、書きかけのことが多い。今の中身のまま待ち、直ったら (次の変更で) 自動で読む
+          if (options?.external) set((s) => { s.externalProblem = result.error ?? 'unknown error'; });
+        }
+        return false;
+      }
+      logLoadNotices(result.notices);
+      set((s) => {
+        s.externalProblem = null;
+        const p = result.project;
+        s.project = p;
+        s.isDirty = false;
+        s.externalChange = null;
+        s.readOnly = Boolean(result.upgrade);
+        s.irUpgrade = result.upgrade ?? null;
+        s.showIrUpgrade = Boolean(result.upgrade);
+        s.currentSceneId = p.scenes.some((x: { id: string }) => x.id === currentSceneId) ? currentSceneId : p.scenes[0]?.id ?? null;
+        s.currentUILayoutId = p.uiLayouts.some((x: { id: string }) => x.id === currentUILayoutId) ? currentUILayoutId : p.uiLayouts[0]?.id ?? null;
+        const scene = p.scenes.find((x: { id: string }) => x.id === s.currentSceneId);
+        s.selectedObjectIds = selectedObjectIds.filter((id) => scene?.objects?.some((o: { id: string }) => o.id === id));
+        s.currentScriptId = (p.scripts ?? []).some((x: { id: string }) => x.id === currentScriptId) ? currentScriptId : p.scripts?.[0]?.id ?? null;
+      });
+      return true;
+    },
     currentSceneId: null,
     selectedObjectIds: [],
     selectedPerceptionTargetId: null,
@@ -224,7 +318,11 @@ export const useProjectStore = create<ProjectState>()(
       try {
         const result = await window.electronAPI.project.load(path);
         if (result.success) {
+          logLoadNotices(result.notices);
           set((s) => {
+            s.missingRequirements = null;
+            s.externalProblem = null;
+            s.externalChange = null;
             s.project = result.project;
             s.projectPath = path;
             s.isDirty = false;
@@ -237,6 +335,8 @@ export const useProjectStore = create<ProjectState>()(
             s.selectedTransformId = null;
             s.currentScriptId = result.project.scripts?.[0]?.id ?? null;
           });
+        } else if (result.error === 'requirementsMissing') {
+          set((s) => { s.missingRequirements = { path, missing: result.missing ?? [] }; });
         } else if (result.error === 'irTooNew') {
           notifyProjectError(
             'This project was saved by a newer Arsist',
@@ -408,6 +508,12 @@ export const useProjectStore = create<ProjectState>()(
             scale: { x: 1, y: 1, z: 1 },
           },
           material: obj.material || { color: '#FFFFFF', metallic: 0.5, roughness: 0.5 },
+          ...(obj.assetId ? { assetId: obj.assetId } : {}),
+          ...(obj.ext ? { ext: obj.ext } : {}),
+          // 新しく置いた VRM は最初からキャラクター (まばたき・呼吸・こちらを見る)。古い VRM は character 無し = 今までどおり
+          ...((obj.character || (obj.type === 'vrm'))
+            ? { character: obj.character ?? { ...CHARACTER_DEFAULTS } }
+            : {}),
         };
 
         scene.objects.push(newObj);
@@ -768,6 +874,54 @@ export const useProjectStore = create<ProjectState>()(
       });
     },
 
+    setPersistedKeys: (persist) => {
+      set((s) => {
+        if (!s.project) return;
+        const clean = [...new Set(persist.map((k) => k.trim()).filter(Boolean))];
+        s.project.storage = { ...(s.project.storage ?? {}), persist: clean };
+        s.isDirty = true;
+      });
+    },
+
+    // ========================================
+    // Extensions
+    // ========================================
+
+    setExtensionEnabled: (manifest, enabled) => {
+      set((s) => {
+        if (!s.project) return;
+        const all = s.project.extensions ?? (s.project.extensions = {});
+        const current = all[manifest.id];
+        if (current) current.enabled = enabled;
+        else if (enabled) all[manifest.id] = newExtensionState(manifest);
+        s.isDirty = true;
+      });
+    },
+
+    updateExtensionSettings: (id, updates) => {
+      set((s) => {
+        const state = s.project?.extensions?.[id];
+        if (!state) return;
+        state.settings = { ...state.settings, ...updates };
+        s.isDirty = true;
+      });
+    },
+
+    updateObjectExtension: (objectId, id, updates) => {
+      set((s) => {
+        if (!s.project || !s.currentSceneId) return;
+        const scene = s.project.scenes.find((sc) => sc.id === s.currentSceneId);
+        const obj = scene?.objects.find((o) => o.id === objectId);
+        if (!obj) return;
+        const ext = { ...(obj.ext ?? {}) };
+        if (updates === null) delete ext[id];
+        else ext[id] = { ...(ext[id] ?? {}), ...updates };
+        if (Object.keys(ext).length > 0) obj.ext = ext;
+        else delete obj.ext;
+        s.isDirty = true;
+      });
+    },
+
     // ========================================
     // Script
     // ========================================
@@ -1045,6 +1199,7 @@ export const useProjectStore = create<ProjectState>()(
             code: sc.code,
             enabled: sc.enabled,
           })),
+        storage: { persist: project?.storage?.persist ?? [] },
       };
     },
   })),

@@ -1,0 +1,63 @@
+{
+  "id": "quest-hands",
+  "version": "1.0.0",
+  "name": {
+    "en": "Hands and controllers in the scene",
+    "ja": "手とコントローラーを空間に描く"
+  },
+  "description": {
+    "en": "Puts your tracked hands and Touch controllers into the 3D scene, so they cover virtual things behind them and are covered by virtual things in front of them (without this, every virtual object is drawn over your real hands). Virtual: drawn hands and the real controller models from the Meta SDK. Real: your own hands and controllers seen through passthrough, with their shape written only into depth.",
+    "ja": "追跡している手と Touch コントローラーを 3D の空間に置きます。手より奥の仮想の物は手に隠れ、手前の物は手の上に出ます (これが無いと、仮想の物はいつも本物の手の上に描かれます)。仮想: 手を描き、コントローラーは Meta の SDK の実物の模型を描く。本物: パススルーで見えている自分の手とコントローラーをそのまま見せ、形は深度にだけ置く。"
+  },
+  "requires": {
+    "all": ["cap:hand-tracking", "cap:controllers", "sdk:meta-core"]
+  },
+  "minIrVersion": 4,
+  "data": {
+    "version": 1,
+    "settings": [
+      {
+        "key": "look",
+        "type": "select",
+        "default": "virtual",
+        "label": { "en": "How they look", "ja": "見え方" },
+        "help": {
+          "en": "Both put the hands and controllers in front of / behind virtual things correctly. The HUD (head-locked UI) always stays on top.",
+          "ja": "どちらでも、仮想の物との前後が正しくなります。視界の表示 (HUD) はいつも一番手前です。"
+        },
+        "options": [
+          { "value": "virtual", "label": { "en": "Virtual (drawn hands, controller models)", "ja": "仮想 (手を描き、コントローラーの模型を出す)" } },
+          { "value": "real", "label": { "en": "Real (your own hands through passthrough)", "ja": "本物 (パススルーの自分の手をそのまま見せる)" } },
+          { "value": "off", "label": { "en": "Off", "ja": "使わない" } }
+        ]
+      },
+      {
+        "key": "hands",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Hands", "ja": "手" }
+      },
+      {
+        "key": "controllers",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Controllers", "ja": "コントローラー" },
+        "help": {
+          "en": "Virtual uses the Meta SDK's controller models (Quest 3 Touch Plus and others); the build places them in the scene.",
+          "ja": "仮想では Meta の SDK のコントローラーの模型 (Quest 3 の Touch Plus など) を使います。ビルドがシーンに置きます。"
+        }
+      },
+      {
+        "key": "handColor",
+        "type": "select",
+        "default": "soft",
+        "label": { "en": "Hand color (virtual)", "ja": "手の色 (仮想)" },
+        "options": [
+          { "value": "soft", "label": { "en": "Soft white", "ja": "やわらかい白" } },
+          { "value": "skin", "label": { "en": "Skin", "ja": "肌色" } },
+          { "value": "glass", "label": { "en": "Blue glass", "ja": "青いガラス風" } }
+        ]
+      }
+    ]
+  }
+}

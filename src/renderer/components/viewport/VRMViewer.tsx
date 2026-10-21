@@ -1,205 +1,123 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { SceneTransformControls } from './SceneTransformControls';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
-import type { SceneObject } from '../../../shared/types';
+import type { VRM } from '@pixiv/three-vrm';
+import { SceneTransformControls } from './SceneTransformControls';
 import { useProjectStore } from '../../stores/projectStore';
+import { loadVrm, peekVrm } from './vrmCache';
+import { resolveModelUrl } from './modelUrl';
+import { transformOf, type SceneObjectProps } from './sceneObjectProps';
+import { previewAnimationFor, useCharacterStore } from '../character/characterStore';
+import { retargetedClip } from '../character/animationRetarget';
 
-interface VRMViewerProps {
-  object: SceneObject;
-  isSelected: boolean;
-  onSelect: () => void;
-  onUpdate: (updates: Partial<SceneObject>) => void;
-  transformMode: 'translate' | 'rotate' | 'scale';
-  transformSpace: 'local' | 'world';
-}
-
-function VRMModel({ 
-  url, 
-  object,
-  isSelected,
-  onSelect,
-  onUpdate,
-  transformMode,
-  transformSpace
-}: VRMViewerProps & { url: string }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const [vrm, setVrm] = useState<any>(null);
+/**
+ * VRM アバター。読み込んだものは vrmCache が覚えているので、ビューを作り直しても読み直さない。
+ * 読み込み中・失敗時も、置き場所 (object.transform) に仮の箱を出して選べるようにしておく。
+ */
+export const VRMViewer = memo(function VRMViewer({ object, isSelected, transformMode, transformSpace }: SceneObjectProps) {
+  const projectPath = useProjectStore((s) => s.projectPath);
+  const url = resolveModelUrl(object.modelPath, projectPath);
+  const [vrm, setVrm] = useState<VRM | null>(() => (url ? peekVrm(object.id, url) ?? null : null));
   const [error, setError] = useState<string | null>(null);
+  const [group, setGroup] = useState<THREE.Group | null>(null);
 
   useEffect(() => {
     if (!url) return;
-
-    const loader = new GLTFLoader();
-    loader.register((parser: any) => new VRMLoaderPlugin(parser));
-
-    loader.load(
-      url,
-      (gltf: any) => {
-        const vrmInstance = gltf.userData.vrm;
-        if (vrmInstance) {
-          // Adjust model orientation using VRMUtils.rotateVRM0
-          VRMUtils.rotateVRM0(vrmInstance);
-          setVrm(vrmInstance);
-          setError(null);
-        } else {
-          setError('VRM data not found in file');
-        }
-      },
-      (progress: any) => {
-        console.log('Loading VRM...', (progress.loaded / progress.total) * 100, '%');
-      },
-      (err: any) => {
-        console.error('Error loading VRM:', err);
-        setError(err.message || 'Failed to load VRM');
-      }
-    );
-
-    return () => {
-      if (vrm) {
-        VRMUtils.deepDispose(vrm.scene);
-      }
-    };
-  }, [url]);
-
-  useFrame((_state: any, delta: number) => {
-    if (vrm) {
-      vrm.update(delta);
+    let alive = true;
+    const cached = peekVrm(object.id, url);
+    if (cached) {
+      setVrm(cached);
+      setError(null);
+      return;
     }
+    setVrm(null);
+    loadVrm(object.id, url).then(
+      (v) => { if (alive) { setVrm(v); setError(null); } },
+      (err: unknown) => {
+        console.error('Error loading VRM:', err);
+        if (alive) setError((err as Error)?.message || 'Failed to load VRM');
+      },
+    );
+    // VRM の破棄は vrmCache (オブジェクトが消えたとき) に任せる。ここで捨てると、作り直したときに読み直しになる
+    return () => { alive = false; };
+  }, [object.id, url]);
+
+  // キャラクターの動きの試し再生 (選んでいる間だけ)。実機は Unity の Humanoid が同じ FBX を流す
+  const animations = useCharacterStore((s) => s.animations);
+  const preview = useCharacterStore((s) => s.preview);
+  const animationName = previewAnimationFor(preview, object.id, isSelected, object.character?.animation);
+  const animationPath = animationName ? animations.find((a) => a.name === animationName)?.assetPath : undefined;
+  const animationUrl = animationPath ? resolveModelUrl(animationPath, projectPath) : '';
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+
+  useEffect(() => {
+    if (!vrm || !animationUrl) return;
+    let alive = true;
+    let mixer: THREE.AnimationMixer | null = null;
+    retargetedClip(animationUrl, vrm).then(
+      (clip) => {
+        if (!alive) return;
+        mixer = new THREE.AnimationMixer(vrm.scene);
+        mixer.clipAction(clip).play();
+        mixerRef.current = mixer;
+      },
+      (err: unknown) => console.warn(`[Arsist] animation preview failed (${animationName}):`, err),
+    );
+    return () => {
+      alive = false;
+      if (mixer) {
+        mixer.stopAllAction();
+        mixer.uncacheRoot(vrm.scene);
+      }
+      if (mixerRef.current === mixer) mixerRef.current = null;
+      // 休みの姿勢に戻す (VRM 自体は読み直さない)
+      vrm.humanoid?.resetNormalizedPose();
+    };
+  }, [vrm, animationUrl, animationName]);
+
+  useFrame((_state: unknown, delta: number) => {
+    mixerRef.current?.update(delta);
+    vrm?.update(delta);
   });
 
-  const handleTransformChange = () => {
-    if (!groupRef.current) return;
-    const position = groupRef.current.position;
-    const rotation = groupRef.current.rotation;
-    const scale = groupRef.current.scale;
-
-    onUpdate({
-      transform: {
-        position: { x: position.x, y: position.y, z: position.z },
-        rotation: { 
-          x: THREE.MathUtils.radToDeg(rotation.x),
-          y: THREE.MathUtils.radToDeg(rotation.y),
-          z: THREE.MathUtils.radToDeg(rotation.z)
-        },
-        scale: { x: scale.x, y: scale.y, z: scale.z },
-      }
-    });
+  const select = (e: { stopPropagation(): void }) => {
+    e.stopPropagation();
+    useProjectStore.getState().selectObjects([object.id]);
   };
-
-  if (error) {
-    return (
-      <mesh position={[0, 1, 0]} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
-        <boxGeometry args={[0.5, 0.5, 0.5]} />
-        <meshStandardMaterial color="#ff0000" />
-      </mesh>
-    );
-  }
-
-  if (!vrm) {
-    return (
-      <mesh position={[0, 1, 0]} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
-        <boxGeometry args={[0.3, 0.3, 0.3]} />
-        <meshStandardMaterial color="#888888" wireframe />
-      </mesh>
-    );
-  }
 
   return (
     <>
       <group
-        ref={groupRef}
-        position={[
-          object.transform.position.x,
-          object.transform.position.y,
-          object.transform.position.z
-        ]}
+        ref={setGroup}
+        userData={{ arsistObjectId: object.id }}
+        position={[object.transform.position.x, object.transform.position.y, object.transform.position.z]}
         rotation={[
           THREE.MathUtils.degToRad(object.transform.rotation.x),
           THREE.MathUtils.degToRad(object.transform.rotation.y),
-          THREE.MathUtils.degToRad(object.transform.rotation.z)
+          THREE.MathUtils.degToRad(object.transform.rotation.z),
         ]}
-        scale={[
-          object.transform.scale.x,
-          object.transform.scale.y,
-          object.transform.scale.z
-        ]}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect();
-        }}
+        scale={[object.transform.scale.x, object.transform.scale.y, object.transform.scale.z]}
+        onClick={select}
       >
-        <primitive object={vrm.scene} />
+        {vrm ? (
+          <primitive object={vrm.scene} />
+        ) : (
+          // 読み込み中は灰色の枠、失敗は赤 (アバターの大きさの見当: 高さ約 1.6 m)
+          <mesh position={[0, 0.8, 0]}>
+            <boxGeometry args={[0.5, 1.6, 0.3]} />
+            <meshStandardMaterial color={error ? '#f14c4c' : '#888888'} wireframe />
+          </mesh>
+        )}
       </group>
 
-      {isSelected && groupRef.current && (
+      {isSelected && group && (
         <SceneTransformControls
-          object={groupRef.current}
+          object={group}
           mode={transformMode}
           space={transformSpace}
-          onObjectChange={handleTransformChange}
+          onObjectChange={() => useProjectStore.getState().updateObject(object.id, { transform: transformOf(group) })}
         />
       )}
     </>
   );
-}
-
-export function VRMViewer(props: VRMViewerProps) {
-  const { object } = props;
-  const projectPath = useProjectStore((s) => s.projectPath);
-
-  const toArsistFileUrl = (absPath: string) => {
-    let normalized = absPath.replace(/\\/g, '/');
-    if (!normalized.startsWith('//')) {
-      normalized = normalized.replace(/^\/+/, '');
-    }
-    if (/^[A-Za-z]:/.test(normalized)) {
-      return `arsist-file://${encodeURI(normalized)}`;
-    }
-    return `arsist-file:///${encodeURI(normalized)}`;
-  };
-
-  const resolveModelUrl = (modelPath: string | undefined | null): string => {
-    if (!modelPath) return '';
-    if (modelPath.startsWith('arsist-file:')) return modelPath;
-    if (modelPath.startsWith('http://') || modelPath.startsWith('https://')) {
-      return modelPath;
-    }
-
-    if (modelPath.startsWith('file:')) {
-      try {
-        const u = new URL(modelPath);
-        let rawPath = u.pathname;
-        if (rawPath.startsWith('/') && /^[A-Za-z]:/.test(rawPath.slice(1))) {
-          rawPath = rawPath.slice(1);
-        }
-        return toArsistFileUrl(rawPath);
-      } catch {
-        // fallthrough
-      }
-    }
-
-    const normalized = modelPath.replace(/\\/g, '/');
-
-    // Absolute path (/path or C:/path)
-    if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) {
-      return toArsistFileUrl(normalized);
-    }
-
-    // Project-relative path (e.g., assets/Models/foo.vrm)
-    if (projectPath) {
-      const base = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
-      const rel = normalized.replace(/^\/+/, '');
-      return toArsistFileUrl(`${base}/${rel}`);
-    }
-
-    // Fallback
-    return toArsistFileUrl(normalized);
-  };
-
-  const url = resolveModelUrl(object.modelPath);
-
-  return <VRMModel {...props} url={url} />;
-}
+});

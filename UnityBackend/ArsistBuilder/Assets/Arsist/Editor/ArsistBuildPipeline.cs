@@ -80,7 +80,10 @@ namespace Arsist.Builder
                 ConfigureMlKitPlugin();
                 // 依存を集め終えてから gradle を 1 回で書く (CopyModelsToProject が ONNX Runtime を足していることがある)
                 WriteAndroidGradleTemplate();
-                EnsurePerceptionLinkXml(ProjectHasPerceptionTargets() || ProjectHasPerceptionTasks());
+                // 動きが取り込めなくてもアプリ自体は作る (キャラクターが止まっているだけ。理由はログに出す)
+                try { ImportCharacterAnimations(); }
+                catch (Exception e) { Debug.LogError($"[Arsist] Character animations failed: {e.Message}\n{e.StackTrace}"); }
+                EnsurePerceptionLinkXml(ProjectNeedsCameraFrames());
 
                 // Phase 3: ビルド設定適用
                 Debug.Log("[Arsist] Phase 3: Applying build settings...");
@@ -97,6 +100,9 @@ namespace Arsist.Builder
                     ApplyQuestBuildBootstrap();
                 }
 
+                // Phase 3.16: 拡張機能のビルド設定 (端末のパッチを当てた後に、上書きされない順で)
+                Arsist.Builder.Extensions.ArsistBuildExtensionRunner.RunPlayerSettings(_manifest);
+
                 // Phase 3.2: ビルド前検証（ここで落とすことで“成功したけど動かない”を避ける）
                 Debug.Log("[Arsist] Phase 3.2: Validating build readiness...");
                 ValidateBuildReadiness(_targetDevice);
@@ -111,9 +117,9 @@ namespace Arsist.Builder
                 EnsureUniVRMResources();
                 LoadDefaultTmpAssets();
                 
-                // Phase 3.5: TMPフォントをStreamingAssetsにコピー（ランタイム読み込み用）
-                Debug.Log("[Arsist] Phase 3.5: Copying TMP font to StreamingAssets...");
-                CopyTmpFontToStreamingAssets();
+                // Phase 3.5: (以前は TMP フォントを StreamingAssets に写していたが、実行時に読む所は無く、
+                // Unity のアセットは StreamingAssets からは読めない。アトラスを 2048 にしたら APK が 19 MB 増えたのでやめた)
+                RemoveStreamingAssetsFontCopies();
 
                 // OpenXR は初回ロード直後だと Settings が未ロード扱いになり、BuildPlayer が失敗することがある。
                 // Build 前に明示的にロードしておく。
@@ -712,6 +718,10 @@ namespace Arsist.Builder
                     GenerateCanvasUI(uiPath);
                 }
 
+                // 拡張機能 (Extensions/<id>/)。シーンが出来上がってから、保存する前に手を入れさせる。
+                Arsist.Builder.Extensions.ArsistBuildExtensionRunner.EnsureHostInScene(_manifest);
+                Arsist.Builder.Extensions.ArsistBuildExtensionRunner.RunScene(_manifest);
+
                 // シーンを保存（すべてのGameObjectが作成された後）
                 var scenePath = $"Assets/Scenes/{sceneName}.unity";
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(Application.dataPath, "..", scenePath)));
@@ -743,7 +753,7 @@ namespace Arsist.Builder
             // VRM モデル
             if (type == "vrm" && !string.IsNullOrEmpty(modelPath))
             {
-                go = CreateVRMGameObject(name, modelPath, assetId);
+                go = CreateVRMGameObject(name, modelPath, assetId, objData["character"] as JObject);
             }
             // モデル読み込み（GLB/GLTF）
             else if (type == "model" && !string.IsNullOrEmpty(modelPath))
@@ -782,6 +792,10 @@ namespace Arsist.Builder
             }
 
             go.name = name;
+
+            // 拡張機能ごとの指定 (IR の ext)。中身は解釈せず、実機の拡張機能が読む。
+            // この後の分岐に途中で return するものがあるので、名前を決めた直後に付ける。
+            AttachExtensionData(go, objData, assetId);
 
             var transformData = objData["transform"] as JObject;
             if (transformData != null)
@@ -915,6 +929,23 @@ namespace Arsist.Builder
         }
 
         /// <summary>
+        /// IR の SceneObject.ext (拡張機能ごとの指定) を ArsistObjectExt に入れる。
+        /// 有効でない拡張機能の分もそのまま入れる (読むかどうかは拡張機能が決める。
+        /// 無効な拡張機能はそもそも実機に居ないので読まれない)。
+        /// </summary>
+        private static void AttachExtensionData(GameObject go, JObject objData, string assetId)
+        {
+            var ext = objData?["ext"] as JObject;
+            if (ext == null || !ext.HasValues) return;
+            var holder = go.GetComponent<Arsist.Runtime.Extensions.ArsistObjectExt>();
+            if (holder == null) holder = go.AddComponent<Arsist.Runtime.Extensions.ArsistObjectExt>();
+            holder.objectId = objData["id"]?.ToString() ?? "";
+            holder.assetId = assetId ?? "";
+            holder.json = ext.ToString(Formatting.None);
+            Debug.Log($"[Arsist] Extension data on '{go.name}': {string.Join(", ", ext.Properties().Select(p => p.Name))}");
+        }
+
+        /// <summary>
         /// IR の SceneObject.anchor を ArsistImageAnchor に落とす。
         ///
         /// transform は既に「ターゲット座標系のオフセット」として localPosition/localRotation に
@@ -1016,13 +1047,13 @@ namespace Arsist.Builder
         /// VRM モデルをランタイムロード用に設定
         /// ビルド時はプレースホルダーを作成し、ランタイムに ArsistVRMLoader が実際のロードを行う
         /// </summary>
-        private static GameObject CreateVRMGameObject(string name, string vrmPath, string assetId)
+        private static GameObject CreateVRMGameObject(string name, string vrmPath, string assetId, JObject character)
         {
             var go = new GameObject(name);
 
             // ランタイムでロード開始するコンポーネントを追加
             // VRM ファイルは StreamingAssets/VRM にコピーされている
-            bool configured = TryConfigureRuntimeVRMLoader(go, vrmPath, assetId);
+            bool configured = TryConfigureRuntimeVRMLoader(go, vrmPath, assetId, character);
             
             if (configured)
             {
@@ -1036,7 +1067,7 @@ namespace Arsist.Builder
             return go;
         }
 
-        private static bool TryConfigureRuntimeVRMLoader(GameObject go, string vrmPath, string assetId)
+        private static bool TryConfigureRuntimeVRMLoader(GameObject go, string vrmPath, string assetId, JObject character)
         {
             try
             {
@@ -1064,6 +1095,15 @@ namespace Arsist.Builder
                 if (assetIdField != null)
                 {
                     assetIdField.SetValue(comp, assetId);
+                }
+
+                // キャラクターの設定 (IR v5 の character)。無ければ空文字 = 今までどおり動かない
+                var characterField = t.GetField("characterJson", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (characterField != null)
+                {
+                    var json = character != null && character.HasValues ? character.ToString(Formatting.None) : "";
+                    characterField.SetValue(comp, json);
+                    if (json.Length > 0) Debug.Log($"[Arsist]   character: {json}");
                 }
 
                 return true;
@@ -1395,6 +1435,8 @@ namespace Arsist.Builder
                 {
                     Debug.Log($"[Arsist] ✅ Font already in Resources: {tmpFont.name}");
 
+                    ConfigureDynamicFontAtlas(tmpFont);
+
                     // Root fix: ensure TMP Settings has a default font so TextMeshProUGUI.Awake won't null-reference
                     EnsureTmpSettingsDefaultFont(tmpFont);
                 }
@@ -1473,6 +1515,14 @@ namespace Arsist.Builder
         /// </summary>
         private static void EnsureUniVRMResources()
         {
+            // VRM の読み込みを拡張機能が置き換えているビルドでは、その拡張機能が自分の UniVRM を持ってくる
+            // (manifest.replacements)。ここでエンジンの UniVRM 0.x を入れると UniGLTF の版違いがぶつかる。
+            var vrmLoaderOwner = _manifest?["replacements"]?["vrm-loader"]?.ToString();
+            if (!string.IsNullOrEmpty(vrmLoaderOwner))
+            {
+                Debug.Log($"[Arsist] VRM loading is replaced by extension '{vrmLoaderOwner}'; not importing the engine's UniVRM 0.x.");
+                return;
+            }
             try
             {
                 var candidateRoots = new[]
@@ -1527,6 +1577,36 @@ namespace Arsist.Builder
             catch (Exception ex)
             {
                 Debug.LogWarning($"[Arsist] Failed to import UniVRM package: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 動的フォント (字を使うときにアトラスへ書き足す) が、日本語の量で字を落とさないようにする。
+        /// 同梱の JKG-M3 は 90pt・余白 9 で 1024×1024 が 1 枚だけ = 約 80 字で満杯になり、それ以降の字は**黙って描かれない**
+        /// (2026-10-12、Quest 3 で「ここに座れないな」が「こにれないな」になった)。
+        /// アトラスを 2048×2048 (約 320 字) にし、満杯になったら次のアトラスを足す (multi atlas)。
+        /// アトラスはビルドで空に戻り (ClearDynamicDataOnBuild)、実機で最初に使うときにこの大きさで作られる。
+        /// </summary>
+        private static void ConfigureDynamicFontAtlas(TMP_FontAsset font)
+        {
+            if (font == null || font.atlasPopulationMode != AtlasPopulationMode.Dynamic) return;
+            try
+            {
+                var so = new SerializedObject(font);
+                var multi = so.FindProperty("m_IsMultiAtlasTexturesEnabled");
+                var width = so.FindProperty("m_AtlasWidth");
+                var height = so.FindProperty("m_AtlasHeight");
+                if (multi != null) multi.boolValue = true;
+                if (width != null && width.intValue < 2048) width.intValue = 2048;
+                if (height != null && height.intValue < 2048) height.intValue = 2048;
+                so.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(font);
+                AssetDatabase.SaveAssets();
+                Debug.Log($"[Arsist] Dynamic font {font.name}: multi atlas on, atlas {(width != null ? width.intValue : 0)}x{(height != null ? height.intValue : 0)}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Arsist] Could not configure dynamic font atlas for {font.name}: {ex.Message}");
             }
         }
 
@@ -1795,6 +1875,183 @@ namespace Arsist.Builder
             return System.Type.GetType("Unity.InferenceEngine.Worker, Unity.InferenceEngine") != null;
         }
 
+        // ========================================
+        // キャラクターの動き (Assets/Animations の FBX → 人型のアニメーション)
+        // ========================================
+
+        private const string CharacterAnimationsAssetDir = "Assets/ArsistProjectAssets/Animations";
+        private const string CharacterResourcesDir = "Assets/ArsistGenerated/Resources";
+        /// <summary>実機の ArsistCharacter が Resources.Load する名前 (拡張子なし) と同じにすること。</summary>
+        private const string CharacterControllerPath = CharacterResourcesDir + "/ArsistCharacterAnimations.controller";
+        private const string CharacterIndexPath = CharacterResourcesDir + "/ArsistCharacterAnimationsIndex.json";
+        /// <summary>コントローラーの既定の状態 (動きなし)。割り当てた瞬間に先頭の動きが勝手に流れないように置く。</summary>
+        private const string CharacterNoneState = "Arsist_None";
+
+        /// <summary>
+        /// プロジェクトの Assets/Animations/*.fbx を人型 (Humanoid) として取り込み、
+        /// 1 ファイル = 1 状態 (名前はファイル名) の AnimatorController を Resources に作る。
+        ///
+        /// 人型にするのは、どの VRM にもそのまま使い回すため (Mecanim のリターゲット)。
+        /// ルートの水平移動は焼き込まない (lockRootPositionXZ = false) うえで、実機は applyRootMotion = false
+        /// にするので、Mixamo の「In Place」でない歩きもその場で足踏みになる。移動はスクリプト (vrm.walkTo) が行う。
+        /// 高さと向きは焼き込む (座る動きで腰が下がり、回る動きで体が回る)。
+        ///
+        /// 取り込みの設定が既に正しいファイルは触らない (Library のキャッシュを捨てない)。
+        /// </summary>
+        private static void ImportCharacterAnimations()
+        {
+            var fullDir = Path.Combine(Application.dataPath, "ArsistProjectAssets", "Animations");
+            var files = Directory.Exists(fullDir)
+                ? Directory.GetFiles(fullDir, "*", SearchOption.TopDirectoryOnly)
+                    .Where(f => string.Equals(Path.GetExtension(f), ".fbx", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(f => Path.GetFileName(f), StringComparer.Ordinal)
+                    .ToList()
+                : new List<string>();
+
+            if (files.Count == 0)
+            {
+                bool hadController = File.Exists(Path.Combine(Application.dataPath, "..", CharacterControllerPath));
+                AssetDatabase.DeleteAsset(CharacterControllerPath);
+                AssetDatabase.DeleteAsset(CharacterIndexPath);
+                if (hadController) Debug.Log("[Arsist] Character animations: none (removed the previous controller).");
+                return;
+            }
+
+            var entries = new List<KeyValuePair<string, AnimationClip>>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var file in files)
+            {
+                var fileName = Path.GetFileName(file);
+                var name = Path.GetFileNameWithoutExtension(file);
+                var assetPath = CharacterAnimationsAssetDir + "/" + fileName;
+                if (!seen.Add(name))
+                {
+                    Debug.LogWarning($"[Arsist] Character animation '{fileName}' skipped: another file is already named '{name}'.");
+                    continue;
+                }
+
+                var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                if (importer == null)
+                {
+                    AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
+                    importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                }
+                if (importer == null)
+                {
+                    Debug.LogError($"[Arsist] Character animation '{fileName}' could not be read as an FBX model (no ModelImporter). Skipped.");
+                    continue;
+                }
+
+                bool changed = false;
+                if (importer.animationType != ModelImporterAnimationType.Human) { importer.animationType = ModelImporterAnimationType.Human; changed = true; }
+                if (importer.avatarSetup != ModelImporterAvatarSetup.CreateFromThisModel) { importer.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel; changed = true; }
+                if (!importer.importAnimation) { importer.importAnimation = true; changed = true; }
+                if (importer.materialImportMode != ModelImporterMaterialImportMode.None) { importer.materialImportMode = ModelImporterMaterialImportMode.None; changed = true; }
+                if (changed) importer.SaveAndReimport();
+
+                // 既定の切り出し (人型にしてから読む。Generic のままだと中身が違う)
+                var clips = importer.clipAnimations;
+                bool usingDefaults = clips == null || clips.Length == 0;
+                if (usingDefaults) clips = importer.defaultClipAnimations;
+                if (clips == null || clips.Length == 0)
+                {
+                    Debug.LogError($"[Arsist] Character animation '{fileName}' has no animation in it (an FBX with only a model?). Skipped.");
+                    continue;
+                }
+
+                bool clipChanged = usingDefaults;
+                foreach (var c in clips)
+                {
+                    if (!c.loopTime) { c.loopTime = true; clipChanged = true; }
+                    if (!c.lockRootRotation) { c.lockRootRotation = true; clipChanged = true; }
+                    if (!c.keepOriginalOrientation) { c.keepOriginalOrientation = true; clipChanged = true; }
+                    if (!c.lockRootHeightY) { c.lockRootHeightY = true; clipChanged = true; }
+                    if (!c.keepOriginalPositionY) { c.keepOriginalPositionY = true; clipChanged = true; }
+                    if (c.lockRootPositionXZ) { c.lockRootPositionXZ = false; clipChanged = true; }
+                }
+                if (clipChanged)
+                {
+                    importer.clipAnimations = clips;
+                    importer.SaveAndReimport();
+                }
+
+                var assets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+                var avatar = assets.OfType<Avatar>().FirstOrDefault();
+                if (avatar == null || !avatar.isValid || !avatar.isHuman)
+                {
+                    Debug.LogError(
+                        $"[Arsist] Character animation '{fileName}' could not be used: Unity could not map its skeleton to a humanoid " +
+                        $"(avatar {(avatar == null ? "missing" : avatar.isValid ? "not humanoid" : "invalid")}). " +
+                        "It needs a standard human skeleton (hips, spine, head, both arms and legs) in a T-pose or A-pose rest. " +
+                        "Mixamo downloads (FBX for Unity) work. Skipped.");
+                    continue;
+                }
+
+                var animClips = assets.OfType<AnimationClip>()
+                    .Where(c => !c.name.StartsWith("__preview__", StringComparison.Ordinal))
+                    .ToList();
+                if (animClips.Count == 0)
+                {
+                    Debug.LogError($"[Arsist] Character animation '{fileName}' produced no clip after import. Skipped.");
+                    continue;
+                }
+                if (animClips.Count > 1)
+                {
+                    Debug.LogWarning($"[Arsist] Character animation '{fileName}' has {animClips.Count} clips; using '{animClips[0].name}' " +
+                                     $"(ignored: {string.Join(", ", animClips.Skip(1).Select(c => c.name))}). Split them into one file each to use them.");
+                }
+
+                entries.Add(new KeyValuePair<string, AnimationClip>(name, animClips[0]));
+                Debug.Log($"[Arsist] Character animation '{name}': humanoid, {animClips[0].length:F2} s{(changed || clipChanged ? " (import settings updated)" : "")}");
+            }
+
+            if (entries.Count == 0)
+            {
+                AssetDatabase.DeleteAsset(CharacterControllerPath);
+                AssetDatabase.DeleteAsset(CharacterIndexPath);
+                Debug.LogWarning("[Arsist] Character animations: no usable FBX in Assets/Animations (see the errors above).");
+                return;
+            }
+
+            // 実機が名前と長さ (then の戻り時刻) を知るための目録。前回と同じならコントローラーも作り直さない
+            var index = new JObject
+            {
+                ["animations"] = new JArray(entries.Select(e => new JObject
+                {
+                    ["name"] = e.Key,
+                    ["length"] = Math.Round(e.Value.length, 4),
+                    ["clip"] = AssetDatabase.GetAssetPath(e.Value) + "#" + e.Value.name,
+                })),
+            };
+            var indexText = index.ToString(Formatting.Indented);
+            var indexFull = Path.Combine(Application.dataPath, "..", CharacterIndexPath);
+            var controllerFull = Path.Combine(Application.dataPath, "..", CharacterControllerPath);
+            if (File.Exists(indexFull) && File.Exists(controllerFull) && File.ReadAllText(indexFull) == indexText)
+            {
+                Debug.Log($"[Arsist] Character animations unchanged ({entries.Count}): {string.Join(", ", entries.Select(e => e.Key))}");
+                return;
+            }
+
+            Directory.CreateDirectory(Path.Combine(Application.dataPath, "..", CharacterResourcesDir));
+            AssetDatabase.DeleteAsset(CharacterControllerPath);
+            var controller = UnityEditor.Animations.AnimatorController.CreateAnimatorControllerAtPath(CharacterControllerPath);
+            var stateMachine = controller.layers[0].stateMachine;
+            var none = stateMachine.AddState(CharacterNoneState);
+            stateMachine.defaultState = none;
+            foreach (var entry in entries)
+            {
+                var state = stateMachine.AddState(entry.Key);
+                state.motion = entry.Value;
+                state.writeDefaultValues = true;
+            }
+            EditorUtility.SetDirty(controller);
+
+            File.WriteAllText(indexFull, indexText);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(CharacterIndexPath, ImportAssetOptions.ForceSynchronousImport);
+            Debug.Log($"[Arsist] Character animations ({entries.Count}) → {CharacterControllerPath}: {string.Join(", ", entries.Select(e => e.Key))}");
+        }
+
         /// <summary>
         /// プロジェクトの ONNX を Resources に置き、Inference Engine に取り込ませる
         /// (画像認識の `infer` op とスクリプトの model.* の両方が使う)。
@@ -1823,6 +2080,9 @@ namespace Arsist.Builder
                     AssetDatabase.Refresh();
                     Debug.Log("[Arsist] No models; removed stale Resources/ArsistModels.");
                 }
+                // 作業フォルダを使い回すと、前のプロジェクトの ONNX Runtime 用 Java ブリッジが残り、
+                // ONNX Runtime 本体は外れているので javac が止まる (2026-10-12、tmp/VR-2 で Cohabit をビルドして踏んだ)
+                ConfigureOnnxRuntimePlugin(false);
                 return;
             }
 
@@ -2421,6 +2681,16 @@ namespace Arsist.Builder
             }
         }
 
+        /// <summary>
+        /// カメラの画を読むか: 画像アンカー・画像処理タスク、またはスクリプトの camera.* / model.runImage
+        /// (manifest.features の feature:camera。src/shared/engineFeatures.ts が決める)。
+        /// 権限・link.xml・認識マネージャ・スマホのカメラは、すべてこれで揃えて入れる。
+        /// </summary>
+        private static bool ProjectNeedsCameraFrames()
+        {
+            return ProjectHasPerceptionTargets() || ProjectHasPerceptionTasks() || ManifestUsesFeature("feature:camera");
+        }
+
         private static bool ProjectHasPerceptionTasks()
         {
             var tasks = _manifest?["perception"]?["tasks"] as JArray;
@@ -2439,7 +2709,9 @@ namespace Arsist.Builder
             var taskList = manifest?["perception"]?["tasks"] as JArray;
             bool hasTargets = targets != null && targets.Count > 0;
             bool hasTasks = taskList != null && taskList.Count > 0;
-            if (!hasTargets && !hasTasks) return;
+            // スクリプトがカメラの画を取る (camera.* / model.runImage) だけのプロジェクトでも、
+            // 静止画を配るのはこのマネージャ。ターゲットもタスクも 0 個で置く。
+            if (!hasTargets && !hasTasks && !ManifestUsesFeature("feature:camera")) return;
 
             var go = new GameObject("[ArsistPerception]");
             if (TryAddComponentByTypeName(go, "Arsist.Runtime.Perception.ArsistPerceptionManager") == null)
@@ -2547,77 +2819,12 @@ namespace Arsist.Builder
             Debug.Log("[Arsist] ArsistWorldOverlay added (results are drawn onto passthrough, not onto a Canvas).");
         }
 
-        /// <summary>
-        /// TMPフォントアセットをStreamingAssetsにコピーしてランタイムで読み込めるようにする
-        /// </summary>
-        private static void CopyTmpFontToStreamingAssets()
+        /// <summary>前のビルドが StreamingAssets/Fonts に写したフォントを消す (使われておらず、APK を大きくするだけ)。</summary>
+        private static void RemoveStreamingAssetsFontCopies()
         {
-            try
-            {
-                Debug.Log("[Arsist] ========== COPYING TMP FONT TO STREAMING ASSETS ==========");
-                
-                // StreamingAssets/Fonts フォルダを作成
-                var streamingAssetsPath = "Assets/StreamingAssets";
-                var fontsPath = Path.Combine(streamingAssetsPath, "Fonts");
-                
-                if (!Directory.Exists(streamingAssetsPath))
-                {
-                    Directory.CreateDirectory(streamingAssetsPath);
-                    AssetDatabase.Refresh();
-                }
-                
-                if (!Directory.Exists(fontsPath))
-                {
-                    Directory.CreateDirectory(fontsPath);
-                    AssetDatabase.Refresh();
-                }
-                
-                // Resources フォルダからフォントを探す
-                var resourceFont = Resources.Load<TMP_FontAsset>("LiberationSans SDF");
-                
-                if (resourceFont != null)
-                {
-                    var sourcePath = AssetDatabase.GetAssetPath(resourceFont);
-                    var targetPath = Path.Combine(fontsPath, "LiberationSans SDF.asset");
-                    
-                    Debug.Log($"[Arsist] Copying font from: {sourcePath}");
-                    Debug.Log($"[Arsist] Copying font to: {targetPath}");
-                    
-                    // アセットをコピー
-                    AssetDatabase.CopyAsset(sourcePath, targetPath);
-                    
-                    // マテリアルもコピー
-                    if (resourceFont.material != null)
-                    {
-                        var matSourcePath = AssetDatabase.GetAssetPath(resourceFont.material);
-                        var matTargetPath = Path.Combine(fontsPath, "LiberationSans SDF - Material.mat");
-                        AssetDatabase.CopyAsset(matSourcePath, matTargetPath);
-                        Debug.Log($"[Arsist] Copied material to: {matTargetPath}");
-                    }
-                    
-                    // アトラステクスチャもコピー
-                    if (resourceFont.atlasTexture != null)
-                    {
-                        var texSourcePath = AssetDatabase.GetAssetPath(resourceFont.atlasTexture);
-                        var texTargetPath = Path.Combine(fontsPath, "LiberationSans SDF Atlas.png");
-                        AssetDatabase.CopyAsset(texSourcePath, texTargetPath);
-                        Debug.Log($"[Arsist] Copied atlas texture to: {texTargetPath}");
-                    }
-                    
-                    AssetDatabase.Refresh();
-                    Debug.Log("[Arsist] ✅ TMP font copied to StreamingAssets successfully");
-                }
-                else
-                {
-                    Debug.LogError("[Arsist] ❌ No TMP font found in Resources! Cannot copy to StreamingAssets.");
-                }
-                
-                Debug.Log("[Arsist] ========== STREAMING ASSETS COPY COMPLETE ==========");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[Arsist] Failed to copy TMP font to StreamingAssets: {ex.Message}\n{ex.StackTrace}");
-            }
+            const string fontsPath = "Assets/StreamingAssets/Fonts";
+            if (!AssetDatabase.IsValidFolder(fontsPath)) return;
+            if (AssetDatabase.DeleteAsset(fontsPath)) Debug.Log("[Arsist] Removed unused font copies in StreamingAssets/Fonts");
         }
 
         private static void LoadDefaultTmpAssets()
@@ -2930,7 +3137,7 @@ namespace Arsist.Builder
 
             // カメラを開くのは AR のときと、画像処理タスクがあるとき。
             // VR でも画像処理はカメラを見るので、そのときは背景だけ出さずに開く。
-            bool needsCamera = mode == "ar" || ProjectHasPerceptionTasks() || ProjectHasPerceptionTargets();
+            bool needsCamera = mode == "ar" || ProjectNeedsCameraFrames();
             if (needsCamera)
             {
                 TryAddComponentByTypeName(rigRoot, "Arsist.Runtime.Tracking.ArsistDeviceCamera");
@@ -3552,6 +3759,25 @@ ScriptedImporter:
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// 文字を「書いていくように」出す (IR v5 の UIElement.reveal)。TMP の付いた GameObject に
+        /// ArsistTextReveal を付ける。reveal が無い・速さが 0 以下なら何も付けない (一度に出す)。
+        /// </summary>
+        private static void AddTextReveal(JObject elementData, GameObject tmpHost)
+        {
+            if (!(elementData?["reveal"] is JObject reveal) || tmpHost == null) return;
+            var speed = reveal["speed"]?.Type is JTokenType.Integer or JTokenType.Float ? reveal["speed"].Value<float>() : 0f;
+            if (speed <= 0f) return;
+            var comp = TryAddComponentByTypeName(tmpHost, "Arsist.Runtime.UI.ArsistTextReveal");
+            if (comp == null)
+            {
+                Debug.LogWarning("[Arsist] ArsistTextReveal not found; text will appear at once.");
+                return;
+            }
+            TrySetMemberValue(comp, "charactersPerSecond", speed);
+            Debug.Log($"[Arsist]   reveal: {speed} characters/s on '{tmpHost.name}'");
         }
 
         private static Component TryAddComponentByTypeName(GameObject go, string fullTypeName)
@@ -4365,6 +4591,7 @@ ScriptedImporter:
                         fitter.horizontalFit = IsAutoValue(style?["width"]) ? UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize : UnityEngine.UI.ContentSizeFitter.FitMode.Unconstrained;
                         fitter.verticalFit = IsAutoValue(style?["height"]) ? UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize : UnityEngine.UI.ContentSizeFitter.FitMode.Unconstrained;
                     }
+                    AddTextReveal(elementData, go);
                     break;
                     
                 case "Button":
@@ -4422,6 +4649,7 @@ ScriptedImporter:
                     buttonText.raycastTarget = false;
                     buttonText.richText = true;
                     buttonText.ForceMeshUpdate(true, true);
+                    AddTextReveal(elementData, buttonTextGO);
                     break;
 
                 case "Image":
@@ -5287,6 +5515,19 @@ ScriptedImporter:
             
             if (isQuest) defines.Add("ARSIST_META_QUEST");
 
+            // XR Hands (com.unity.xr.hands)。ArsistHandInteraction は中身が丸ごと #if XR_HANDS なので、
+            // これが無いと空のコンポーネントになり、ハンドトラッキングのピンチ操作が実機で何もしない
+            // (2026-10 まで、この define はどこでも立っていなかった。その頃の APK の IL2CPP メタデータには
+            // ArsistHandInteraction の Update / ComputePinch が無い)。
+            // パッケージがあれば Quest で立てる。手のデータを出す OpenXR 機能は EnableQuestOpenXRFeatures。
+            defines.Remove("XR_HANDS");
+            // アセンブリが読み込まれていなくても見つかるよう、アセンブリ名を添えて探す (CODEMAP の注意点)
+            if (isQuest && FindTypeWithAssemblyHints("UnityEngine.XR.Hands.XRHandSubsystem", "Unity.XR.Hands") != null)
+            {
+                defines.Add("XR_HANDS");
+                Debug.Log("[Arsist] XR Hands detected, adding XR_HANDS define");
+            }
+
             // Inference Engine はモデルを使うプロジェクトでだけ入る。ArsistModelExecutor は
             // この define の有無で本物と空の実装を切り替える。
             defines.Remove("ARSIST_INFERENCE");
@@ -5338,7 +5579,9 @@ ScriptedImporter:
                         GetBackgroundMode() == BACKGROUND_PASSTHROUGH
                     );
                     // 操作方法にハンドトラッキングを選んだときだけパーミッション/メタデータを足す。
-                    var (_, handTrackingForManifest) = GetInteractionSettings();
+                    var (_, handTrackingSetting) = GetInteractionSettings();
+                    // 手の宣言は、ビルド設定の「ハンドトラッキング」か、手を使う拡張機能 (feature:hand-tracking) で付ける
+                    var handTrackingForManifest = handTrackingSetting || ManifestUsesFeature("feature:hand-tracking");
                     InvokeStaticIfExists(
                         "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
                         "ConfigureHandTracking",
@@ -5351,7 +5594,7 @@ ScriptedImporter:
                         "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
                         "ConfigureSystemKeyboard",
                         manifestPath,
-                        ProjectHasInputElement()
+                        WantsSystemKeyboard()
                     );
                     // 画像を見るプロジェクトだけカメラ権限を宣言する。
                     // ターゲットの有無で判断してはいけない: ビューポートを見るタスクは
@@ -5360,7 +5603,7 @@ ScriptedImporter:
                         "Arsist.Adapters.MetaQuest.QuestBuildPatcher",
                         "ConfigurePassthroughCamera",
                         manifestPath,
-                        ProjectHasPerceptionTargets() || ProjectHasPerceptionTasks()
+                        ProjectNeedsCameraFrames()
                     );
                 }
             }
@@ -6010,12 +6253,73 @@ ScriptedImporter:
                     if (!TryEnableOpenXRFeature(getFeature, featureId)) anyFailed = true;
                 }
 
+                // 手の関節 (XR Hands の XRHandSubsystem)。無くてもアプリは起動するので任意。
+                // これが無効だと XRHandSubsystem が動かず、ハンドトラッキングのピンチ操作も
+                // 拡張機能の hands.* も何も返さない。
+                // "Meta Hand Tracking Aim" は有効にしない: 手が「コントローラー」として見えるようになり、
+                // コントローラーのレイ (XROriginSetup) と手のレイ (ArsistHandInteraction) が二重に反応する。
+                var handFeature = getFeature.Invoke(null, new object[] { BuildTargetGroup.Android, "com.unity.openxr.feature.input.handtrackingsubsystem" });
+                if (handFeature == null)
+                {
+                    Debug.LogWarning("[Arsist] OpenXR feature 'Hand Tracking Subsystem' (com.unity.xr.hands) not found; hand tracking will not report joints.");
+                }
+                else if (!TryEnableOpenXRFeature(getFeature, "com.unity.openxr.feature.input.handtrackingsubsystem"))
+                {
+                    anyFailed = true;
+                }
+
                 if (!anyFailed) AssetDatabase.SaveAssets();
             }
             catch (Exception e)
             {
                 Debug.LogError($"[Arsist] Failed to enable the Quest OpenXR features: {e.Message}");
             }
+        }
+
+        // ---- 拡張機能から使う口 (Editor/Extensions/ArsistBuildExtensions.cs の ArsistBuildContext 経由) ----
+        // 端末を足す拡張機能が、その端末の XR ローダーや OpenXR 機能を設定するため。
+        // パイプラインの中身を拡張機能が直接いじらなくて済むように、ここに寄せる。
+
+        /// <summary>Android の XR Manager にローダーを足す (型の完全名)。既にあれば何もしない。</summary>
+        internal static bool ExtensionAddXRLoader(string loaderTypeName)
+        {
+            var settings = GetXRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
+            if (settings == null || settings.Manager == null)
+            {
+                Debug.LogError($"[Arsist] Cannot add XR loader {loaderTypeName}: XR General Settings (Android) not found");
+                return false;
+            }
+            settings.InitManagerOnStart = true;
+            EditorUtility.SetDirty(settings);
+            var manager = settings.Manager;
+            var present = manager.activeLoaders.Any(l => l != null && l.GetType().FullName == loaderTypeName);
+            if (!present && !TryAddXRLoaderByType(manager, loaderTypeName))
+            {
+                Debug.LogError($"[Arsist] XR loader {loaderTypeName} could not be added (is its package installed? unity.packages in extension.json)");
+                return false;
+            }
+            EditorUtility.SetDirty(manager);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[Arsist] XR loader {(present ? "already present" : "added")}: {loaderTypeName}");
+            return true;
+        }
+
+        /// <summary>Android の OpenXR 機能を有効にする (機能 ID)。</summary>
+        internal static bool ExtensionEnableOpenXRFeature(string featureId)
+        {
+            var helpersType = FindTypeWithAssemblyHints("UnityEditor.XR.OpenXR.Features.FeatureHelpers", "Unity.XR.OpenXR.Editor");
+            var getFeature = helpersType?.GetMethod("GetFeatureWithIdForBuildTarget", BindingFlags.Public | BindingFlags.Static,
+                null, new[] { typeof(BuildTargetGroup), typeof(string) }, null);
+            if (getFeature == null)
+            {
+                Debug.LogError($"[Arsist] Cannot enable OpenXR feature {featureId}: com.unity.xr.openxr is not in this project");
+                return false;
+            }
+            helpersType.GetMethod("RefreshFeatures", BindingFlags.Public | BindingFlags.Static)
+                ?.Invoke(null, new object[] { BuildTargetGroup.Android });
+            var ok = TryEnableOpenXRFeature(getFeature, featureId);
+            if (ok) AssetDatabase.SaveAssets();
+            return ok;
         }
 
         private static bool TryEnableOpenXRFeature(MethodInfo getFeature, string featureId)
@@ -6527,6 +6831,29 @@ ScriptedImporter:
         }
 
         /// <summary>
+        /// このアプリが使う機能 (manifest の features: プロジェクトの IR から決まったもの +
+        /// 有効な拡張機能が名乗った feature:*) に、その機能が入っているか。
+        /// UnityBuilder.planExtensions が書く。src/shared/engineFeatures.ts。
+        /// </summary>
+        private static bool ManifestUsesFeature(string featureTag)
+        {
+            if (_manifest?["features"] is JArray features)
+            {
+                foreach (var f in features)
+                {
+                    if (string.Equals(f?.ToString(), featureTag, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// システムキーボード (Quest のオーバーレイ) の宣言を入れるか。入力欄 (Input 要素) があるか、
+        /// 文字入力を使う拡張機能 (feature:text-input を名乗る。quest-input の keyboard.open) があるとき。
+        /// </summary>
+        private static bool WantsSystemKeyboard() => ProjectHasInputElement() || ManifestUsesFeature("feature:text-input");
+
+        /// <summary>
         /// UIレイアウトのどこかに Input 要素があるかを調べる。
         /// システムキーボードの uses-feature 宣言を、使わないプロジェクトにまで足さないため
         /// （使わない機能で対応端末を絞らない、という他の Configure* 系と同じ方針）。
@@ -6621,11 +6948,12 @@ ScriptedImporter:
                 }
                 Debug.Log("[Arsist] ArsistHandInteraction added (Quest hand-tracking pinch interaction).");
 
-                if (FindType("Unity.XR.Hands.XRHandSubsystem") == null
-                    && FindTypeInLoadedAssemblies("Unity.XR.Hands.XRHandSubsystem") == null)
+                // 型の名前空間は UnityEngine.XR.Hands (アセンブリ名は Unity.XR.Hands)。
+                if (FindType("UnityEngine.XR.Hands.XRHandSubsystem") == null
+                    && FindTypeInLoadedAssemblies("UnityEngine.XR.Hands.XRHandSubsystem") == null)
                 {
                     Debug.LogWarning(
-                        "[Arsist] com.unity.xr.hands package (Unity.XR.Hands.XRHandSubsystem) not found. " +
+                        "[Arsist] com.unity.xr.hands package (UnityEngine.XR.Hands.XRHandSubsystem) not found. " +
                         "ArsistHandInteraction will compile to a no-op at runtime; install com.unity.xr.hands " +
                         "and enable the OpenXR 'Hand Tracking Subsystem' feature for hand tracking to actually work.");
                 }
@@ -6958,7 +7286,7 @@ ScriptedImporter:
                     // OVRManifestPreprocessor がビルド中にマニフェストを作り直したときに
                     // oculus.software.overlay_keyboard が消え、TouchScreenKeyboard.Open() が
                     // **黙って何も出さない** (実機では「押しても何も起きない」にしか見えない)。
-                    var wantsKeyboard = ProjectHasInputElement();
+                    var wantsKeyboard = WantsSystemKeyboard();
                     changed |= SetSerializedIntOrBool(serialized, "requiresSystemKeyboard", wantsKeyboard ? 1 : 0, wantsKeyboard);
 
                     if (changed)
@@ -7029,7 +7357,7 @@ ScriptedImporter:
             yaml = ReplaceYamlNumericValue(yaml, "_insightPassthroughSupport", passthrough ? 2 : 0);
             yaml = ReplaceYamlNumericValue(yaml, "focusAware", 1);
             yaml = ReplaceYamlNumericValue(yaml, "sceneSupport", 1);
-            yaml = ReplaceYamlNumericValue(yaml, "requiresSystemKeyboard", ProjectHasInputElement() ? 1 : 0);
+            yaml = ReplaceYamlNumericValue(yaml, "requiresSystemKeyboard", WantsSystemKeyboard() ? 1 : 0);
 
             File.WriteAllText(path, yaml);
             AssetDatabase.Refresh();

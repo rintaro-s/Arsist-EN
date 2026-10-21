@@ -47,11 +47,21 @@ const uuid_1 = require("uuid");
 const YAML = __importStar(require("yaml"));
 const irVersion_1 = require("../../shared/irVersion");
 const migrations_1 = require("./migrations");
+const extensions_1 = require("../../shared/extensions");
+const catalogService_1 = require("../extensions/catalogService");
+const sceneCopies_1 = require("./sceneCopies");
+const adapterDirs_1 = require("../adapters/adapterDirs");
+const projectIO_1 = require("./projectIO");
 const defaults_1 = require("./defaults");
 // ========================================
 // ProjectManager
 // ========================================
 class ProjectManager {
+    /** 保存したファイルとその中身を知らせる先 (ProjectWatcher.recordOwnWrite) */
+    writeObserver = null;
+    setWriteObserver(observer) {
+        this.writeObserver = observer;
+    }
     currentProject = null;
     projectPath = null;
     /**
@@ -60,6 +70,8 @@ class ProjectManager {
      * 古いエディタに戻れなくなるうえ、何が変わったかも残らない。
      */
     readOnly = false;
+    /** シーン・UI の 2 つの写しを前回どう見たか (sceneCopies.ts)。プロジェクトが変わったら捨てる */
+    copiesSeen = null;
     pendingUpgrade = null;
     /* ------------------------------------------------
      * 新規プロジェクト作成
@@ -102,6 +114,8 @@ class ProjectManager {
                 scenes: [],
                 uiLayouts: [],
                 models: [],
+                extensions: {},
+                storage: { persist: [] },
                 buildSettings: {
                     packageName: `com.arsist.${options.name.toLowerCase().replace(/\s+/g, '')}`,
                     version: '1.0.0',
@@ -153,7 +167,15 @@ class ProjectManager {
             if (!(await fs.pathExists(projectFile))) {
                 return { success: false, error: 'project.json not found' };
             }
-            const raw = await fs.readJSON(projectFile);
+            const rawText = await fs.readFile(projectFile, 'utf8');
+            let raw;
+            try {
+                raw = JSON.parse(rawText);
+            }
+            catch (e) {
+                // 書きかけ・書き間違い。どこが悪いかを行と桁で返す (エディタは今の中身のまま、直れば読み直す)
+                return { success: false, error: `project.json: ${(0, sceneCopies_1.describeJsonError)(rawText, e)}` };
+            }
             let migration;
             try {
                 migration = (0, migrations_1.migrateProject)(raw);
@@ -165,20 +187,69 @@ class ProjectManager {
                 throw e;
             }
             const project = migration.project;
-            const upgrade = migration.from < migration.to
+            // このプロジェクトが使う拡張機能と端末が、このエディタに揃っているか。
+            // IR は有効にした拡張機能を id で、端末をアダプタ名で持っているので、開く前に分かる。
+            // 足りないまま開くと、拡張機能の設定が画面に出ないまま保存され、ビルドからも黙って外れる。
+            const catalog = await (0, catalogService_1.getExtensionCatalog)(true);
+            const missing = (0, extensions_1.checkProjectRequirements)(project, catalog.extensions.map((e) => e.manifest), await (0, adapterDirs_1.listBuiltinAdapterNames)(), irVersion_1.CURRENT_IR_VERSION);
+            if (missing.length > 0) {
+                return { success: false, error: 'requirementsMissing', missing };
+            }
+            let upgrade = migration.from < migration.to
                 ? { from: migration.from, to: migration.to, applied: migration.applied, changes: migration.changes }
                 : undefined;
+            // シーン、UIの詳細を読み込み (project.json の写しと個別ファイルのうち、変わった方を使う。sceneCopies.ts)
+            const copies = await (0, sceneCopies_1.resolveSceneAndUiCopies)(projectPath, project, {
+                seen: this.copiesSeen && path.resolve(this.copiesSeen.path) === path.resolve(projectPath) ? this.copiesSeen.seen : undefined,
+            });
+            project.scenes = copies.scenes;
+            project.uiLayouts = copies.uiLayouts;
+            if (!Array.isArray(project.scripts))
+                project.scripts = [];
+            // 拡張機能のデータ (extensions.<id> と物の ext.<id>)。拡張機能ごとの版で移行する。
+            // シーンの物にも掛けるので、シーンを読んだ後。本体の IR と同じく、承諾までは書き戻さない。
+            try {
+                const ext = (0, extensions_1.migrateExtensionData)(project, catalog.extensions.map((e) => e.manifest));
+                for (const problem of ext.problems)
+                    console.warn(`[Arsist] extension data: ${problem}`);
+                if (ext.upgrades.length > 0) {
+                    upgrade = upgrade ?? { from: migration.to, to: migration.to, applied: [], changes: [] };
+                    upgrade.extensions = ext.upgrades;
+                }
+            }
+            catch (e) {
+                // 拡張機能の一覧が読めなくても、プロジェクト自体は開く (データには触れていない)
+                console.warn(`[Arsist] extension data was not checked: ${e.message}`);
+            }
             // Scripts ディレクトリが存在しない場合は作成 (読み取り専用で開くときは触らない)
             if (!upgrade)
                 await fs.ensureDir(path.join(projectPath, 'Scripts'));
-            // シーン、UIの詳細を読み込み
-            project.scenes = await this.loadScenes(projectPath, project.scenes);
-            project.uiLayouts = await this.loadUILayouts(projectPath, project.uiLayouts);
             this.currentProject = project;
             this.projectPath = projectPath;
             this.readOnly = upgrade !== undefined;
             this.pendingUpgrade = upgrade ?? null;
-            return { success: true, project, upgrade };
+            this.copiesSeen = { path: projectPath, seen: copies.seen };
+            // 外でどちらか一方の写しだけが書き換えられていたら、もう一方にも同じ中身を写して揃える。
+            // 揃えないと、次にエージェントが古い方を読んで書き換え、今の編集を消してしまう。
+            // 写すのはエージェントが書いた中身そのもの (補った値は入れない)。古い版のプロジェクト (承諾待ち) には書かない。
+            if (!upgrade && copies.stale.length > 0) {
+                try {
+                    const written = await (0, sceneCopies_1.syncStaleCopies)(projectPath, copies.stale, async (file, data) => {
+                        const text = await (0, projectIO_1.atomicWriteJson)(file, data);
+                        this.writeObserver?.(file, text);
+                    });
+                    for (const item of copies.stale) {
+                        const v = (0, sceneCopies_1.stableStringify)(item.value);
+                        copies.seen.set(`${item.kind}:${item.id}`, { file: v, embedded: v, chosen: v });
+                    }
+                    if (written.length > 0)
+                        copies.notes.push(`made the two copies match again: wrote ${written.join(', ')}`);
+                }
+                catch (e) {
+                    copies.notes.push(`could not make the two copies match: ${e.message}`);
+                }
+            }
+            return { success: true, project, upgrade, notices: copies.notes.length > 0 ? copies.notes : undefined };
         }
         catch (error) {
             return { success: false, error: error.message };
@@ -241,16 +312,25 @@ class ProjectManager {
         try {
             Object.assign(this.currentProject, data);
             this.currentProject.updatedAt = new Date().toISOString();
+            // 1 ファイルずつ「一時ファイル → 置き換え」で書く (途中で落ちても半端な JSON を残さない。
+            // MCP のエージェントが同時に読んでも、書きかけを見ない)。書いた中身は監視役に知らせ、
+            // 自分の保存を「外での変更」と取り違えないようにする。
+            const save = async (file, data) => {
+                const text = await (0, projectIO_1.atomicWriteJson)(file, data);
+                this.writeObserver?.(file, text);
+            };
             // メインプロジェクトファイル保存
-            await fs.writeJSON(path.join(this.projectPath, 'project.json'), this.currentProject, { spaces: 2 });
+            await save(path.join(this.projectPath, 'project.json'), this.currentProject);
             // 各シーンを個別ファイルに保存
             for (const scene of this.currentProject.scenes) {
-                await fs.writeJSON(path.join(this.projectPath, 'Scenes', `${scene.id}.json`), scene, { spaces: 2 });
+                await save(path.join(this.projectPath, 'Scenes', `${scene.id}.json`), scene);
             }
             // 各UIレイアウトを保存
             for (const ui of this.currentProject.uiLayouts) {
-                await fs.writeJSON(path.join(this.projectPath, 'UI', `${ui.id}.json`), ui, { spaces: 2 });
+                await save(path.join(this.projectPath, 'UI', `${ui.id}.json`), ui);
             }
+            // 2 つの写しは今同じ中身。次に外で変わったら、変わった方が分かる
+            this.copiesSeen = { path: this.projectPath, seen: (0, sceneCopies_1.seenAfterSave)(this.currentProject.scenes, this.currentProject.uiLayouts) };
             return { success: true };
         }
         catch (error) {
@@ -404,63 +484,6 @@ class ProjectManager {
             };
         }
         return ui;
-    }
-    async loadScenes(projectPath, sceneRefs) {
-        const scenes = [];
-        for (const ref of sceneRefs) {
-            try {
-                const scenePath = path.join(projectPath, 'Scenes', `${ref.id}.json`);
-                if (await fs.pathExists(scenePath)) {
-                    const scene = await fs.readJSON(scenePath);
-                    // 後方互換: objects.type === 'ui_surface' → 'canvas'
-                    for (const obj of scene.objects || []) {
-                        if (obj.type === 'ui_surface') {
-                            obj.type = 'canvas';
-                            if (obj.uiSurface) {
-                                obj.canvasSettings = {
-                                    layoutId: obj.uiSurface.layoutId || '',
-                                    widthMeters: obj.uiSurface.width || 1.2,
-                                    heightMeters: obj.uiSurface.height || 0.7,
-                                    pixelsPerUnit: obj.uiSurface.pixelsPerUnit || 1000,
-                                };
-                                delete obj.uiSurface;
-                            }
-                        }
-                        // 旧 components フィールド削除
-                        delete obj.components;
-                    }
-                    scenes.push(scene);
-                }
-            }
-            catch (e) {
-                console.error(`Failed to load scene ${ref.id}:`, e);
-            }
-        }
-        return scenes;
-    }
-    async loadUILayouts(projectPath, uiRefs) {
-        const layouts = [];
-        for (const ref of uiRefs) {
-            try {
-                const uiPath = path.join(projectPath, 'UI', `${ref.id}.json`);
-                if (await fs.pathExists(uiPath)) {
-                    const layout = await fs.readJSON(uiPath);
-                    // 後方互換
-                    if (!layout.scope)
-                        layout.scope = 'uhd';
-                    if (!layout.resolution) {
-                        layout.resolution = layout.scope === 'canvas'
-                            ? { width: 1024, height: 1024 }
-                            : { width: 1920, height: 1080 };
-                    }
-                    layouts.push(layout);
-                }
-            }
-            catch (e) {
-                console.error(`Failed to load UI layout ${ref.id}:`, e);
-            }
-        }
-        return layouts;
     }
     generateUnityManifest() {
         if (!this.currentProject)

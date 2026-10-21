@@ -96,6 +96,19 @@ const electronAPI = {
         get: (adapterId) => electron_1.ipcRenderer.invoke('adapters:get', adapterId),
         applyPatch: (adapterId, projectPath) => electron_1.ipcRenderer.invoke('adapters:apply-patch', adapterId, projectPath),
     },
+    // 拡張機能 (Extensions/<id>/)
+    extensions: {
+        list: (targetDevice) => electron_1.ipcRenderer.invoke('extensions:list', targetDevice),
+        openUserDir: () => electron_1.ipcRenderer.invoke('extensions:open-user-dir'),
+        import: (kind) => electron_1.ipcRenderer.invoke('extensions:import', kind),
+        install: (source, force) => electron_1.ipcRenderer.invoke('extensions:install', source, force),
+        uninstall: (id) => electron_1.ipcRenderer.invoke('extensions:uninstall', id),
+        linkFolder: () => electron_1.ipcRenderer.invoke('extensions:link-folder'),
+        readme: (id) => electron_1.ipcRenderer.invoke('extensions:readme', id),
+        openDir: (id) => electron_1.ipcRenderer.invoke('extensions:open-dir', id),
+        unlinkFolder: (dir) => electron_1.ipcRenderer.invoke('extensions:unlink-folder', dir),
+        export: (id) => electron_1.ipcRenderer.invoke('extensions:export', id),
+    },
     // ファイルシステム
     fs: {
         readFile: (filePath) => electron_1.ipcRenderer.invoke('fs:read-file', filePath),
@@ -117,17 +130,57 @@ const electronAPI = {
         import: (params) => electron_1.ipcRenderer.invoke('assets:import', params),
         list: (params) => electron_1.ipcRenderer.invoke('assets:list', params),
     },
+    // キャラクターの動き (Assets/Animations/<名前>.fbx。名前 = スクリプトの vrm.playAnimation の名前)
+    animations: {
+        import: (params) => electron_1.ipcRenderer.invoke('animations:import', params),
+        list: (params) => electron_1.ipcRenderer.invoke('animations:list', params),
+        // VRM の形式 ('1.0' / '0.x')。エンジン標準の読み込みは 0.x だけなので、インスペクタが 1.0 を知らせる
+        vrmSpec: (params) => electron_1.ipcRenderer.invoke('animations:vrm-spec', params),
+    },
     // 設定ストア
     store: {
         get: (key) => electron_1.ipcRenderer.invoke('store:get', key),
         set: (key, value) => electron_1.ipcRenderer.invoke('store:set', key, value),
     },
     // MCP サーバー管理
+    // MCP: 外部のエージェント (Claude Code / Codex / Qwen Code / Claude Desktop …) への登録と自己診断
     mcp: {
-        start: (projectPath) => electron_1.ipcRenderer.invoke('mcp:start', projectPath),
-        stop: () => electron_1.ipcRenderer.invoke('mcp:stop'),
-        getStatus: () => electron_1.ipcRenderer.invoke('mcp:status'),
-        getClientConfig: () => electron_1.ipcRenderer.invoke('mcp:get-client-config'),
+        agents: (includeProject) => electron_1.ipcRenderer.invoke('mcp:agents', includeProject),
+        register: (id, includeProject) => electron_1.ipcRenderer.invoke('mcp:register', id, includeProject),
+        unregister: (id) => electron_1.ipcRenderer.invoke('mcp:unregister', id),
+        selfTest: (includeProject) => electron_1.ipcRenderer.invoke('mcp:self-test', includeProject),
+    },
+    // 内蔵エージェント (OpenAI 互換 API)
+    assistant: {
+        getSettings: () => electron_1.ipcRenderer.invoke('assistant:get-settings'),
+        setSettings: (settings) => electron_1.ipcRenderer.invoke('assistant:set-settings', settings),
+        models: (override) => electron_1.ipcRenderer.invoke('assistant:models', override),
+        send: (conversationId, text, context) => electron_1.ipcRenderer.invoke('assistant:send', conversationId, text, context),
+        abort: (conversationId) => electron_1.ipcRenderer.invoke('assistant:abort', conversationId),
+        reset: (conversationId) => electron_1.ipcRenderer.invoke('assistant:reset', conversationId),
+        undo: (snapshotId) => electron_1.ipcRenderer.invoke('assistant:undo', snapshotId),
+        onEvent: (callback) => {
+            const handler = (_, payload) => callback(payload);
+            electron_1.ipcRenderer.on('assistant:event', handler);
+            return () => { electron_1.ipcRenderer.removeListener('assistant:event', handler); };
+        },
+    },
+    // プロジェクトの .arsist 書き出し / 読み込みと、外での変更の知らせ
+    projectPackage: {
+        export: (projectPath, bundleExtensions) => electron_1.ipcRenderer.invoke('project:export-package', projectPath, bundleExtensions),
+        import: () => electron_1.ipcRenderer.invoke('project:import-package'),
+        installStagedExtension: (stagedDir) => electron_1.ipcRenderer.invoke('project:install-staged-extension', stagedDir),
+        onExternalChange: (callback) => {
+            const handler = (_, payload) => callback(payload);
+            electron_1.ipcRenderer.on('project:external-change', handler);
+            return () => { electron_1.ipcRenderer.removeListener('project:external-change', handler); };
+        },
+        /** 書き出し / 読み込みの最中 (選択画面を閉じてから終わるまで)。終わると null */
+        onBusy: (callback) => {
+            const handler = (_, state) => callback(state);
+            electron_1.ipcRenderer.on('project:package-busy', handler);
+            return () => { electron_1.ipcRenderer.removeListener('project:package-busy', handler); };
+        },
     },
     // ウィンドウ操作
     window: {

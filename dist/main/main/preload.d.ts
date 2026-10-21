@@ -77,6 +77,18 @@ declare const electronAPI: {
         get: (adapterId: string) => Promise<any>;
         applyPatch: (adapterId: string, projectPath: string) => Promise<any>;
     };
+    extensions: {
+        list: (targetDevice?: string) => Promise<any>;
+        openUserDir: () => Promise<any>;
+        import: (kind: "package" | "folder") => Promise<any>;
+        install: (source: string, force?: boolean) => Promise<any>;
+        uninstall: (id: string) => Promise<any>;
+        linkFolder: () => Promise<any>;
+        readme: (id: string) => Promise<any>;
+        openDir: (id: string) => Promise<any>;
+        unlinkFolder: (dir: string) => Promise<any>;
+        export: (id: string) => Promise<any>;
+    };
     fs: {
         readFile: (filePath: string) => Promise<any>;
         writeFile: (filePath: string, content: string) => Promise<any>;
@@ -95,10 +107,24 @@ declare const electronAPI: {
         import: (params: {
             projectPath: string;
             sourcePath: string;
-            kind?: "model" | "texture" | "video" | "other";
+            kind?: "model" | "texture" | "video" | "animation" | "other";
         }) => Promise<any>;
         list: (params: {
             projectPath: string;
+        }) => Promise<any>;
+    };
+    animations: {
+        import: (params: {
+            projectPath: string;
+            sourcePath: string;
+            name?: string;
+        }) => Promise<any>;
+        list: (params: {
+            projectPath: string;
+        }) => Promise<any>;
+        vrmSpec: (params: {
+            projectPath: string;
+            modelPath: string;
         }) => Promise<any>;
     };
     store: {
@@ -106,10 +132,40 @@ declare const electronAPI: {
         set: (key: string, value: any) => Promise<any>;
     };
     mcp: {
-        start: (projectPath: string) => Promise<any>;
-        stop: () => Promise<any>;
-        getStatus: () => Promise<any>;
-        getClientConfig: () => Promise<any>;
+        agents: (includeProject: boolean) => Promise<any>;
+        register: (id: string, includeProject: boolean) => Promise<any>;
+        unregister: (id: string) => Promise<any>;
+        selfTest: (includeProject: boolean) => Promise<any>;
+    };
+    assistant: {
+        getSettings: () => Promise<any>;
+        setSettings: (settings: unknown) => Promise<any>;
+        models: (override?: {
+            baseUrl?: string;
+            apiKey?: string;
+        }) => Promise<any>;
+        send: (conversationId: string, text: string, context: unknown) => Promise<any>;
+        abort: (conversationId: string) => Promise<any>;
+        reset: (conversationId: string) => Promise<any>;
+        undo: (snapshotId: string) => Promise<any>;
+        onEvent: (callback: (payload: {
+            conversationId: string;
+            event: unknown;
+        }) => void) => () => void;
+    };
+    projectPackage: {
+        export: (projectPath: string, bundleExtensions: boolean) => Promise<any>;
+        import: () => Promise<any>;
+        installStagedExtension: (stagedDir: string) => Promise<any>;
+        onExternalChange: (callback: (payload: {
+            projectPath: string;
+            files: string[];
+        }) => void) => () => void;
+        /** 書き出し / 読み込みの最中 (選択画面を閉じてから終わるまで)。終わると null */
+        onBusy: (callback: (state: {
+            action: "export" | "import";
+            file: string;
+        } | null) => void) => () => void;
     };
     window: {
         minimize: () => Promise<any>;

@@ -4,6 +4,7 @@
 // ==============================================
 using System;
 using System.Collections.Generic;
+using Jint.Native;
 using UnityEngine;
 
 namespace Arsist.Runtime.Scripting
@@ -18,6 +19,11 @@ namespace Arsist.Runtime.Scripting
         // IDとGameObjectの紐付け辞書
         private Dictionary<string, GameObject> _dynamicObjects = new Dictionary<string, GameObject>();
 
+        /// <summary>JS の値の受け渡し・コールバック (ScriptEngineManager が入れる)</summary>
+        public JsBridge Js { get; set; }
+        /// <summary>ユーザーの頭 (faceUser / distanceToUser 用。ScriptEngineManager が入れる)</summary>
+        public ViewerWrapper Viewer { get; set; }
+
         /// <summary>
         /// シーンロード時などにオブジェクトを登録する
         /// </summary>
@@ -30,6 +36,16 @@ namespace Arsist.Runtime.Scripting
             }
             _dynamicObjects[id] = obj;
             Debug.Log($"[SceneWrapper] Registered object: {id} -> {obj.name}");
+        }
+
+        /// <summary>
+        /// 登録されたオブジェクトを探す (見つからなくても警告を出さない)。拡張機能から使う。
+        /// </summary>
+        public bool TryGetObject(string id, out GameObject obj)
+        {
+            obj = null;
+            if (string.IsNullOrEmpty(id)) return false;
+            return _dynamicObjects.TryGetValue(id, out obj) && obj != null;
         }
 
         /// <summary>
@@ -57,6 +73,7 @@ namespace Arsist.Runtime.Scripting
             var obj = GetObject(id);
             if (obj != null)
             {
+                CancelMove(obj, false);
                 obj.transform.position = new Vector3(x, y, z);
             }
         }
@@ -69,6 +86,7 @@ namespace Arsist.Runtime.Scripting
             var obj = GetObject(id);
             if (obj != null)
             {
+                CancelMove(obj, false);
                 obj.transform.position += new Vector3(deltaX, deltaY, deltaZ);
             }
         }
@@ -81,6 +99,7 @@ namespace Arsist.Runtime.Scripting
             var obj = GetObject(id);
             if (obj != null)
             {
+                CancelMove(obj, true);
                 obj.transform.rotation = Quaternion.Euler(pitch, yaw, roll);
             }
         }
@@ -93,6 +112,7 @@ namespace Arsist.Runtime.Scripting
             var obj = GetObject(id);
             if (obj != null)
             {
+                CancelMove(obj, true);
                 obj.transform.Rotate(deltaPitch, deltaYaw, deltaRoll);
             }
         }
@@ -222,6 +242,183 @@ namespace Arsist.Runtime.Scripting
         {
             var obj = GetObject(id);
             return obj != null ? obj.transform.position.z : 0f;
+        }
+
+        // ========================================
+        // なめらかな移動・向き・ユーザーとの関係 (2026-10)
+        // ========================================
+
+        private sealed class Motion
+        {
+            public GameObject Target;
+            public bool Rotation;
+            public Vector3 FromPosition, ToPosition;
+            public Quaternion FromRotation, ToRotation;
+            public float Start, Duration;
+            public JsValue Callback;
+            public bool Finished;
+        }
+
+        // 物ごとに、動いている移動 1 つ・回転 1 つ
+        private readonly Dictionary<GameObject, Motion> _moves = new Dictionary<GameObject, Motion>();
+        private readonly Dictionary<GameObject, Motion> _turns = new Dictionary<GameObject, Motion>();
+
+        /// <summary>{ x, y, z } (実行時のワールド座標)。無ければ null。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public JsValue getPosition(string id)
+        {
+            var obj = GetObject(id);
+            if (obj == null || Js == null) return JsValue.Null;
+            var p = obj.transform.position;
+            return Js.ToJs(new Dictionary<string, object> { ["x"] = (double)p.x, ["y"] = (double)p.y, ["z"] = (double)p.z });
+        }
+
+        /// <summary>そこまでなめらかに動く。着いたら fn(true)、別の移動に置き換えられたら fn(false)。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public void moveTo(string id, double x, double y, double z, double seconds = 0.5, JsValue callback = null)
+        {
+            var obj = GetObject(id);
+            if (obj == null) { Later(callback, false); return; }
+            CancelMove(obj, false);
+            var motion = new Motion
+            {
+                Target = obj,
+                FromPosition = obj.transform.position,
+                ToPosition = new Vector3((float)x, (float)y, (float)z),
+                Start = Time.time,
+                Duration = Mathf.Max(0f, (float)seconds),
+                Callback = callback,
+            };
+            _moves[obj] = motion;
+            Run(motion, _moves);
+        }
+
+        /// <summary>なめらかに向きを変える (度)。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public void rotateTo(string id, double pitch, double yaw, double roll, double seconds = 0.5, JsValue callback = null)
+        {
+            var obj = GetObject(id);
+            if (obj == null) { Later(callback, false); return; }
+            StartTurn(obj, Quaternion.Euler((float)pitch, (float)yaw, (float)roll), (float)seconds, callback);
+        }
+
+        /// <summary>
+        /// ユーザーの方を向く (水平にだけ回る)。向きの決まりは「ユーザーの正面に回転 0 で置いた物」と同じ:
+        /// 物の +Z がユーザーと反対側を指す (パネルは読める向き、VRM 0.x は顔がこちらを向く)。
+        /// </summary>
+        [UnityEngine.Scripting.Preserve]
+        public void faceUser(string id, double seconds = 0)
+        {
+            var obj = GetObject(id);
+            var head = Viewer?.HeadTransform;
+            if (obj == null || head == null) return;
+            var away = obj.transform.position - head.position;
+            away.y = 0f;
+            if (away.sqrMagnitude < 1e-6f) return;
+            Quaternion target;
+            var character = obj.GetComponentInChildren<Arsist.Runtime.VRM.ArsistCharacter>();
+            if (character != null)
+            {
+                // キャラクターは「+Z を向こうへ」ではなく、骨から出した本当の正面をユーザーへ向ける。
+                // VRM 1.0 はルートの +Z が顔の向き、VRM 0.x は逆なので、+Z で決めると片方が背中を向ける (2026-10-12 実機)
+                var turn = Vector3.SignedAngle(character.Forward, -away, Vector3.up);
+                target = Quaternion.AngleAxis(turn, Vector3.up) * obj.transform.rotation;
+            }
+            else
+            {
+                var e = obj.transform.rotation.eulerAngles;
+                float yaw = Mathf.Atan2(away.x, away.z) * Mathf.Rad2Deg;
+                target = Quaternion.Euler(e.x, yaw, e.z);
+            }
+            if (seconds <= 0)
+            {
+                CancelMove(obj, true);
+                obj.transform.rotation = target;
+                return;
+            }
+            StartTurn(obj, target, (float)seconds, null);
+        }
+
+        /// <summary>ユーザーの頭からの距離 (m)。物が無ければ -1。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public double distanceToUser(string id)
+        {
+            var obj = GetObject(id);
+            var head = Viewer?.HeadTransform;
+            if (obj == null || head == null) return -1;
+            return Vector3.Distance(obj.transform.position, head.position);
+        }
+
+        private void StartTurn(GameObject obj, Quaternion target, float seconds, JsValue callback)
+        {
+            CancelMove(obj, true);
+            var motion = new Motion
+            {
+                Target = obj,
+                Rotation = true,
+                FromRotation = obj.transform.rotation,
+                ToRotation = target,
+                Start = Time.time,
+                Duration = Mathf.Max(0f, seconds),
+                Callback = callback,
+            };
+            _turns[obj] = motion;
+            Run(motion, _turns);
+        }
+
+        private void Run(Motion motion, Dictionary<GameObject, Motion> table)
+        {
+            var host = ScriptRuntimeHost.Instance;
+            if (host == null || motion.Duration <= 0f)
+            {
+                Apply(motion, 1f);
+                table.Remove(motion.Target);
+                Complete(motion, true);
+                return;
+            }
+            host.AddTicker(() =>
+            {
+                if (motion.Finished) return false;
+                if (motion.Target == null) { table.Remove(motion.Target); Complete(motion, false); return false; }
+                float t = Mathf.Clamp01((Time.time - motion.Start) / motion.Duration);
+                Apply(motion, t * t * (3f - 2f * t));   // ゆっくり出て、ゆっくり止まる
+                if (t < 1f) return true;
+                if (table.TryGetValue(motion.Target, out var current) && current == motion) table.Remove(motion.Target);
+                Complete(motion, true);
+                return false;
+            });
+        }
+
+        private static void Apply(Motion motion, float k)
+        {
+            if (motion.Target == null) return;
+            if (motion.Rotation) motion.Target.transform.rotation = Quaternion.Slerp(motion.FromRotation, motion.ToRotation, k);
+            else motion.Target.transform.position = Vector3.LerpUnclamped(motion.FromPosition, motion.ToPosition, k);
+        }
+
+        /// <summary>動いている移動 (rotation=true なら回転) を止める。待っていた fn には false。</summary>
+        private void CancelMove(GameObject obj, bool rotation)
+        {
+            var table = rotation ? _turns : _moves;
+            if (!table.TryGetValue(obj, out var old)) return;
+            table.Remove(obj);
+            Complete(old, false);
+        }
+
+        private void Complete(Motion motion, bool arrived)
+        {
+            if (motion.Finished) return;
+            motion.Finished = true;
+            Later(motion.Callback, arrived);
+        }
+
+        /// <summary>コールバックは次のフレームで呼ぶ (呼んだスクリプトの途中で割り込まない)。</summary>
+        private void Later(JsValue callback, bool ok)
+        {
+            if (callback == null || Js == null || !Js.IsFunction(callback)) return;
+            var host = ScriptRuntimeHost.Instance;
+            if (host == null) { Js.Call(callback, "scene callback", ok); return; }
+            host.Post(() => Js.Call(callback, "scene callback", ok));
         }
 
         // ========================================

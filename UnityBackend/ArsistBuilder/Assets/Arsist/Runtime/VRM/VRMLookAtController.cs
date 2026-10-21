@@ -40,6 +40,9 @@ namespace Arsist.Runtime.VRM
         private FieldInfo _lookAtTargetField;   // public Transform Target
         private Transform _targetProxy;         // VRMLookAtHead へ渡す実体
 
+        // ---- 読み込んだ部品が持ってくる目 (VRM の読み込みを置き換えた拡張機能など)。頭はこちらで向ける ----
+        private IArsistVrmEyes _eyes;
+
         private bool _hasTarget;
         private Vector3 _worldTarget;
 
@@ -59,6 +62,13 @@ namespace Arsist.Runtime.VRM
         /// <summary>UniVRM (VRM0.x) の VRMLookAtHead を型名で探す。SDK 未導入でも落ちないよう reflection。</summary>
         private void DetectUniVRMLookAt()
         {
+            _eyes = GetComponentInParent<IArsistVrmEyes>(true);
+            if (_eyes != null)
+            {
+                Debug.Log($"[VRMLookAtController] ✅ Eyes via {_eyes.GetType().Name}; the head is aimed here.");
+                return;
+            }
+
             foreach (var comp in GetComponentsInChildren<Component>(true))
             {
                 if (comp == null) continue;
@@ -94,26 +104,38 @@ namespace Arsist.Runtime.VRM
             _worldTarget = worldPosition;
             _hasTarget = true;
 
+            if (_eyes != null)
+            {
+                _eyes.LookAt(EnsureTargetProxy(worldPosition));
+                return true;
+            }
+
             if (_lookAtHead != null && _lookAtTargetField != null)
             {
-                if (_targetProxy == null)
-                {
-                    var go = new GameObject("ArsistLookAtTarget");
-                    go.hideFlags = HideFlags.DontSave;
-                    _targetProxy = go.transform;
-                }
-                _targetProxy.position = worldPosition;
-                _lookAtTargetField.SetValue(_lookAtHead, _targetProxy);
+                _lookAtTargetField.SetValue(_lookAtHead, EnsureTargetProxy(worldPosition));
                 return true;
             }
 
             return _head != null;
         }
 
+        private Transform EnsureTargetProxy(Vector3 worldPosition)
+        {
+            if (_targetProxy == null)
+            {
+                var go = new GameObject("ArsistLookAtTarget");
+                go.hideFlags = HideFlags.DontSave;
+                _targetProxy = go.transform;
+            }
+            _targetProxy.position = worldPosition;
+            return _targetProxy;
+        }
+
         /// <summary>視線制御を解除して、元のアニメーションに戻す。</summary>
         public void ClearTarget()
         {
             _hasTarget = false;
+            if (_eyes != null) _eyes.LookAt(null);
             if (_lookAtHead != null && _lookAtTargetField != null)
             {
                 _lookAtTargetField.SetValue(_lookAtHead, null);

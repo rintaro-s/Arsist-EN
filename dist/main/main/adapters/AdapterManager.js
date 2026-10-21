@@ -41,6 +41,7 @@ exports.AdapterManager = void 0;
  */
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs-extra"));
+const adapterDirs_1 = require("./adapterDirs");
 class AdapterManager {
     adaptersDir;
     adaptersCache = new Map();
@@ -69,19 +70,19 @@ class AdapterManager {
         return candidates[0] ?? path.join(__dirname, '../../..', 'Adapters');
     }
     /**
-     * 利用可能なすべてのアダプターを取得
+     * 利用可能なすべてのアダプター (エンジン同梱 + 拡張機能が足した端末)。
+     * adapter.json の中身に、どこから来たか (folder / source / extensionId) を添えて返す。
      */
     async listAdapters() {
         try {
-            await fs.ensureDir(this.adaptersDir);
-            const entries = await fs.readdir(this.adaptersDir, { withFileTypes: true });
             const adapters = [];
-            for (const entry of entries) {
-                if (entry.isDirectory()) {
-                    const adapter = await this.loadAdapter(entry.name);
-                    if (adapter) {
-                        adapters.push(adapter);
-                    }
+            for (const loc of await (0, adapterDirs_1.listAdapterLocations)(this.adaptersDir)) {
+                try {
+                    const raw = await fs.readJSON(path.join(loc.dir, 'adapter.json'));
+                    adapters.push({ ...raw, folder: loc.name, source: loc.source, extensionId: loc.extensionId });
+                }
+                catch (error) {
+                    console.error(`Failed to read ${loc.dir}/adapter.json:`, error);
                 }
             }
             return adapters;
@@ -92,13 +93,21 @@ class AdapterManager {
         }
     }
     /**
-     * 特定のアダプターを取得
+     * 特定のアダプターを取得 (名前は targetDevice。型番付きでも当たる: src/shared/adapterNames.ts)。
+     * 拡張機能の端末は入れ替わることがあるので、覚えておかずに毎回探す。
      */
     async getAdapter(adapterId) {
-        if (this.adaptersCache.has(adapterId)) {
-            return this.adaptersCache.get(adapterId);
+        const loc = await (0, adapterDirs_1.resolveAdapter)(adapterId, this.adaptersDir);
+        if (!loc)
+            return null;
+        try {
+            const raw = await fs.readJSON(path.join(loc.dir, 'adapter.json'));
+            return { ...raw, folder: loc.name, source: loc.source, extensionId: loc.extensionId };
         }
-        return await this.loadAdapter(adapterId);
+        catch (error) {
+            console.error(`Failed to load adapter ${adapterId}:`, error);
+            return null;
+        }
     }
     /**
      * 新しいアダプターを登録

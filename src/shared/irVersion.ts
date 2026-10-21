@@ -15,8 +15,14 @@
  *   3  モデルを画像認識から切り離した。ModelDefinition に `use` (image / text / tensor) と
  *      `text` (分割器・生成の設定) を追加。画像の読み方 (task / input / output / labels) は
  *      use が image のときだけ持つ。v2 のモデルはすべて画像のモデルなので use: 'image' を補う。
+ *   4  拡張機能。project.extensions (有効にした拡張機能とその設定) と、シーンの物の ext.<id>
+ *      (拡張機能ごとの指定) を追加。拡張機能のデータは拡張機能ごとに版 (dataVersion) を持ち、
+ *      IR 本体の版とは独立に移行する (src/shared/extensions.ts)。
+ *   5  キャラクターと保存。VRM の物に character (最初の動き・まばたき・呼吸・こちらを見る)、UI の文字に reveal (書いていくように出す)、project.storage.persist (端末に保存する store のキー) を追加。古いプロジェクトの VRM は今までどおり (動きなし) のまま
+ *
+ * 版を上げる手順は src/main/project/migrations.ts の先頭。`npm run ir:new -- "<説明>"` で雛形が入る。
  */
-export const CURRENT_IR_VERSION = 3;
+export const CURRENT_IR_VERSION = 5;
 
 /** project.json から版を読む。項目が無ければ 1。数でなければ 1 として扱う。 */
 export function readIrVersion(raw: unknown): number {

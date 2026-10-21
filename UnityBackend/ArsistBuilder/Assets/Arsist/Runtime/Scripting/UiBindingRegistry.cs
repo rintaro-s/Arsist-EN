@@ -23,11 +23,14 @@ namespace Arsist.Runtime.Scripting
             }
         }
 
-        private void OnDisable()
+        // 隠した (SetActive(false)) だけでは表から外さない。外すと ui.setVisibility(id, false) のあとに
+        // ui.setVisibility(id, true) も ui.setText(id, …) も要素を見つけられず、二度と出せなくなる。
+        // 表から外すのは、要素そのものが無くなったときだけ。
+        private void OnDestroy()
         {
             if (!string.IsNullOrEmpty(bindingId))
             {
-                UiBindingLookup.Unregister(bindingId);
+                UiBindingLookup.Unregister(bindingId, gameObject);
             }
         }
     }

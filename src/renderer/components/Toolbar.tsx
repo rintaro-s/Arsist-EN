@@ -1,4 +1,5 @@
-import { Box, Layout, Move, RotateCw, Maximize2, Grid3X3, Axis3D, Magnet, PersonStanding, Settings, Download, Eye, Save, FolderOpen, Plus, Server, Zap, Radar, ScanEye, Cpu } from 'lucide-react';
+import { Box, Layout, Move, RotateCw, Maximize2, Grid3X3, Axis3D, Magnet, PersonStanding, Settings, Download, Eye, Save, FolderOpen, Plus, Server, Zap, Radar, ScanEye, Cpu, Bot, PackageOpen, PackagePlus, Puzzle } from 'lucide-react';
+import { exportCurrentProject, importArsistPackage } from '../ai/packageActions';
 import { useUIStore } from '../stores/uiStore';
 import { useProjectStore } from '../stores/projectStore';
 import { useT } from '../i18n';
@@ -25,6 +26,8 @@ export function Toolbar() {
     setShowNewProjectDialog,
     setShowPreviewDialog,
     setShowMCPDialog,
+    showAssistant,
+    setShowAssistant,
   } = useUIStore();
 
   const { project, saveProject, isDirty, loadProject } = useProjectStore();
@@ -43,6 +46,8 @@ export function Toolbar() {
         <div className="flex items-center gap-0.5 pr-2 hairline-r">
           <IconBtn icon={<Plus size={16} />} tip={t('toolbar.newProject')} onClick={() => setShowNewProjectDialog(true)} />
           <IconBtn icon={<FolderOpen size={16} />} tip={t('toolbar.openProject')} onClick={handleOpenProject} />
+          <IconBtn icon={<PackageOpen size={16} />} tip={t('pkg.import')} onClick={() => { void importArsistPackage(t); }} />
+          {project && <IconBtn icon={<PackagePlus size={16} />} tip={t('pkg.export')} onClick={() => { void exportCurrentProject(t); }} />}
           {isDirty && (
             <IconBtn icon={<Save size={16} />} tip={t('toolbar.save')} className="text-arsist-warning" onClick={() => saveProject()} />
           )}
@@ -82,6 +87,12 @@ export function Toolbar() {
             label={t('toolbar.tabModels')}
             active={currentView === 'models'}
             onClick={() => setCurrentView('models')}
+          />
+          <ViewTab
+            icon={<Puzzle size={15} />}
+            label={t('toolbar.tabExtensions')}
+            active={currentView === 'extensions'}
+            onClick={() => setCurrentView('extensions')}
           />
         </div>
       </div>
@@ -125,6 +136,7 @@ export function Toolbar() {
           <Radar size={14} />
           <span>{t('toolbar.liveLayout')}</span>
         </button>
+        <ToolBtn icon={<Bot size={16} />} active={showAssistant} tip={t('ai.title')} onClick={() => setShowAssistant(!showAssistant)} />
         <IconBtn icon={<Server size={16} />} tip={t('toolbar.mcpServer')} onClick={() => setShowMCPDialog(true)} />
         <IconBtn icon={<Eye size={16} />} tip={t('toolbar.preview')} onClick={() => setShowPreviewDialog(true)} />
         <IconBtn icon={<Settings size={16} />} tip={t('toolbar.settings')} onClick={() => setShowSettingsDialog(true)} />

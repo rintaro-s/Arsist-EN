@@ -44,6 +44,10 @@ export declare class UnityBuilder extends EventEmitter {
     private preparedAndroidSdkPath;
     /** validate() が取得した Unity バージョン文字列（例 "6000.0.40f1"）。パッケージ版数の分岐に使う。 */
     private detectedUnityVersion;
+    /** ユーザーが自分で置いた拡張機能の場所 (<userData>/extensions)。main.ts が設定する */
+    private extensionUserDir;
+    /** このビルドで有効な拡張機能 (build() の最初に決まり、transfer と stage が使う) */
+    private buildExtensions;
     /** 作業ディレクトリ再利用の互換バージョン。準備処理を変えたら上げる（＝全ユーザーが1回だけ作り直す）。 */
     private static readonly WORKSPACE_CACHE_VERSION;
     private static readonly WORKSPACE_STAMP_FILE;
@@ -55,6 +59,7 @@ export declare class UnityBuilder extends EventEmitter {
     private resolveRepoRoot;
     getUnityPath(): string;
     setUnityPath(unityPath: string): void;
+    setExtensionUserDir(dir: string | null): void;
     setSdkDir(sdkDir: string): void;
     private resolveSdkDir;
     /**
@@ -176,6 +181,8 @@ export declare class UnityBuilder extends EventEmitter {
     /** uGUI / TextMeshPro の依存をUnityバージョンに応じて設定する。 */
     private applyUnityUiDependencies;
     private projectUsesVRM;
+    /** 物が使っている VRM のうち、VRM 1.0 のもの (プロジェクトからの相対パス)。 */
+    private vrm10ModelsInProject;
     private resolveUniVRMUnityPackagePath;
     /**
      * .unitypackage を作業プロジェクトへ取り込む。既に同じパッケージを取り込み済みなら何もしない。
@@ -306,6 +313,65 @@ export declare class UnityBuilder extends EventEmitter {
      */
     private collectErrorMessage;
     private readUnityLogIssues;
+    /**
+     * このビルドの「端末のタグ」「使っている機能」「入る拡張機能」を決める。
+     *
+     * 端末のタグ = adapter.json (src/shared/adapterTags.ts) + sdk/ に何があるか (sdk:*)。
+     * sdk:* はここでしか分からない (エディタ上では保留にしている) ので、拡張機能の条件は
+     * ここで最終的に確かめる。合わない拡張機能はビルドから外し、理由をログに出す。
+     * 同じプロジェクトを別の端末に出したときに、その端末で動かない拡張機能が外れるのは正常。
+     */
+    private planExtensions;
+    /** sdk/ に置いてあり、この端末のビルドに入る SDK のタグ。 */
+    private detectSdkTags;
+    /**
+     * 有効な拡張機能の C# を Unity プロジェクトに入れ、無効になったものを抜く。
+     * 写しは syncDirectory (差分 + .meta 保護) なので、変わっていなければ Unity は再インポートしない。
+     */
+    private stageExtensions;
+    private static readonly OVERRIDES_RECORD;
+    private static readonly PACKAGES_RECORD;
+    private static readonly UNITYPACKAGES_RECORD;
+    private static readonly UNIVRM_MARKER;
+    /**
+     * 拡張機能の .unitypackage (unity.unitypackages) を作業用の Unity プロジェクトに展開する。
+     * Unity のインポートを使わずに自分で展開するのは、置いたファイルを正確に覚えておき、
+     * 拡張機能が入らなくなったときにそれだけを消すため (記録: <作業用プロジェクト>/.arsist-extension-unitypackages.json)。
+     * 2 つの拡張機能が同じファイルを置こうとしたら止める。
+     *
+     * @returns 今回置いた (置いてある) ファイルとフォルダ。エンジンの SDK を外すときに残すもの。
+     */
+    private stageExtensionUnityPackages;
+    /**
+     * 置き換えられた部品のために、エンジンが入れていた SDK を作業用の Unity プロジェクトから外す
+     * (src/shared/engineParts.ts の dropsFromBuild)。今は VRM の読み込みだけ: 拡張機能が自分の UniVRM を
+     * 持ってくるので、エンジンの UniVRM 0.x を残すと UniGLTF の版違いがぶつかる。
+     * 拡張機能が外れたら、次のビルドで Phase 3.6 がエンジンの UniVRM をもう一度取り込む。
+     */
+    private dropReplacedEngineSdks;
+    /**
+     * 拡張機能によるエンジンの改変 (unity.overrides)。
+     *
+     * Assets/Arsist/<path> を拡張機能の Overrides/<path> で置き換える。置き換える前に、元のファイル
+     * (テンプレート UnityBackend/ArsistBuilder/Assets/Arsist/<path>) の SHA-256 が replaces と同じかを見る。
+     * エンジンが更新されて元が変わっていたら止める — 古い前提の上書きで、新しいエンジンの修正を黙って消さない。
+     * 前回上書きして今回は上書きしないファイルは、元に戻す (記録: Assets/.arsist-overrides.json)。
+     */
+    private stageEngineOverrides;
+    /**
+     * 拡張機能の Unity パッケージ (unity.packages)。端末の SDK など。
+     * 拡張機能の中のファイル / フォルダは Packages/arsist-ext-<id>/ に写して `file:` で、版の指定はそのまま
+     * Packages/manifest.json に足す。エンジンが入れたパッケージは上書きしない (版の食い違いで壊さない)。
+     * 前回足して今回は要らないものは外す (記録: Packages/.arsist-extension-packages.json)。
+     */
+    private stageExtensionPackages;
+    /** 中身が同じなら書かない (mtime を変えると Unity が再インポート・再コンパイルする)。 */
+    private writeIfChanged;
+    /**
+     * targetDevice のアダプタのフォルダ。エンジン同梱の Adapters/ と、拡張機能が足した端末の両方から探す
+     * (照合の規則は src/shared/adapterNames.ts。型番まで書かれていても拾う: "Meta Quest 3" → Meta_Quest。
+     * 一致しないと device patch がまるごと飛び、権限の足りない APK が何事もなく出来上がる)。
+     */
     private resolveAdapterDir;
     private emitProgress;
 }

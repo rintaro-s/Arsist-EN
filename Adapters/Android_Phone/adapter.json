@@ -6,6 +6,8 @@
   "description": "ヘッドセットの無い普通の Android 端末用。頭の向きの代わりにジャイロで見回す (3DoF)。背面カメラの映像を背景にしたビデオシースルー AR と、映像を出さない VR (段ボールゴーグル対応) を選べる。XR SDK には依存しないので、Unity 同梱の Gradle があればビルドできる。",
   "author": "Arsist Team",
   "license": "MIT",
+  "tagsNote": "タグは src/shared/adapterTags.ts。id → device:*, build.platform → platform:*, capabilities の true → cap:* は自動で付くので、ここには表に無い性質だけを書く。",
+  "tags": ["cap:camera-access", "cap:video-see-through", "cap:system-keyboard", "cap:touch-screen", "cap:gyroscope"],
 
   "device": {
     "manufacturer": "Any",

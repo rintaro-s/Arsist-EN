@@ -5,7 +5,8 @@
  * three.js も Y-up・Z前方で同じ手系の扱いができるため、変換なしでそのまま置ける。
  */
 import { useMemo } from 'react';
-import { Billboard, Line, Text } from '@react-three/drei';
+import { Billboard, Text } from '@react-three/drei';
+import { StableLine } from '../components/viewport/StableLine';
 import * as THREE from 'three';
 import type { PlacedObject, ViewerPose } from './useLiveScene';
 import type { DeviceFov } from '../utils/deviceFov';
@@ -180,7 +181,7 @@ export function ViewerMarker({
       </mesh>
 
       {/* 視線 */}
-      <Line points={[[0, 0, 0], gazeEnd]} color={VIEWER_COLOR} lineWidth={2} transparent opacity={0.9} />
+      <StableLine points={[[0, 0, 0], gazeEnd]} color={VIEWER_COLOR} lineWidth={2} transparent opacity={0.9} />
       <mesh position={gazeEnd}>
         <sphereGeometry args={[0.03, 12, 8]} />
         <meshBasicMaterial color={VIEWER_COLOR} />
@@ -190,7 +191,7 @@ export function ViewerMarker({
       {frustumCorners && (
         <group>
           {frustumCorners.map((corner, i) => (
-            <Line
+            <StableLine
               key={`fedge-${i}`}
               points={[[0, 0, 0], corner]}
               color={VIEWER_COLOR}
@@ -199,7 +200,7 @@ export function ViewerMarker({
               opacity={0.4}
             />
           ))}
-          <Line
+          <StableLine
             points={[...frustumCorners, frustumCorners[0]]}
             color={VIEWER_COLOR}
             lineWidth={1.5}
@@ -241,7 +242,7 @@ export function GroundReference({ eyeHeight = 1.6 }: { eyeHeight?: number }) {
         <sphereGeometry args={[0.035, 12, 8]} />
         <meshBasicMaterial color="#f14c4c" />
       </mesh>
-      <Line points={[[0, 0, 0], [0, -eyeHeight, 0]]} color="#f14c4c" lineWidth={1} transparent opacity={0.4} />
+      <StableLine points={[[0, 0, 0], [0, -eyeHeight, 0]]} color="#f14c4c" lineWidth={1} transparent opacity={0.4} />
     </group>
   );
 }

@@ -19,6 +19,11 @@ namespace Arsist.Runtime.VRM
     {
         [SerializeField] public string vrmPath;
         [SerializeField] public string assetId;
+        /// <summary>
+        /// IR v5 の character (JSON)。空なら今までどおり (動き・まばたき等なし)。
+        /// ビルドが ArsistBuildPipeline.TryConfigureRuntimeVRMLoader で入れる。#if の中に置かないこと。
+        /// </summary>
+        [SerializeField] public string characterJson;
 
         /// <summary>
         /// ロード中の VRM 数。ScriptTriggerManager がこの値を参照して
@@ -97,6 +102,10 @@ namespace Arsist.Runtime.VRM
 
                 // スクリプトエンジンに登録（初期化タイミングずれを吸収）
                 yield return RegisterVRMWhenScriptEngineReady(actualAssetId, vrmInstance);
+
+                // キャラクター (IR v5 の character があるときだけ。無ければ v4 までと同じ)。
+                // スクリプトが無いプロジェクトでは上の登録が途中で終わるので、ここで付ける。
+                SetUpCharacter(actualAssetId, vrmInstance);
             }
             else
             {
@@ -272,6 +281,30 @@ namespace Arsist.Runtime.VRM
             }
 
             Debug.Log($"[ArsistVRMLoaderTask] ✅✅✅ VRM '{actualAssetId}' initialization complete");
+        }
+
+        private void SetUpCharacter(string actualAssetId, GameObject vrmInstance)
+        {
+            if (vrmInstance == null) return;
+            if (string.IsNullOrEmpty(characterJson))
+            {
+                // character の無い VRM も T ポーズでは立たせない (力を抜いた立ち姿だけ。まばたき・呼吸・視線は off のまま)
+                try { ArsistCharacter.Ensure(vrmInstance); }
+                catch (System.Exception e) { Debug.LogWarning($"[ArsistVRMLoaderTask] standing pose setup failed for '{actualAssetId}': {e.Message}"); }
+                return;
+            }
+            try
+            {
+                // まばたき・こちらを見るが使う部品 (スクリプトがあれば登録時に付いている)
+                if (vrmInstance.GetComponent<VRMExpressionController>() == null) vrmInstance.AddComponent<VRMExpressionController>();
+                if (vrmInstance.GetComponent<VRMLookAtController>() == null) vrmInstance.AddComponent<VRMLookAtController>();
+                var character = ArsistCharacter.Ensure(vrmInstance);
+                character.Configure(characterJson);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[ArsistVRMLoaderTask] ArsistCharacter setup failed for '{actualAssetId}': {e.Message}");
+            }
         }
 
         private void EnsureVRMVisible(GameObject vrmRoot)

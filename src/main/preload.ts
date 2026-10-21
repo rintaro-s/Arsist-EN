@@ -117,6 +117,20 @@ const electronAPI = {
       ipcRenderer.invoke('adapters:apply-patch', adapterId, projectPath),
   },
 
+  // 拡張機能 (Extensions/<id>/)
+  extensions: {
+    list: (targetDevice?: string) => ipcRenderer.invoke('extensions:list', targetDevice),
+    openUserDir: () => ipcRenderer.invoke('extensions:open-user-dir'),
+    import: (kind: 'package' | 'folder') => ipcRenderer.invoke('extensions:import', kind),
+    install: (source: string, force?: boolean) => ipcRenderer.invoke('extensions:install', source, force),
+    uninstall: (id: string) => ipcRenderer.invoke('extensions:uninstall', id),
+    linkFolder: () => ipcRenderer.invoke('extensions:link-folder'),
+    readme: (id: string) => ipcRenderer.invoke('extensions:readme', id),
+    openDir: (id: string) => ipcRenderer.invoke('extensions:open-dir', id),
+    unlinkFolder: (dir: string) => ipcRenderer.invoke('extensions:unlink-folder', dir),
+    export: (id: string) => ipcRenderer.invoke('extensions:export', id),
+  },
+
   // ファイルシステム
   fs: {
     readFile: (filePath: string) => ipcRenderer.invoke('fs:read-file', filePath),
@@ -138,9 +152,18 @@ const electronAPI = {
 
   // アセット管理
   assets: {
-    import: (params: { projectPath: string; sourcePath: string; kind?: 'model' | 'texture' | 'video' | 'other' }) =>
+    import: (params: { projectPath: string; sourcePath: string; kind?: 'model' | 'texture' | 'video' | 'animation' | 'other' }) =>
       ipcRenderer.invoke('assets:import', params),
     list: (params: { projectPath: string }) => ipcRenderer.invoke('assets:list', params),
+  },
+
+  // キャラクターの動き (Assets/Animations/<名前>.fbx。名前 = スクリプトの vrm.playAnimation の名前)
+  animations: {
+    import: (params: { projectPath: string; sourcePath: string; name?: string }) =>
+      ipcRenderer.invoke('animations:import', params),
+    list: (params: { projectPath: string }) => ipcRenderer.invoke('animations:list', params),
+    // VRM の形式 ('1.0' / '0.x')。エンジン標準の読み込みは 0.x だけなので、インスペクタが 1.0 を知らせる
+    vrmSpec: (params: { projectPath: string; modelPath: string }) => ipcRenderer.invoke('animations:vrm-spec', params),
   },
 
   // 設定ストア
@@ -150,11 +173,46 @@ const electronAPI = {
   },
 
   // MCP サーバー管理
+  // MCP: 外部のエージェント (Claude Code / Codex / Qwen Code / Claude Desktop …) への登録と自己診断
   mcp: {
-    start: (projectPath: string) => ipcRenderer.invoke('mcp:start', projectPath),
-    stop: () => ipcRenderer.invoke('mcp:stop'),
-    getStatus: () => ipcRenderer.invoke('mcp:status'),
-    getClientConfig: () => ipcRenderer.invoke('mcp:get-client-config'),
+    agents: (includeProject: boolean) => ipcRenderer.invoke('mcp:agents', includeProject),
+    register: (id: string, includeProject: boolean) => ipcRenderer.invoke('mcp:register', id, includeProject),
+    unregister: (id: string) => ipcRenderer.invoke('mcp:unregister', id),
+    selfTest: (includeProject: boolean) => ipcRenderer.invoke('mcp:self-test', includeProject),
+  },
+
+  // 内蔵エージェント (OpenAI 互換 API)
+  assistant: {
+    getSettings: () => ipcRenderer.invoke('assistant:get-settings'),
+    setSettings: (settings: unknown) => ipcRenderer.invoke('assistant:set-settings', settings),
+    models: (override?: { baseUrl?: string; apiKey?: string }) => ipcRenderer.invoke('assistant:models', override),
+    send: (conversationId: string, text: string, context: unknown) => ipcRenderer.invoke('assistant:send', conversationId, text, context),
+    abort: (conversationId: string) => ipcRenderer.invoke('assistant:abort', conversationId),
+    reset: (conversationId: string) => ipcRenderer.invoke('assistant:reset', conversationId),
+    undo: (snapshotId: string) => ipcRenderer.invoke('assistant:undo', snapshotId),
+    onEvent: (callback: (payload: { conversationId: string; event: unknown }) => void) => {
+      const handler = (_: unknown, payload: { conversationId: string; event: unknown }) => callback(payload);
+      ipcRenderer.on('assistant:event', handler);
+      return () => { ipcRenderer.removeListener('assistant:event', handler); };
+    },
+  },
+
+  // プロジェクトの .arsist 書き出し / 読み込みと、外での変更の知らせ
+  projectPackage: {
+    export: (projectPath: string, bundleExtensions: boolean) => ipcRenderer.invoke('project:export-package', projectPath, bundleExtensions),
+    import: () => ipcRenderer.invoke('project:import-package'),
+    installStagedExtension: (stagedDir: string) => ipcRenderer.invoke('project:install-staged-extension', stagedDir),
+    onExternalChange: (callback: (payload: { projectPath: string; files: string[] }) => void) => {
+      const handler = (_: unknown, payload: { projectPath: string; files: string[] }) => callback(payload);
+      ipcRenderer.on('project:external-change', handler);
+      return () => { ipcRenderer.removeListener('project:external-change', handler); };
+    },
+    /** 書き出し / 読み込みの最中 (選択画面を閉じてから終わるまで)。終わると null */
+    onBusy: (callback: (state: { action: 'export' | 'import'; file: string } | null) => void) => {
+      const handler = (_: unknown, state: { action: 'export' | 'import'; file: string } | null) => callback(state);
+      ipcRenderer.on('project:package-busy', handler);
+      return () => { ipcRenderer.removeListener('project:package-busy', handler); };
+    },
   },
 
   // ウィンドウ操作

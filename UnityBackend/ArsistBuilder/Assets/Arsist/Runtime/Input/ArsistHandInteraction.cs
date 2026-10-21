@@ -32,7 +32,11 @@ namespace Arsist.Runtime.Input
     [UnityEngine.Scripting.Preserve]
     public class ArsistHandInteraction : MonoBehaviour
     {
-#if XR_HANDS
+        // 直列化するフィールドは #if の外に置く。XR_HANDS はビルドの途中で立つ define なので、
+        // 中に置くと「エディタ (define 無しで読み込み済み) とプレイヤーでクラスの形が違う」になり、
+        // Unity が `script class layout is incompatible between the editor and the player` でビルドを止める
+        // (2026-10 に XR_HANDS を初めて立てたとき実際に踏んだ)。
+#pragma warning disable CS0414 // XR_HANDS が無いビルドでは使われない
         [Header("Ray")]
         [Tooltip("指先からのレイの最大検出距離(m)")]
         [SerializeField] private float _maxDistance = 5f;
@@ -47,6 +51,9 @@ namespace Arsist.Runtime.Input
         [SerializeField] private bool _showRay = true;
         [SerializeField] private Color _rayColor = new Color(0.35f, 0.75f, 1f, 0.8f);
         [SerializeField] private Color _rayPinchingColor = new Color(1f, 0.55f, 0.15f, 0.9f);
+#pragma warning restore CS0414
+
+#if XR_HANDS
 
         private sealed class HandState
         {

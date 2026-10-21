@@ -1,0 +1,139 @@
+{
+  "id": "quest-input",
+  "version": "1.0.0",
+  "name": {
+    "en": "All Quest input (controllers, hands, keyboard, mic)",
+    "ja": "Quest の入力ぜんぶ (コントローラー・手・キーボード・マイク)"
+  },
+  "description": {
+    "en": "Every Touch button, stick and trigger with vibration; hand tracking with 26 joints, pinch and gestures (fist, point, peace, open, thumbs up); the system keyboard and Bluetooth keyboards; the microphone with level, speech start/end and WAV recording; headset on/off, recenter and refresh rate. Usable from scripts, from UI bindings (input.*), as script events (quest-input:*), and without code: objects can be grabbed and thrown.",
+    "ja": "Touch コントローラーの全ボタン・スティック・トリガーと振動、手の 26 関節・つまみ・ジェスチャー (グー・指差し・ピース・パー・グッド)、システムキーボードと Bluetooth キーボード、マイク (音量・話し始め / 終わり・WAV 録音)、ヘッドセットの着脱・リセンター・リフレッシュレート。スクリプト・UI の表示 (input.*)・スクリプトイベント (quest-input:*) から使え、コード無しでも物をつかんで投げられます。"
+  },
+  "tags": ["feature:text-input", "feature:hand-tracking"],
+  "requires": {
+    "all": ["cap:controllers", "cap:hand-tracking", "sdk:meta-core"]
+  },
+  "minIrVersion": 4,
+  "data": {
+    "version": 1,
+    "settings": [
+      {
+        "key": "publishToStore",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Put input state in the store (input.*, mic.*)", "ja": "入力の状態をストアに入れる (input.* / mic.*)" },
+        "help": {
+          "en": "UI text can show input.right.gesture, input.mode, mic.level … directly. Written only when a value changes.",
+          "ja": "input.right.gesture / input.mode / mic.level などを UI の文字にそのまま出せます。値が変わったときだけ書きます。"
+        }
+      },
+      {
+        "key": "scriptEvents",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Fire script events (quest-input:*)", "ja": "スクリプトイベントを鳴らす (quest-input:*)" },
+        "help": {
+          "en": "A script with trigger event \"quest-input:right.a.down\" runs when A is pressed — no on() needed.",
+          "ja": "トリガーが event「quest-input:right.a.down」のスクリプトが、A を押したときに走ります (on() を書かなくてよい)。"
+        }
+      },
+      {
+        "key": "physicalKeyboard",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Read Bluetooth keyboards", "ja": "Bluetooth キーボードを読む" }
+      },
+      {
+        "key": "micAutoStart",
+        "type": "boolean",
+        "default": false,
+        "label": { "en": "Start the microphone on launch", "ja": "起動したらマイクを開く" },
+        "help": {
+          "en": "Asks for the microphone permission the first time. Off: a script calls mic.start() or mic.record().",
+          "ja": "初回にマイクの許可を求めます。切ると、スクリプトが mic.start() / mic.record() を呼んだときに開きます。"
+        }
+      },
+      {
+        "key": "voiceThreshold",
+        "type": "number",
+        "default": 0.45,
+        "min": 0,
+        "max": 1,
+        "step": 0.05,
+        "label": { "en": "Speech starts above this level", "ja": "話し始めとみなす音量" },
+        "help": {
+          "en": "0..1 on a dB scale (0.5 ≈ -30 dBFS). Raise it in a noisy room.",
+          "ja": "0〜1 (dB 目盛り。0.5 ≈ -30 dBFS)。騒がしい場所では上げます。"
+        }
+      },
+      {
+        "key": "micOutputRate",
+        "type": "select",
+        "default": "16000",
+        "label": { "en": "Recorded audio sample rate", "ja": "録音した音声のサンプルレート" },
+        "options": [
+          { "value": "16000", "label": { "en": "16 kHz (speech recognition)", "ja": "16 kHz (音声認識向け)" } },
+          { "value": "24000", "label": { "en": "24 kHz", "ja": "24 kHz" } },
+          { "value": "48000", "label": { "en": "48 kHz", "ja": "48 kHz" } }
+        ]
+      },
+      {
+        "key": "gestureHoldSeconds",
+        "type": "number",
+        "default": 0.1,
+        "min": 0,
+        "max": 1,
+        "step": 0.05,
+        "label": { "en": "Gesture must hold for (s)", "ja": "ジェスチャーを確定するまでの時間 (秒)" },
+        "help": {
+          "en": "A hand shape counts only after it has been held this long, so passing shapes do not fire.",
+          "ja": "この時間続いた形だけを数えます。指を動かす途中の形で誤反応しないように。"
+        }
+      }
+    ],
+    "object": [
+      {
+        "key": "grab",
+        "type": "select",
+        "default": "none",
+        "label": { "en": "Can be grabbed", "ja": "つかめる" },
+        "help": {
+          "en": "Controller: squeeze the grip near it. Hands: pinch or make a fist on it (panels: fist only, so pinching still presses their buttons).",
+          "ja": "コントローラー: 近くでグリップを握る。手: つまむか握る (パネルは握るだけ。つまむとパネルのボタンを押す操作になるため)。"
+        },
+        "options": [
+          { "value": "none", "label": { "en": "No", "ja": "つかめない" } },
+          { "value": "grab", "label": { "en": "Grab and move", "ja": "つかんで動かす" } },
+          { "value": "throw", "label": { "en": "Grab and throw (falls with gravity)", "ja": "つかんで投げる (重力で落ちる)" } }
+        ]
+      },
+      {
+        "key": "grabWith",
+        "type": "select",
+        "default": "both",
+        "label": { "en": "Grab with", "ja": "何でつかむか" },
+        "options": [
+          { "value": "both", "label": { "en": "Controllers and hands", "ja": "コントローラーと手" } },
+          { "value": "controller", "label": { "en": "Controllers only", "ja": "コントローラーだけ" } },
+          { "value": "hand", "label": { "en": "Hands only", "ja": "手だけ" } }
+        ]
+      },
+      {
+        "key": "hapticOnGrab",
+        "type": "boolean",
+        "default": true,
+        "label": { "en": "Vibrate when grabbed", "ja": "つかんだら振動する" }
+      }
+    ]
+  },
+  "script": {
+    "globals": ["controller", "hands", "mic", "keyboard", "headset"]
+  },
+  "android": {
+    "permissions": ["android.permission.RECORD_AUDIO", "com.oculus.permission.HAND_TRACKING"],
+    "features": [{ "name": "oculus.software.handtracking", "required": false }]
+  },
+  "unity": {
+    "entry": "Arsist.Extensions.QuestInput.QuestInputExtension"
+  }
+}

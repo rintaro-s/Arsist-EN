@@ -17,7 +17,7 @@ export function MainLayout() {
     currentView,
   } = useUIStore();
   // 画像処理とモデルのタブは自前の一覧・設定を持つ全面の画面。左右の枠は空なので出さない。
-  const fullWidth = currentView === 'vision' || currentView === 'models';
+  const fullWidth = currentView === 'vision' || currentView === 'models' || currentView === 'extensions';
 
   const isDraggingLeft = useRef(false);
   const isDraggingRight = useRef(false);

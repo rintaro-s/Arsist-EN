@@ -5,12 +5,24 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Play, Download, Plus, Trash2, CheckCircle,
-  Clock, Zap, MousePointer, RefreshCw, Info,
+  Clock, Zap, MousePointer, RefreshCw, BookOpen, Search, X, ChevronDown, ChevronRight, Puzzle,
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
-import { useT } from '../../i18n';
+import { useI18n, useT } from '../../i18n';
 import type { ScriptTriggerType, ScriptData } from '../../../shared/types';
+import { ENGINE_SCRIPT_API } from '../../../shared/scriptApi';
+import { localized, useExtensions } from '../../extensions/useExtensions';
+import { MiniMarkdown } from '../common/MiniMarkdown';
+import { StorageSection } from '../panels/StorageSection';
+
+// 早見表の開閉と幅 (この端末だけの好み。保存できなくても動く)
+function readPref(key: string, fallback: string): string {
+  try { return window.localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function writePref(key: string, value: string) {
+  try { window.localStorage.setItem(key, value); } catch { /* 保存できなくてもよい */ }
+}
 
 // ========================================
 // ScriptEditor (main view)
@@ -27,6 +39,42 @@ export function ScriptEditor() {
   const [dirty, setDirty] = useState(false);
   const [exportCopied, setExportCopied] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showRef, setShowRef] = useState(() => readPref('arsist.scriptRef.open', '1') === '1');
+  const [refWidth, setRefWidth] = useState(() => Number(readPref('arsist.scriptRef.width', '400')) || 400);
+  const setRefOpen = (open: boolean) => { setShowRef(open); writePref('arsist.scriptRef.open', open ? '1' : '0'); };
+
+  /** 早見表で押した呼び方を、カーソルの位置に入れる */
+  const insertAtCursor = (text: string) => {
+    const ta = textareaRef.current;
+    const start = ta ? ta.selectionStart : code.length;
+    const end = ta ? ta.selectionEnd : code.length;
+    const next = code.slice(0, start) + text + code.slice(end);
+    setCode(next);
+    setDirty(true);
+    requestAnimationFrame(() => {
+      if (!ta) return;
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = start + text.length;
+    });
+  };
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = refWidth;
+    let latest = startW;
+    const move = (ev: MouseEvent) => {
+      latest = Math.min(720, Math.max(260, startW - (ev.clientX - startX)));
+      setRefWidth(latest);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      writePref('arsist.scriptRef.width', String(latest));
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
 
   useEffect(() => {
     if (script) {
@@ -110,6 +158,14 @@ export function ScriptEditor() {
         </div>
         <div className="flex items-center gap-1">
           <TriggerBadge trigger={script.trigger} />
+          <button
+            onClick={() => setRefOpen(!showRef)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs transition-colors ${showRef ? 'bg-arsist-accent/20 text-arsist-accent' : 'bg-arsist-hover hover:bg-arsist-active text-arsist-text'}`}
+            title={t('script.ref.toggle')}
+          >
+            <BookOpen size={12} />
+            <span>{t('script.ref.button')}</span>
+          </button>
           <div className="w-px h-4 bg-arsist-border mx-1" />
           <button
             onClick={handleSave}
@@ -131,10 +187,8 @@ export function ScriptEditor() {
         </div>
       </div>
 
-      {/* API Reference (collapsible) */}
-      <ApiQuickRef />
-
-      {/* Code area */}
+      {/* Code area + API reference */}
+      <div className="flex-1 overflow-hidden flex">
       <div className="flex-1 overflow-hidden relative">
         <div className="absolute inset-0 flex">
           {/* Line numbers */}
@@ -153,6 +207,18 @@ export function ScriptEditor() {
             autoCapitalize="off"
           />
         </div>
+      </div>
+      {showRef && (
+        <>
+          <div
+            className="w-1 shrink-0 cursor-col-resize hover:bg-arsist-accent/40 bg-arsist-bg"
+            onMouseDown={startResize}
+          />
+          <div style={{ width: refWidth }} className="shrink-0 overflow-hidden">
+            <ApiDrawer onInsert={insertAtCursor} onClose={() => setRefOpen(false)} />
+          </div>
+        </>
+      )}
       </div>
 
       {/* Footer */}
@@ -206,98 +272,184 @@ function TriggerBadge({ trigger }: { trigger: ScriptData['trigger'] }) {
 }
 
 // ========================================
-// API quick reference
+// API reference (side drawer)
 // ========================================
+//
+// 中身は src/shared/scriptApi.ts (エージェントの早見表と同じ元) と、有効な拡張機能の README の
+// 「## スクリプト」節。ここに API を書き写さないこと (前に書き写した表は、無い event.emit を載せていた)。
 
-const API_SECTIONS = [
-  {
-    label: 'api',
-    color: '#4ec9b0',
-    items: [
-      { sig: "api.get(url, callback)", desc: "script.apiGetDesc" },
-      { sig: "api.post(url, body, callback)", desc: "script.apiPostDesc" },
-    ],
-  },
-  {
-    label: 'ui',
-    color: '#569cd6',
-    items: [
-      { sig: "ui.setText(id, text)", desc: "script.uiSetTextDesc" },
-      { sig: "ui.setVisibility(id, bool)", desc: "script.uiSetVisibilityDesc" },
-      { sig: "ui.setColor(id, '#RRGGBB')", desc: "script.uiSetColorDesc" },
-      { sig: "ui.setAlpha(id, 0.0~1.0)", desc: "script.uiSetAlphaDesc" },
-    ],
-  },
-  {
-    label: 'event',
-    color: '#e9c46a',
-    items: [
-      { sig: "event.emit(name, payload)", desc: "script.eventEmitDesc" },
-      { sig: "event.on(name, callback)", desc: "script.eventOnDesc" },
-    ],
-  },
-  {
-    label: 'store',
-    color: '#f4a261',
-    items: [
-      { sig: "store.get(key)", desc: "script.storeGetDesc" },
-      { sig: "store.set(key, value)", desc: "script.storeSetDesc" },
-    ],
-  },
-  {
-    label: 'model',
-    color: '#c586c0',
-    items: [
-      { sig: "model.generate(name, prompt, { onToken }, cb)", desc: "script.modelGenerateDesc" },
-      { sig: "model.embed(name, text, cb)", desc: "script.modelEmbedDesc" },
-      { sig: "model.similarity(a, b)", desc: "script.modelSimilarityDesc" },
-      { sig: "model.classifyText(name, text, cb)", desc: "script.modelClassifyDesc" },
-      { sig: "model.runImage(name, cb)", desc: "script.modelRunImageDesc" },
-      { sig: "model.run(name, inputs, cb)", desc: "script.modelRunDesc" },
-      { sig: "model.stop(name) / model.list()", desc: "script.modelStopDesc" },
-    ],
-  },
-  {
-    label: 'log / error',
-    color: '#9e9e9e',
-    items: [
-      { sig: "log(message)", desc: "script.logDesc" },
-      { sig: "error(message)", desc: "script.errorDesc" },
-    ],
-  },
-];
+/** "a(x) / b(y, [1, 2])" を括弧の外の " / " で分ける。 */
+function splitSignature(sig: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (let i = 0; i < sig.length; i++) {
+    const c = sig[i];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth = Math.max(0, depth - 1);
+    if (depth === 0 && sig.startsWith(' / ', i)) {
+      parts.push(cur.trim());
+      cur = '';
+      i += 2;
+      continue;
+    }
+    cur += c;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
 
-function ApiQuickRef() {
+/** README の「## スクリプト / ## Scripts」節 (次の ## まで)。無ければ null。src/main/mcp/scriptReference.ts と同じ規則。 */
+function readmeScriptSection(text: string): string | null {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^##\s*(スクリプト|Scripts?)(\s|$|\()/.test(l));
+  if (start < 0) return null;
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^##\s/.test(l));
+  return (end < 0 ? rest : rest.slice(0, end)).join('\n').trim();
+}
+
+interface ExtensionScriptRef {
+  id: string;
+  name: string;
+  globals: string[];
+  section: string | null;
+}
+
+function useExtensionScriptRefs(): ExtensionScriptRef[] {
+  const { lang } = useI18n();
+  const project = useProjectStore((s) => s.project);
+  const { data } = useExtensions(project?.targetDevice);
+  const [sections, setSections] = useState<Record<string, string | null>>({});
+  const enabled = (data?.extensions ?? []).filter((e) =>
+    project?.extensions?.[e.manifest.id]?.enabled && (e.manifest.script?.globals?.length ?? 0) > 0);
+  const key = enabled.map((e) => `${e.manifest.id}@${e.manifest.version}`).join(',');
+
+  useEffect(() => {
+    let alive = true;
+    const api = window.electronAPI?.extensions;
+    if (!api) return;
+    void Promise.all(enabled.map(async (e) => {
+      const r = await api.readme(e.manifest.id).catch(() => null);
+      return [e.manifest.id, r?.ok && r.text ? readmeScriptSection(r.text) : null] as const;
+    })).then((pairs) => { if (alive) setSections(Object.fromEntries(pairs)); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return enabled.map((e) => ({
+    id: e.manifest.id,
+    name: localized(e.manifest.name, lang),
+    globals: e.manifest.script?.globals ?? [],
+    section: sections[e.manifest.id] ?? null,
+  }));
+}
+
+const TRIGGER_KEYS = ['onStart', 'onUpdate', 'interval', 'event', 'app', 'shared'] as const;
+
+function ApiDrawer({ onInsert, onClose }: { onInsert: (text: string) => void; onClose: () => void }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const { lang } = useI18n();
+  const [query, setQuery] = useState('');
+  const [showTriggers, setShowTriggers] = useState(false);
+  const extensions = useExtensionScriptRefs();
+  const q = query.trim().toLowerCase();
+
+  const sections = ENGINE_SCRIPT_API.map((sec) => ({
+    ...sec,
+    entries: sec.entries.filter((e) => !q
+      || sec.name.toLowerCase().includes(q)
+      || e.sig.toLowerCase().includes(q)
+      || (lang === 'ja' ? e.ja : e.en).toLowerCase().includes(q)),
+  })).filter((sec) => sec.entries.length > 0);
+  const extMatches = extensions.filter((e) => !q
+    || e.name.toLowerCase().includes(q)
+    || e.globals.some((g) => g.toLowerCase().includes(q))
+    || (e.section ?? '').toLowerCase().includes(q));
 
   return (
-    <div className="shrink-0 border-b border-arsist-border bg-arsist-surface">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-arsist-muted hover:text-arsist-text transition-colors"
-      >
-        <Info size={12} />
-        <span>{t('script.apiReference')}</span>
-        <span className="ml-auto text-[10px] opacity-50">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className="px-3 pb-3 grid grid-cols-1 gap-2 max-h-52 overflow-y-auto">
-          {API_SECTIONS.map((sec) => (
-            <div key={sec.label}>
-              <div className="text-[10px] font-mono font-bold mb-1" style={{ color: sec.color }}>{sec.label}</div>
-              <div className="space-y-0.5">
-                {sec.items.map((item) => (
-                  <div key={item.sig} className="flex items-start gap-2">
-                    <code className="text-[10px] font-mono text-arsist-text/80 shrink-0">{item.sig}</code>
-                    <span className="text-[10px] text-arsist-muted">— {t(item.desc)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+    <div className="h-full flex flex-col bg-arsist-surface overflow-hidden">
+      <div className="flex items-center gap-1.5 px-3 py-2 shrink-0">
+        <BookOpen size={13} className="text-arsist-accent" />
+        <span className="text-xs font-semibold flex-1">{t('script.apiReference')}</span>
+        <button className="btn-icon" onClick={onClose} title={t('script.ref.close')}><X size={13} /></button>
+      </div>
+      <div className="px-3 pb-2 shrink-0">
+        <div className="relative">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-arsist-muted" />
+          <input className="input text-xs" style={{ paddingLeft: 26 }} value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('script.ref.search')} />
         </div>
-      )}
+        <p className="text-[10px] text-arsist-muted mt-1.5">{t('script.ref.clickToInsert')}</p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-3">
+        {/* トリガー */}
+        <div>
+          <button className="w-full flex items-center gap-1 text-[11px] font-semibold text-arsist-text hover:text-arsist-accent"
+            onClick={() => setShowTriggers((v) => !v)}>
+            {showTriggers ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {t('script.ref.triggers')}
+          </button>
+          {showTriggers && (
+            <ul className="mt-1.5 space-y-1.5">
+              {TRIGGER_KEYS.map((k) => (
+                <li key={k} className="text-[10px] text-arsist-muted leading-snug">{t(`script.ref.trigger.${k}`)}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {sections.map((sec) => (
+          <div key={sec.name}>
+            <div className="text-[11px] font-mono font-bold" style={{ color: sec.color }}>{sec.name}</div>
+            <p className="text-[10px] text-arsist-muted leading-snug mb-1">{lang === 'ja' ? sec.ja : sec.en}</p>
+            <div className="space-y-1.5">
+              {sec.entries.map((entry) => (
+                <div key={entry.sig} className="rounded-md bg-arsist-bg/60 px-2 py-1.5">
+                  <div className="flex flex-wrap gap-x-1.5 gap-y-0.5">
+                    {splitSignature(entry.sig).map((part) => (
+                      <button key={part} onClick={() => onInsert(part)} title={t('script.ref.insert')}
+                        className="text-left text-[10.5px] font-mono text-arsist-text hover:text-arsist-accent break-all">
+                        {part}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-arsist-muted leading-snug mt-0.5">{lang === 'ja' ? entry.ja : entry.en}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {/* 拡張機能 */}
+        {extMatches.length > 0 && (
+          <div className="pt-1 space-y-3">
+            <div className="text-[11px] font-semibold text-arsist-text flex items-center gap-1"><Puzzle size={12} />{t('script.ref.extensions')}</div>
+            {extMatches.map((ext) => (
+              <div key={ext.id} className="space-y-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-semibold text-arsist-text">{ext.name}</span>
+                  {ext.globals.map((g) => (
+                    <button key={g} onClick={() => onInsert(g + '.')} className="text-[10px] font-mono px-1.5 rounded bg-arsist-accent/15 text-arsist-accent hover:bg-arsist-accent/25">{g}</button>
+                  ))}
+                </div>
+                {ext.section ? (
+                  <MiniMarkdown source={ext.section} className="text-[11px]" />
+                ) : (
+                  <p className="text-[10px] text-arsist-muted">{t('script.ref.noExtensionSection')}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {extensions.length === 0 && !q && (
+          <p className="text-[10px] text-arsist-muted">{t('script.ref.noExtensions')}</p>
+        )}
+        {sections.length === 0 && extMatches.length === 0 && (
+          <p className="text-[11px] text-arsist-muted text-center py-6">{t('script.ref.noMatch')}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -317,11 +469,13 @@ export function ScriptInspector() {
     return (
       <div className="h-full flex flex-col">
         <div className="panel-header"><span>{t('script.scriptInspector')}</span></div>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center text-arsist-muted text-[11px]">
+        <div className="flex-1 overflow-y-auto p-3 space-y-4">
+          <div className="text-center text-arsist-muted text-[11px] py-6">
             <Zap size={24} className="mx-auto mb-2 opacity-20" />
             <p>{t('script.selectScript')}</p>
           </div>
+          {/* 端末に保存する値 (project.storage.persist)。スクリプトが書く値なので、スクリプトタブに置く */}
+          <StorageSection />
         </div>
       </div>
     );
@@ -431,6 +585,11 @@ export function ScriptInspector() {
             </div>
           )}
         </div>
+
+        <div className="h-px bg-arsist-border" />
+
+        {/* 端末に保存する値 (project.storage.persist) */}
+        <StorageSection />
 
         <div className="h-px bg-arsist-border" />
 

@@ -27,7 +27,15 @@
     "make:sample-onnx": "npm run build:main && node scripts/make-sample-onnx.js",
     "spike:mlkit": "node scripts/run-mlkit-spike.mjs",
     "smoke:editor": "node tools/editor-smoke/smoke.mjs",
-    "logs": "node scripts/arsist-logs.mjs"
+    "logs": "node scripts/arsist-logs.mjs",
+    "ext:new": "node scripts/ext-new.mjs",
+    "ext:pack": "node scripts/ext-tools.mjs pack",
+    "ext:install": "node scripts/ext-tools.mjs install",
+    "ext:link": "node scripts/ext-tools.mjs link",
+    "ext:unlink": "node scripts/ext-tools.mjs unlink",
+    "ext:links": "node scripts/ext-tools.mjs links",
+    "ext:override": "node scripts/ext-tools.mjs override",
+    "ir:new": "node scripts/ir-new.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -96,6 +104,13 @@
       {
         "from": "Adapters",
         "to": "Adapters",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "Extensions",
+        "to": "Extensions",
         "filter": [
           "**/*"
         ]

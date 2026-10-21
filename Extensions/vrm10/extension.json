@@ -1,0 +1,18 @@
+{
+  "id": "vrm10",
+  "version": "1.0.0",
+  "name": {
+    "en": "VRM 1.0",
+    "ja": "VRM 1.0"
+  },
+  "description": {
+    "en": "Loads VRM 1.0 models (what VRoid Studio and most tools export today) on the device, and VRM 0.x models too (converted on load). Replaces the engine's VRM loading (UniVRM 0.x) with UniVRM 0.131.3's VRM 1.0 loader; expressions, blinking, lip sync, look-at, spring bones and humanoid animations keep working.",
+    "ja": "VRM 1.0 のモデル (今の VRoid Studio などが書き出す形式) を実機で読めるようにします。VRM 0.x のモデルも読み込み時に変換して読みます。エンジンの VRM の読み込み (UniVRM 0.x) を UniVRM 0.131.3 の VRM 1.0 用に置き換えます。表情・まばたき・口の動き・視線・揺れもの・人型の動きはそのまま使えます。"
+  },
+  "minIrVersion": 5,
+  "replaces": ["vrm-loader"],
+  "unity": {
+    "entry": "Arsist.Extensions.Vrm10.Vrm10Extension",
+    "unitypackages": ["Packages/VRM-0.131.3_011b.unitypackage"]
+  }
+}

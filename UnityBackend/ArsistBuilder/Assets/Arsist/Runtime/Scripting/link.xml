@@ -1,0 +1,20 @@
+<linker>
+  <!--
+    スクリプト (Jint) から反射で呼ばれる型。IL2CPP のストリッピングで消えると、実機でだけ
+    「undefined」「No public methods」になる。Assets/link.xml に無い新しいラッパーはここに書く
+    (Unity は Assets 以下のすべての link.xml を読む)。
+  -->
+  <assembly fullname="Assembly-CSharp">
+    <type fullname="Arsist.Runtime.Scripting.JsBridge" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.ScriptRuntimeHost" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.TimersWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.AudioWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.CameraWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.StorageWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.ViewerWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.ModelWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.PerceptionWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Audio.ArsistSoundPlayback" preserve="all" />
+    <type fullname="Arsist.Runtime.Data.ArsistPersistentStore" preserve="all" />
+  </assembly>
+</linker>

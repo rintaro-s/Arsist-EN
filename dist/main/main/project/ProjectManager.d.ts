@@ -1,4 +1,5 @@
 import type { ArsistProject, ProjectTemplate } from '../../shared/types';
+import { type ExtensionDataUpgrade, type MissingRequirement } from '../../shared/extensions';
 export interface CreateProjectOptions {
     name: string;
     path: string;
@@ -23,6 +24,11 @@ export interface PendingUpgrade {
     applied: string[];
     /** 実際に変わった項目 */
     changes: string[];
+    /**
+     * 拡張機能のデータの移行 (拡張機能を更新して、そのデータの形が新しくなったとき)。
+     * IR 本体の版とは独立なので、from === to (本体は今の版) でもこれだけがあることがある。
+     */
+    extensions?: ExtensionDataUpgrade[];
 }
 export interface LoadProjectResult {
     success: boolean;
@@ -33,10 +39,23 @@ export interface LoadProjectResult {
         found: number;
         supported: number;
     };
+    /**
+     * error === 'requirementsMissing' のとき: このプロジェクトが使う拡張機能・端末のうち、
+     * このエディタに無いもの。入れてから開き直す (エディタは開かない)。
+     */
+    missing?: MissingRequirement[];
     /** 古い版だったとき。メモリ上は移行済みだが、承諾されるまで保存できない */
     upgrade?: PendingUpgrade;
+    /**
+     * 読むときに起きたこと (project.json の写しを使った・書きかけの JSON を待っている・足りない項目を補った…)。
+     * エディタはコンソールに出す。AI エージェントが JSON を直接書いたとき、何がどう読まれたかが分かるように。
+     */
+    notices?: string[];
 }
 export declare class ProjectManager {
+    /** 保存したファイルとその中身を知らせる先 (ProjectWatcher.recordOwnWrite) */
+    private writeObserver;
+    setWriteObserver(observer: ((file: string, text: string) => void) | null): void;
     private currentProject;
     private projectPath;
     /**
@@ -45,6 +64,8 @@ export declare class ProjectManager {
      * 古いエディタに戻れなくなるうえ、何が変わったかも残らない。
      */
     private readOnly;
+    /** シーン・UI の 2 つの写しを前回どう見たか (sceneCopies.ts)。プロジェクトが変わったら捨てる */
+    private copiesSeen;
     private pendingUpgrade;
     createProject(options: CreateProjectOptions): Promise<{
         success: boolean;
@@ -73,8 +94,6 @@ export declare class ProjectManager {
     getProjectPath(): string | null;
     private createInitialScene;
     private createInitialUI;
-    private loadScenes;
-    private loadUILayouts;
     private generateUnityManifest;
 }
 //# sourceMappingURL=ProjectManager.d.ts.map

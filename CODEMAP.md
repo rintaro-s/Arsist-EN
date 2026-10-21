@@ -3,7 +3,7 @@
 A machine-readable orientation map. If you are an AI agent modifying this repo, **read this first**, then the
 relevant `doc/NN-*.md` deep-dive. For "where do I change X" jump to [Task index](#task-index).
 
-> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `14-classic-vision`). This file is the fast index +
+> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `17-extensions`). This file is the fast index +
 > the device/SDK responsibility map that those docs don't cover.
 
 ---
@@ -17,6 +17,8 @@ into an Android APK for AR glasses (XREAL) and VR headsets (Meta Quest).
 - **No in-repo head tracking / sensor fusion / HID.** All pose/tracking/rendering is delegated to vendor SDKs
   (`sdk/com.xreal.xr`, `sdk/quest`) through **Unity XR Management + OpenXR / AR Foundation**.
 - Core data model: **DataSource → DataStore → UI** (see `doc/00-overview.md`).
+- Characters, voice, camera stills and on-device memory (IR v5): `doc/18-characters-voice-memory.md`. Script APIs are
+  listed once in `src/shared/scriptApi.ts` (editor reference + agent reference).
 
 ## Tech stack per layer
 
@@ -28,7 +30,7 @@ into an Android APK for AR glasses (XREAL) and VR headsets (Meta Quest).
 | IR type definitions (source of truth) | TypeScript | [src/shared/types.ts](src/shared/types.ts) |
 | Unity build + runtime engine | C# | [UnityBackend/ArsistBuilder/](UnityBackend/ArsistBuilder/) |
 | Device adapters | JSON + C# | [Adapters/](Adapters/) |
-| MCP server (AI authoring) | JS | [scripts/mcp-ir-server.mjs](scripts/mcp-ir-server.mjs) |
+| MCP tools + server, built-in AI assistant | TypeScript | [src/main/mcp/](src/main/mcp/), [src/main/agent/](src/main/agent/) (launcher [scripts/mcp-ir-server.mjs](scripts/mcp-ir-server.mjs)) |
 | Remote control (runtime) | Python | [python/Control.py](python/Control.py) |
 
 Build system: **npm + Vite + tsc + electron-builder** (no CMake/Cargo). Unity project pinned in
@@ -41,7 +43,11 @@ Build system: **npm + Vite + tsc + electron-builder** (no CMake/Cargo). Unity pr
 ### Electron main — `src/main/`
 | File | Responsibility |
 |------|----------------|
-| [main.ts](src/main/main.ts) | App lifecycle, IPC handlers, menu, MCP spawn, Unity path detection, OS tuning |
+| [main.ts](src/main/main.ts) | App lifecycle, IPC handlers, menu, project watcher, Unity path detection, OS tuning |
+| [ipc/aiIpc.ts](src/main/ipc/aiIpc.ts) | IPC for MCP agent registration, the built-in assistant, and `.arsist` project export/import |
+| `mcp/` | `tools.ts` (all 41 IR tools, shared by MCP and the assistant), `server.ts` (stdio server), `agentTargets.ts` (one-click registration into Claude Code / Codex / Qwen Code / …), `launch.ts` (launch spec + self-test), `scriptReference.ts` |
+| [agent/assistant.ts](src/main/agent/assistant.ts) | Built-in agent: OpenAI-compatible chat completions + function calling, snapshot/undo in `Backups/agent/` |
+| `project/projectIO.ts`, `projectWatcher.ts`, `projectPackage.ts` | Atomic writes + per-project write queue for out-of-editor edits; reload on external change; `.arsist` project export/import (bundles extensions) |
 | [preload.ts](src/main/preload.ts) | contextBridge IPC surface exposed to renderer |
 | [project/ProjectManager.ts](src/main/project/ProjectManager.ts) | IR create/load/save/export; old-format projects open read-only until the user accepts an upgrade |
 | [project/migrations.ts](src/main/project/migrations.ts) | IR version migrations (`CURRENT_IR_VERSION` in `src/shared/irVersion.ts`); idempotent, tested |
@@ -57,11 +63,13 @@ Editor views switched by `uiStore.currentView`: `scene` / `ui` / `dataflow` / `s
 - `components/panels/` — Left (hierarchy), Right (inspector), Bottom.
 - `components/vision/` — the image-pipeline editor (its tab is hidden unless Settings turns it on; existing
   projects keep building either way): start screen, storyboard (horizontal cards with each step's result picture, kind-coloured wires, drag, bypass), stage (overlay/raw/compare, legend, pixel readout, eyedropper for colour/threshold, drag-to-set viewing rect), timeline (video / photo sequences / device frames), add-step picker (every candidate tried on the current picture via `--probe`), step inspector, outputs (world / anchor / store / image), device import, ONNX model panel; `viewport/VisionEditor.tsx` just re-exports it. Editor-only state in `vision/visionStore.ts`; materials in `vision/testMedia.ts`; drafting/auto-wiring in `vision/draft.ts`; icons in `vision/opIcons.tsx`.
-- `components/dialogs/` — Build, Settings, NewProject, Preview, MCP, **SetupWizard** (SDK/Unity path setup), Error, **IrUpgradeDialog** (old project format).
+- `components/character/` — VRM **Character** inspector section (starting animation, blink, breathe, look at the user, FBX import) and the 3D-view preview (`animationRetarget.ts`: humanoid FBX → VRM normalized bones, like three-vrm's Mixamo example); `panels/StorageSection.tsx` — "Saved on the device" (`project.storage.persist`) in the Script tab's right panel; `viewport/RevealText.tsx` — the "write it out" text preview. The Script tab's API drawer is generated from `src/shared/scriptApi.ts`.
+- `components/ai/` — **AssistantPanel** (built-in AI chat), **ExternalChangeBanner**; `ai/packageActions.tsx` — `.arsist` export/import flow.
+- `components/dialogs/` — Build, Settings, NewProject, Preview, MCP (agent registration), **SetupWizard** (SDK/Unity path setup), Error, **IrUpgradeDialog** (old project format).
 - `utils/uiCodeSync.ts` — IR ↔ HTML serialization.
 
 ### Unity runtime engine — `UnityBackend/ArsistBuilder/Assets/Arsist/`
-Interprets the IR at runtime, by domain: `Runtime/Scripting/` (Jint JS host + wrappers), `Runtime/Scene/`,
+Interprets the IR at runtime, by domain: `Runtime/Scripting/` (Jint JS host + wrappers; `ScriptRuntimeHost` = timers and main-thread queue, `AudioWrapper`, `CameraWrapper` (stills cropped around a world point), `StorageWrapper`, `JsBridge` = JS⇄CLR values via JSON), `Runtime/Data/ArsistPersistentStore.cs` (store keys kept on the device), `Runtime/Audio/` (WAV/base64 decoding, lip sync), `Runtime/VRM/ArsistCharacter.cs` (animator controller, blink, breathing, look at the user, walkTo), `Runtime/UI/ArsistTextReveal.cs`, `Runtime/Scene/`,
 `Runtime/UI/`, `Runtime/DataFlow/`, `Runtime/Data/`, `Runtime/VRM/`, `Runtime/Network/` (WebSocket for Python),
 `Runtime/Input/` (gaze), `Runtime/Events/`, `Runtime/Audio/`, `Runtime/Animation/`, `Runtime/Pooling/`,
 `Runtime/Perception/` (image anchors: `Vision/` = device-independent recogniser, `Sources/` = per-device camera
@@ -71,7 +79,43 @@ frame supply through `GpuFrameReader` (GPU downscale + async readback, row order
 `Editor/` holds the build pipeline + code generators. Key: [Editor/ArsistBuildPipeline.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Editor/ArsistBuildPipeline.cs) (`BuildFromCLI` entry), [Runtime/XROriginSetup.cs](UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/XROriginSetup.cs) (runtime rig).
 
 ### Device adapters — `Adapters/<device>/`
-Each = `adapter.json` (metadata) + `AndroidManifest.xml` + a C# build patcher. Present: `XREAL_One/`, `Meta_Quest/`.
+Each = `adapter.json` (metadata + **tags**) + `AndroidManifest.xml` + a C# build patcher. Present: `XREAL_One/`,
+`Meta_Quest/`, `Android_Phone/`. A device's tags = `id` → `device:*`, `build.platform` → `platform:*`,
+`capabilities` (true) → `cap:*`, plus `tags` (`src/shared/adapterTags.ts`).
+
+### Extensions — `Extensions/<id>/`, samples in `samples/extensions/<id>/` (doc/17)
+One folder per extension: `extension.json` (what, `requires` tags, settings/per-object fields, data version +
+migrations, script globals, Android permissions, C# entry), `Runtime/*.cs`, optional `Editor/*.cs`.
+- Shared model: [src/shared/extensions.ts](src/shared/extensions.ts) (validate / resolve / migrate data),
+  [tags.ts](src/shared/tags.ts), [irOps.ts](src/shared/irOps.ts), [engineFeatures.ts](src/shared/engineFeatures.ts),
+  [engineParts.ts](src/shared/engineParts.ts) (engine parts an extension may replace via `replaces`: `vrm-loader`,
+  `storage-backend`, `script:<built-in>`; mirrored by `Runtime/Extensions/ArsistEngineParts.cs`, checked by a test).
+- Main: `src/main/extensions/` (catalog from `Extensions/`, `resources/Extensions`, `<userData>/extensions` and
+  registered folders — `linkedFolders.ts`, config key `extensionFolders`, used in place without copying; staging helpers;
+  `unitypackage.ts` unpacks an extension's `.unitypackage` without Unity and remembers what it placed). Build:
+  `UnityBuilder.planExtensions` (also decides who replaces which engine part → `manifest.replacements`) / `stageExtensions`
+  (`stageExtensionUnityPackages`, `dropReplacedEngineSdks`).
+- Unity: `Runtime/Extensions/` (`ArsistRuntimeExtension`, `ArsistExtensionContext`, `ArsistScriptBridge`,
+  `ArsistExtensions`, `ArsistExtensionHost`, `ArsistObjectExt`, `ArsistEngineParts`), `Editor/Extensions/ArsistBuildExtensions.cs`.
+  Replaceable parts' interfaces: `Runtime/VRM/IArsistVrmLoader.cs` (+ `IArsistVrmFace` / `IArsistVrmEyes`, used by
+  `VRMExpressionController` / `VRMLookAtController`), `Runtime/Data/IArsistStorageBackend.cs` (+ the default file backend).
+- Editor UI: the **Extensions tab** `components/extensions/ExtensionsWorkspace.tsx` (list with on/off switches, description,
+  where it runs, settings, per-object options and which objects use them, README via `components/common/MiniMarkdown.tsx`);
+  `components/panels/ExtensionsSection.tsx` keeps the right-panel summary and the per-object inspector section
+  (all forms generated from `extension.json`).
+- Samples (`samples/extensions/`, not part of the engine; loaded here because the folder is registered with
+  `npm run ext:link -- samples/extensions`): `quest-room` (Quest scene understanding via MRUK: snap to real surfaces, room colliders, outlines,
+  spatial-anchor pins, `room.*`) and `quest-input` (every Quest input — Touch buttons/sticks/haptics, XR Hands
+  joints + gestures, system and Bluetooth keyboards, microphone with speech detection and WAV, headset events —
+  as scripts `controller`/`hands`/`mic`/`keyboard`/`headset`, store `input.*`, script events `quest-input:*`, and
+  no-code grab/throw). Its gesture and audio maths are UnityEngine-free and checked by `npm run test:perception`
+  (`QuestInputChecks`).
+- Official extensions (`Extensions/`, ship with the engine, marked "official" in the Extensions tab): `vrm10` replaces the
+  engine's VRM loading (UniVRM 0.x) with UniVRM 0.131.3's VRM 1.0 loader, carried as
+  `Packages/VRM-0.131.3_011b.unitypackage` (`unity.unitypackages`); VRM 0.x models are converted on load.
+- An extension can name engine features it relies on in its `tags` (`feature:text-input`, `feature:hand-tracking`);
+  the build adds them to `manifest.features` and the pipeline then adds the matching Android declarations
+  (`ArsistBuildPipeline.ManifestUsesFeature` / `WantsSystemKeyboard`).
 
 ---
 
@@ -283,12 +327,31 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   Building with both `controllerRay` and `handTracking` off is rejected (`UnityBuilder.ts` validation, and
   `ArsistBuildPipeline` as a defense-in-depth check) since the built app would be unoperable.
 - **Add a new device** → new folder in [Adapters/](Adapters/) (`adapter.json` + manifest + patcher); see `doc/05-adapter-manager.md`.
+  Give it accurate `capabilities` / `tags` — engine features and extensions find it through those (`doc/17` §1).
+- **Distribute / import an extension** → `.arsist` (zip + `arsist-package.json` with SHA-256 per file):
+  `src/main/extensions/{zip,packages}.ts`, IPC `extensions:import|install|uninstall|export`, CLI `scripts/ext-tools.mjs`.
+  Installs go to `<userData>/extensions/<id>`. Opening a project whose extensions/device are missing →
+  `checkProjectRequirements` (src/shared/extensions.ts) → `MissingRequirementsDialog`.
+- **Add a device as an extension** → `npm run ext:new -- <id> --device <Name>`; adapters from extensions are listed
+  with the built-in ones by `src/main/adapters/adapterDirs.ts` (used by AdapterManager, UnityBuilder, ProjectManager);
+  the renderer's device choices come from `src/renderer/extensions/useDeviceOptions.ts`.
+- **Modify an engine file from an extension** → `npm run ext:override`; applied/restored by
+  `UnityBuilder.stageEngineOverrides` (refuses if the engine's original no longer matches `replaces`).
+- **Add a feature without editing the engine** → an extension: `npm run ext:new -- <id> [--requires <tag>]`,
+  then enable it in the right panel (nothing selected) → Extensions. `doc/17-extensions.md`.
+- **Change the IR's shape** → `npm run ir:new -- "<説明>"`, then write declarative ops in the new
+  `defineMigration` (`src/shared/irOps.ts`). An extension's own data changes via its `data.version` /
+  `data.migrations` instead, with no IR bump. `doc/17` §3.
+- **Which device can do what / why a feature or extension was left out of a build** → the first lines of the
+  build log (`Device tags`, `Features used`, `WARNING: … lacks …`, `extension '…' is enabled but left out`);
+  `UnityBuilder.planExtensions`.
 - **IR schema / a new project field** → [src/shared/types.ts](src/shared/types.ts) (then bridge + Unity consumer).
 - **IR → Unity JSON mapping** → [src/bridge/UnityBridge.ts](src/bridge/UnityBridge.ts).
 - **Editor UI / panels / viewports** → `src/renderer/components/`; state in `src/renderer/stores/`.
 - **In-app JS scripting (Jint)** → `UnityBackend/.../Runtime/Scripting/`.
 - **Runtime remote control (Python/WebSocket)** → [python/](python/) + `UnityBackend/.../Runtime/Network/ArsistWebSocketServer.cs`.
-- **AI/MCP authoring tools** → [scripts/mcp-ir-server.mjs](scripts/mcp-ir-server.mjs); see `doc/09-mcp-server.md`.
+- **AI/MCP authoring tools** → add/change a tool in [src/main/mcp/tools.ts](src/main/mcp/tools.ts) (MCP and the built-in
+  assistant both use it); agent registration in `src/main/mcp/agentTargets.ts`; see `doc/09-mcp-server.md`.
 - **Remote control wire protocol / batch commands** → `ArsistWebSocketServer.cs`
   (`DrainFrames` for framing, `ExecuteBatch` / `DispatchCommand` for dispatch). Note the remote API works in
   **runtime Unity world space**, not editor IR space.

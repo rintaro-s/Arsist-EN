@@ -25,9 +25,21 @@ namespace Arsist.Runtime.Scripting
             _table.Remove(id);
         }
 
+        /// <summary>その id がまだこの物を指しているときだけ外す (同じ id の別の要素を消さない)。</summary>
+        public static void Unregister(string id, GameObject go)
+        {
+            if (_table.TryGetValue(id, out var current) && (current == go || current == null)) _table.Remove(id);
+        }
+
         public static GameObject Find(string id)
         {
-            _table.TryGetValue(id, out var go);
+            if (!_table.TryGetValue(id, out var go)) return null;
+            if (go == null)
+            {
+                // 壊された物 (Unity の null) は表から外す
+                _table.Remove(id);
+                return null;
+            }
             return go;
         }
 
