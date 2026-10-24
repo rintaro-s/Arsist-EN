@@ -1,25 +1,34 @@
 # ProjectManager — `src/main/project/ProjectManager.ts`
 
-Handles all file-system operations for Arsist projects. Called exclusively from the main process via `ipcMain.handle` in `main.ts`.
+Reads and writes **Layster.Virtual** projects (`project.json`) for the editor. Called only from the main process
+via the `project:*` IPC handlers in `main.ts` (`doc/02`). It is the editor's half of the project files; the other
+writers (MCP tools, built-in assistant, `.arsist` import) go through `projectIO.ts` with the same layout and rules
+(see "Related modules").
+
+**Layster.Spatial projects are not handled here.** `project.spatial.json` is read and written only by
+`src/main/layster/SpatialProjectManager.ts` (IPC `spatial:*`, `doc/19` §4). Which kind a folder is decides
+`detectProjectKind` (`src/main/layster/projectKind.ts`): `project.spatial.json` → Spatial, else `project.json` →
+Virtual. `createSpatialProjectOnDisk` refuses a folder that already holds either file.
 
 ---
 
-## Project File Layout on Disk
+## Project File Layout on Disk (Virtual)
 
 ```
 <project-root>/
-├── project.json          Top-level ArsistProject (minus large data arrays)
-├── Scenes/
-│   └── <scene-id>.json   One file per SceneData
-├── UI/
-│   └── <layout-id>.json  One file per UILayoutData
-└── Assets/
-    ├── Models/           GLB/GLTF files
-    ├── Textures/
-    └── ...
+├── project.json          The whole ArsistProject, including copies of all scenes and UI layouts
+├── Scenes/<scene-id>.json   One file per SceneData
+├── UI/<layout-id>.json      One file per UILayoutData
+├── Scripts/
+├── Assets/               Models/ Textures/ Fonts/ Audio/ (+ Animations/, Video/, Other/ when imported)
+├── Build/
+└── Backups/              project.<version-tag>.<timestamp>.json, written when an upgrade is accepted
 ```
 
-`project.json` contains the full `ArsistProject` shape **including** all scenes and UI layouts so it is self-contained. The individual `Scenes/` and `UI/` JSON files are written in parallel for diff-friendliness.
+Scenes and UI layouts exist **twice** (inside `project.json` and as individual files). The editor always writes
+both with the same content. When something outside the editor changes only one copy, the **changed copy wins**
+on the next load (`sceneCopies.ts`); the stale copy is then rewritten to match. Never write a loader that
+silently prefers one copy.
 
 ---
 
@@ -27,111 +36,142 @@ Handles all file-system operations for Arsist projects. Called exclusively from 
 
 ### `createProject(options)`
 
-Creates a new project directory and writes the initial `project.json`.
+Creates `<options.path>/<options.name>/` (with `Assets/{Textures,Models,Fonts,Audio}`, `Scenes`, `UI`,
+`Scripts`, `Build`) and writes `project.json` plus the first scene and UI layout.
 
-**options shape:**
+**options shape (`CreateProjectOptions`):**
 ```typescript
 {
   name: string
   path: string          // parent directory; project goes inside path/name/
   template: ProjectTemplate
-  targetDevice: string
+  targetDevice: string  // adapter folder name, e.g. 'Meta_Quest'
+  trackingMode?: string       // accepted but currently unused
+  presentationMode?: string   // accepted but currently unused
 }
 ```
 
-Sets up AR settings and design system defaults based on `template`:
+The new project carries `layster: virtualHeaderFor(CURRENT_IR_VERSION)` and `irVersion: CURRENT_IR_VERSION`
+(6 = Layster.Virtual β 1.0.0), empty `models` / `extensions`, `storage: { persist: [] }`, a default design system
+and build settings (`packageName: com.arsist.<name>`, `minSdkVersion` 32 for Quest-like targets / 29 otherwise,
+`targetSdkVersion: 34`, remote input UDP 19100 / TCP 19101).
 
-| Template | trackingMode | presentationMode |
-|----------|-------------|-----------------|
-| `3d_ar_scene` | `6dof` | `world_anchored` |
-| `2d_floating_screen` | `3dof` | `floating_screen` |
-| `head_locked_hud` | `head_locked` | `head_locked_hud` |
+AR settings come from `createARSettings(template)` in `src/main/project/defaults.ts` (shared with the migrations,
+so new and migrated projects get the same defaults; all with `interaction: { controllerRay: true, handTracking: false }`):
 
-Returns `{ success: true, project: ArsistProject, projectPath: string }`.
+| Template | trackingMode | presentationMode | defaultDepth | Initial content |
+|----------|-------------|------------------|--------------|-----------------|
+| `3d_ar_scene` | `6dof` | `world_anchored` | 2 | `SampleCube` at z = 2 |
+| `2d_floating_screen` | `3dof` | `floating_screen` | 2 | `FloatingScreen` plane; `floatingScreen` 1.6 × 0.9 m at 2 m |
+| `head_locked_hud` | `head_locked` | `head_locked_hud` | 1 | HUD with `STATUS` / `00:00:00` texts |
+
+Returns `{ success: true, project }` (the renderer derives the path as `path/name`).
 
 ---
 
 ### `loadProject(projectPath)`
 
-Reads `project.json` and runs backward-compatibility patches, then returns the normalised `ArsistProject`.
+Returns `LoadProjectResult` `{ success, project?, error?, irVersion?, missing?, upgrade?, notices? }`.
 
-**Backward-compatibility logic (in `migrateProject`):**
+1. Reads `project.json`. Invalid JSON → `error: 'project.json: <line/column>'` (the editor keeps its current
+   state and reloads once the file is fixed).
+2. `migrateProject(raw)` (`migrations.ts`) brings it to `CURRENT_IR_VERSION` **in memory**. A version newer than
+   this editor → `error: 'irTooNew'` with `irVersion: { found, supported }`; the project is not opened.
+3. `checkProjectRequirements` (`src/shared/extensions.ts`): extensions enabled in the project and the target
+   device must exist in this editor (extension catalog + built-in adapters). Otherwise
+   `error: 'requirementsMissing'` + `missing`, and the editor offers to import the `.arsist` / folder.
+4. Scenes and UI layouts are taken from whichever copy changed (`resolveSceneAndUiCopies`), with missing fields
+   filled in by `src/shared/irRepair.ts`; `scripts` defaults to `[]`.
+5. Extension data (`extensions.<id>`, `ext.<id>` on objects) is migrated per extension
+   (`migrateExtensionData`); such an upgrade is reported even when the IR itself is current.
+6. If anything was migrated, `upgrade: PendingUpgrade` is returned (`from`, `to`, `applied` migration ids,
+   `changes`, `extensions?`) and the manager is **read-only** until `upgradeProject()`. Nothing is written in
+   that state (not even `Scripts/`).
+7. Otherwise stale scene/UI copies are rewritten to match (atomically) and reported in `notices`.
 
-1. If `scenes` is missing, creates a default scene with `id: 'scene-1'`.
-2. If `uiLayouts` is missing, creates a default HUD layout.
-3. If `dataFlow` is missing, initialises `{ dataSources: [], transforms: [] }`.
-4. If `buildSettings` is missing, supplies defaults (`packageName: 'com.arsist.app'`, etc.).
-5. If `arSettings` is missing, supplies defaults from the `appType`.
-6. If `designSystem` is missing, supplies a dark-theme default.
-7. If `scripts` is missing, sets to `[]`.
+The migrations themselves (α1 → … → α5 → β 1.0.0, declarative `irOps`, `npm run ir:new`) are described in
+`doc/15` §3 and `doc/19` §1.3. `migrateProject` also puts the current `layster` header first in the object.
 
-Returns `{ success: true, project: ArsistProject }`.
+---
+
+### `upgradeProject()`
+
+Called by `project:upgrade` after the user accepts the upgrade (`IrUpgradeDialog`). Copies the original
+`project.json` to `Backups/project.<tag>.<timestamp>.json` (`<tag>` = `alpha5`, `beta1.0.0`, … via
+`virtualBackupTag`, so the name tells which Arsist can still read it), sets `irVersion` / `layster` to the current
+version, clears read-only and saves. Returns `{ success, backupPath? }`; on a save failure the pending upgrade is
+restored.
 
 ---
 
 ### `saveProject(data)`
 
-Writes the full project IR back to disk.
-
-**`data` shape:**
-```typescript
-{
-  projectPath: string
-  project: ArsistProject
-}
-```
+`data` is a `Partial<ArsistProject>` merged into the current project (the renderer sends the whole project).
+Refuses with `error: 'readOnly'` while an upgrade is pending.
 
 Steps:
-1. Updates `project.updatedAt` to current ISO timestamp.
-2. Writes `project.json` (full project, spaces: 2).
-3. Ensures `Scenes/` directory, writes `Scenes/<id>.json` for each scene.
-4. Ensures `UI/` directory, writes `UI/<id>.json` for each layout.
+1. Updates `updatedAt`.
+2. Writes `project.json`, every `Scenes/<id>.json` and every `UI/<id>.json` with `atomicWriteJson`
+   (temp file + rename, so neither the editor nor an agent ever reads half a file).
+3. Reports each written file's content to the write observer (`ProjectWatcher.recordOwnWrite`), so the editor's
+   own save is not mistaken for an external change.
+4. Records that both copies are now identical (`seenAfterSave`).
 
 ---
 
 ### `exportProject(options)`
 
-Exports the project in various formats for external use. Not the Unity build export — that goes through `UnityBuilder`.
+Writes the build data as loose files, for inspection or external use. **Not** what the Build dialog uses —
+builds go through `generateBuildManifest` + `UnityBuilder` (`doc/04`, `doc/06`).
 
-**`options` shape:**
+**`options` shape (`ExportOptions`):**
 ```typescript
 {
-  projectPath: string
+  format: 'unity' | 'json' | 'yaml'
   outputPath: string
-  format: 'json' | 'yaml' | 'unity-manifest'
+  includeAssets: boolean
 }
 ```
 
-| Format | Output |
-|--------|--------|
-| `json` | `arsist-export.json` — full project IR as JSON |
-| `yaml` | `arsist-export.yaml` — full project IR as YAML |
-| `unity-manifest` | `manifest.json` — Unity-compatible manifest via `generateUnityManifest()` |
+| Output | When |
+|--------|------|
+| `manifest.json` | `format === 'json'` |
+| `manifest.yaml` | `format === 'yaml'` |
+| `scenes.json`, `ui_layouts.json`, `dataflow.json`, `scripts.json` (enabled scripts) | always |
+| `Assets/` copy | `includeAssets` |
+
+`format: 'unity'` writes no manifest at all.
+
+### Other accessors
+
+`isReadOnly()`, `getPendingUpgrade()`, `getCurrentProject()`, `getProjectPath()`, `setWriteObserver(fn)`.
 
 ---
 
 ## Internal Helpers
 
-### `generateUnityManifest(project)`
+### `generateUnityManifest()` (private)
 
-Builds the manifest object that Unity reads from `Assets/ArsistGenerated/manifest.json`. Includes:
-- Project metadata (id, name, version, targetDevice)
-- AR settings (trackingMode, presentationMode, worldScale)
-- Remote control settings (enableRemoteControl, port, password)
-- DataFlow definition (dataSources, transforms)
-- Build settings (packageName, versionCode, etc.)
-- List of all scene IDs and names
+The manifest used only by `exportProject`: `projectId`, `projectName`, `version`, `irVersion`, `layster`,
+`appType`, `targetDevice`, `arSettings`, `designSystem`, `dataFlow`, `build` (build settings without
+`remoteInput`), `buildSettings`, `remoteInput`, `scripting.enabled`, `models`, `exportedAt`. The build uses the
+richer `generateBuildManifest` in `src/bridge/UnityBridge.ts` instead.
 
-### `generateDefaultScene()`
+### `createInitialScene(template)` / `createInitialUI(template)`
 
-Returns a `SceneData` with `id: 'scene-1'`, `name: 'Main Scene'`, and an empty `objects` array.
+Scene `MainScene` (uuid id) with the template's sample object; UI layout `MainUI` (uuid id) with
+`scope: 'uhd'`, `resolution: 1920 × 1080` and a `FlexColumn` root `Panel`.
 
-### `generateDefaultUILayout()`
+---
 
-Returns a `UILayoutData` with:
-- `scope: 'uhd'`, `resolution: { width: 1920, height: 1080 }`
-- A root `Panel` element with `FlexColumn` layout and a default `Text` child
+## Related modules (`src/main/project/`)
 
-### `migrateProject(project)`
-
-Applies all backward-compatibility patches in-place and returns the patched project. Called automatically during `loadProject`.
+| File | Role |
+|------|------|
+| `migrations.ts` | Virtual version migrations (`MIGRATIONS`, `migrateProject`, `IrVersionError`, `virtualBackupTag`) |
+| `defaults.ts` | `createARSettings`, `createInitialDataFlow`, `migrateAppType` (old names `3D_AR` …), `PROJECT_TEMPLATES` |
+| `projectIO.ts` | Out-of-editor reads/writes: `readProjectFiles` (refuses newer versions; with `forWrite` also older ones), `writeProjectFiles`, `withProjectWrite` (one write at a time per project), `atomicWriteJson` |
+| `sceneCopies.ts` | Picks the changed copy of each scene/UI layout, `syncStaleCopies`, JSON error locations |
+| `projectWatcher.ts` | `ProjectWatcher`: watches the folder (chokidar), ignores content the editor itself wrote, debounces, sends `project:external-change` |
+| `projectPackage.ts` | `.arsist` project export/import (optionally with the extensions it uses) |
+| `animationAssets.ts`, `vrmInfo.ts` | FBX import into `Assets/Animations/<name>.fbx`; VRM 0.x / 1.0 detection |

@@ -24,6 +24,11 @@ export interface UnityBuildConfig {
     /** スクリプトデータ (scripts.json 相当の内容) */
     scriptsData?: object;
     /**
+     * Layster.Spatial のランタイムが読む spatial.json (doc/19-layster.md §4.1、lower.ts が作る)。
+     * Virtual のビルドでは無い (前のビルドの spatial.json は消える)。
+     */
+    spatialData?: object;
+    /**
      * true の場合、作業用Unityプロジェクト（Library/を含む）を捨ててゼロから作り直す。
      * 通常は false（差分ビルド）でよい。キャッシュ由来の不整合を疑うときの逃げ道。
      */

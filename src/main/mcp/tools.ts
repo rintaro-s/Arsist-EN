@@ -31,11 +31,14 @@ import {
 import { matchTagQuery } from '../../shared/tags';
 import { projectFeatureTags, unsupportedFeatures } from '../../shared/engineFeatures';
 import { CURRENT_IR_VERSION, readIrVersion } from '../../shared/irVersion';
+import { describeVirtualIrVersion } from '../../shared/layster/version';
 import { scriptReferenceFor } from './scriptReference';
 import { importAnimation, listAnimations } from '../project/animationAssets';
 import { characterAnimationIssues } from '../../shared/characterChecks';
 import { readVrmSpec } from '../project/vrmInfo';
 import { enginePart, enginePartLabel, planReplacements } from '../../shared/engineParts';
+import { SPATIAL_TOOLS } from './spatialTools';
+import { detectProjectKind } from '../layster/projectKind';
 import { CHARACTER_DEFAULTS } from '../../shared/types';
 
 type Args = Record<string, any>;
@@ -216,10 +219,19 @@ export const ARSIST_TOOLS: ArsistTool[] = [
   // ---- セッション・参照 ----
   {
     name: 'arsist_open_project',
-    description: 'Select the Arsist project folder that later calls use when projectPath is omitted. Returns its summary.',
+    description: 'Select the Arsist project folder that later calls use when projectPath is omitted. Returns its summary and its format: Layster.Virtual (project.json, use the ir_* tools) or Layster.Spatial (project.spatial.json, use the spatial_* tools).',
     inputSchema: { type: 'object', properties: { projectPath: { type: 'string' } }, required: ['projectPath'] },
     readOnly: true,
     async run(args, session) {
+      // Layster.Spatial のフォルダ (project.spatial.json) は別の道具で扱う。形に互換性は無い
+      const kind = await detectProjectKind(args.projectPath);
+      if (kind.kind === 'spatial') {
+        session.projectPath = args.projectPath;
+        return {
+          opened: args.projectPath, name: kind.name, format: kind.label,
+          tools: 'This is a Layster.Spatial project: use the spatial_* tools (start with spatial_reference and spatial_get_project). The ir_* tools do not apply.',
+        };
+      }
       const project = await readProjectFiles(args.projectPath);
       session.projectPath = args.projectPath;
       return { opened: args.projectPath, name: project.name, irVersion: readIrVersion(project), targetDevice: project.targetDevice };
@@ -258,7 +270,11 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         name: p.name,
         appType: p.appType,
         irVersion: version,
-        readOnly: version < CURRENT_IR_VERSION ? 'old format: open it in the Arsist editor and accept the upgrade before editing' : false,
+        // 人とエージェント向けの形式の名前 ('Layster.Virtual β 1.0.0')。判定は irVersion で
+        format: `Layster.Virtual ${describeVirtualIrVersion(version)}`,
+        readOnly: version < CURRENT_IR_VERSION
+          ? `old format (Layster.Virtual ${describeVirtualIrVersion(version)}; current ${describeVirtualIrVersion(CURRENT_IR_VERSION)}): open it in the Arsist editor and accept the upgrade before editing`
+          : false,
         targetDevice: p.targetDevice,
         arSettings: p.arSettings,
         scenes: (p.scenes ?? []).map((s: Args) => ({ id: s.id, name: s.name, objects: (s.objects ?? []).length })),
@@ -1042,6 +1058,8 @@ export const ARSIST_TOOLS: ArsistTool[] = [
       });
     },
   },
+  // Layster.Spatial (project.spatial.json) の道具。spatialTools.ts
+  ...SPATIAL_TOOLS,
 ];
 
 const BY_NAME = new Map(ARSIST_TOOLS.map((t) => [t.name, t]));

@@ -55,6 +55,7 @@ const packages_1 = require("./extensions/packages");
 const ExtensionCatalog_1 = require("./extensions/ExtensionCatalog");
 const aiIpc_1 = require("./ipc/aiIpc");
 const projectWatcher_1 = require("./project/projectWatcher");
+const spatialIpc_1 = require("./layster/spatialIpc");
 const animationAssets_1 = require("./project/animationAssets");
 const vrmInfo_1 = require("./project/vrmInfo");
 const adapterTags_1 = require("../shared/adapterTags");
@@ -120,6 +121,7 @@ function shutdownBackgroundWork() {
         // 止められなくても、下の killAllChildren で木ごと落とす
     }
     projectWatcher.close();
+    (0, spatialIpc_1.closeSpatialWatcher)();
     if ((0, childProcesses_1.trackedCount)() > 0) {
         console.log(`[Arsist] Closing: stopping ${(0, childProcesses_1.trackedCount)()} background process(es): ${(0, childProcesses_1.trackedLabels)().join(', ')}`);
     }
@@ -934,7 +936,9 @@ electron_1.ipcMain.handle('unity:detect-gradle', async () => {
 electron_1.ipcMain.handle('unity:get-path', async () => {
     return store.get('unityPath');
 });
-electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => {
+electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => runUnityBuild(buildConfig));
+/** Unity のビルド。Virtual のビルド画面 ('unity:build') と Layster.Spatial のビルド (spatialIpc) が同じ道を通る */
+async function runUnityBuild(buildConfig) {
     const unityPath = store.get('unityPath');
     const unityVersion = store.get('unityVersion');
     if (!unityPath) {
@@ -962,6 +966,14 @@ electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => {
         ...buildConfig,
         unityVersion: buildConfig?.unityVersion || unityVersion,
     });
+}
+// Layster.Spatial (project.spatial.json) のプロジェクト。作成・読み書き・Mind を試す・ビルド (doc/19-layster.md)
+(0, spatialIpc_1.registerSpatialIpc)({
+    getWindow: () => mainWindow,
+    addRecent: (projectPath) => updateRecentProjects(projectPath),
+    runUnityBuild: (config) => runUnityBuild(config),
+    buildLog: (line) => mainWindow?.webContents.send('unity:build-log', line),
+    getSetting: (key) => store.get(key),
 });
 electron_1.ipcMain.handle('unity:cancel-build', async () => {
     const unityPath = store.get('unityPath');

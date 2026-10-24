@@ -24,22 +24,31 @@
 
 ### 1.1 IR
 
+モデルは Layster.Virtual の `project.json` の `models` に並ぶ。Layster.Spatial の `project.spatial.json` も
+同じ `ModelDefinition` を `models` に持つ (スクリプトの `model.*` は両方で使える)。ただし画像処理の
+`infer` op を流す画像処理タスク (`perception.tasks`) は **Virtual だけ**にある。
+
 ```
 ArsistProject.models?: ModelDefinition[]
 
 ModelDefinition
 ├── id, name, file (Assets/Models/*.onnx), format: 'onnx'
-├── use         image | text | tensor (IR v3)           ← 以下の task〜labels は image のときだけ。text は doc/16
+├── use         image | text | tensor (α3〜)             ← 以下の task〜labels は image のときだけ。text は doc/16
 ├── task        classify | detect | segment | raw      ← `infer` op の出力の型がこれで決まる
 ├── input       { name?, width, height, layout: NCHW|NHWC, channels: 1|3, colorOrder: RGB|BGR,
 │                 scale, mean[], std[], resize: stretch|letterbox, padValue? }
 ├── output      task ごとの読み方 (softmax / boxLayout / maskMode …、src/shared/types.ts を見る)
 ├── labels?     クラス番号 → 名前
-├── backend?    auto | gpu | cpu
-└── inspection? ファイルから読んだこと (参考情報)
+├── backend?    auto | gpu | cpu                        ← Inference Engine のバックエンド
+├── runtime?    auto | unity | onnxruntime              ← 実機の推論器 (doc/16 §3)。取り込み時に演算子を見て決める
+├── includeInBuild?  既定 true。false ならエディタで試せるが APK には入らない (マニフェストから外す)
+└── inspection? ファイルから読んだこと (入出力・opset・演算子・外部の重み。参考情報)
 ```
 
-`VisionOpType` に `infer` が増えた。`params.model` にモデルの id。**出力の型はモデルの task で変わる**:
+`VisionOpType` に `infer` がある。`params.model` にモデルの id。使えるのは `use: 'image'` の
+モデルだけ (それ以外は `modelNotImage`)。さらに **実機で Unity の Inference Engine が動かすモデル
+(`runtime` が `unity`) に限る**: 同梱の ONNX Runtime に回したモデルは Resources に入らないので、
+`infer` に指定するとビルドが `CopyModelsToProject` ではっきり止まる (そういうモデルはスクリプトの `model.*` で使う)。**出力の型はモデルの task で変わる**:
 classify / raw → record、detect → blobs、segment → mask。
 だから領域分割モデルの出力は、そのまま `recolor` に渡して現実に塗れる。検出モデルの出力は
 `blobs` op と同じ一覧 (label / score / x / y / width / height、0..1、原点左下) になる。
@@ -64,15 +73,16 @@ ColorImage ─ ModelPreprocess ─▶ TensorData ─ IVisionModelRunner ─▶ T
   GPU を待つ間もメインスレッドは止まらない。
 - バックエンドは `auto` なら `SystemInfo.supportsComputeShaders ? GPUCompute : CPU`。
   GPUCompute の生成に失敗したら CPU に落ちる。最初の実行と 50 回ごとに ms をログに出す。
-- モデルは `Resources/ArsistModels/<id>` (ビルド時に `CopyModelsToProject` が置く)。
-  StreamingAssets にしないのは、Android では APK の中 (jar:) にあってファイルとして開けないため。
+- モデルは `Resources/ArsistModels/<id>/model.onnx` (ビルド時に `CopyModelsToProject` が置く。重みの別ファイルと
+  文章のモデルの `tokenizer.json` も同じフォルダ)。StreamingAssets にしないのは、Android では APK の中 (jar:) に
+  あってファイルとして開けないため。ONNX Runtime に回したモデルだけは例外で StreamingAssets に置く (doc/16 §3.1)。
 
 ### 1.3 パッケージは使うときだけ
 
 `com.unity.ai.inference` は **モデルを使うプロジェクトのビルドでだけ** `Packages/manifest.json` に入る
-(`UnityBuilder.ensureInferencePackage`)。常に入れると、使わない APK までコンピュートシェーダー分
+(`UnityBuilder.ensureInferencePackage`。数えるのはビルドに含めるモデル = `includeInBuild` が false でないもの)。常に入れると、使わない APK までコンピュートシェーダー分
 太る。`ArsistModelExecutor` は `ARSIST_INFERENCE` の define で本物と空の実装を切り替える。
-モデルがあるのにパッケージが無ければビルドは**落ちる**。「ビルドは通るのに実機で何も起きない」
+Inference Engine で動かすモデルがあるのにパッケージが無ければビルドは**落ちる**。「ビルドは通るのに実機で何も起きない」
 が一番困るので。
 
 define は **二か所**で揃える。`ArsistBuildPipeline.ApplyDeviceScriptingDefines` (ビルド中、パッケージの
@@ -82,7 +92,7 @@ define が残り、Unity 起動時のコンパイルで `Unity.InferenceEngine` 
 
 ### 1.4 エディタ
 
-「モデル」タブ (IR v3 から画像処理タブの外。画像以外のモデルは doc/16)。取り込み (`model:import`) →
+「モデル」タブ (α3 (旧 IR v3) から画像処理タブの外。画像以外のモデルと Hugging Face からの取り込みは doc/16)。取り込み (`model:import`) →
 `Assets/Models/` にコピー → 入出力を読んで用途 (画像 / 文章 / テンソル) と下書きを作る → フォームで直す。正規化はプリセット (0..1 / ImageNet / 0..255)、検出は出力の形
 (YOLOv8/11 / v5 / NMS 済み / 別々の出力)、領域分割は argmax / sigmoid。
 
@@ -169,36 +179,52 @@ GPU テクスチャ ─ Graphics.Blit (縮小) ─▶ RenderTexture (要る大�
 
 ## 3. IR の版と「任意の」アップグレード
 
-`project.json` に `irVersion` を持つ (`src/shared/irVersion.ts` の `CURRENT_IR_VERSION`)。
-無ければ 1。
+IR (第2層) の名前は **Layster** で、今までの `project.json` の形は **Layster.Virtual** と呼ぶ
+(もう一つの形 Layster.Spatial と、名前の付け方の全体は `doc/19-layster.md`)。
+
+| 中の数 (`irVersion`) | 名前 |
+|---|---|
+| 1〜5 | **α1〜α5** (今までの版) |
+| 6 | **Layster.Virtual β 1.0.0** (形は α5 と同じ。先頭に `layster` の見出しが入る) |
+
+`project.json` は版の数 `irVersion` (`src/shared/irVersion.ts` の `CURRENT_IR_VERSION`、無ければ 1) と、
+β からは見出し `"layster": { "profile": "virtual", "stage": "beta", "version": "1.0.0" }` を持つ。
+**版の判定は数で行い、見出しは人とエージェントのため**。数と名前の対応は `src/shared/layster/version.ts` の
+`VIRTUAL_FORMATS` だけが持ち、画面・ログ・エージェント向けの文は `describeVirtualIrVersion` / `formatLayster` を通す
+(「IR v5」とは書かず「Layster.Virtual α5」)。数を残しているのは、α のエディタが β のファイルを
+「新しすぎる」と言って断れるようにするため。
 
 Unity と同じ振る舞い:
 
 | 開いたファイル | すること |
 |---|---|
-| 今の版 | そのまま開く |
+| 今の版 | そのまま開く (見出しが欠けていれば、メモリ上で補い、次の保存で書く) |
 | 古い版 | メモリ上で移行して開き、「アップグレードするか」を訊く。承諾されるまで**読み取り専用** (保存を断る) |
 | 新しい版 | 開かない (`irTooNew`)。壊すよりは断る |
 
-承諾すると、元の `project.json` を `Backups/project.v<旧版>.<日時>.json` に写してから今の版で書き戻す。
-見送ると編集はできるが保存できない (タイトルバーに「読み取り専用」)。保存しようとするともう一度訊く。
+承諾すると、元の `project.json` を `Backups/project.<版>.<日時>.json` (`alpha5` / `beta1.0.0` …) に写してから
+今の版で書き戻す。見送ると編集はできるが保存できない (タイトルバーに「読み取り専用」)。保存しようとするともう一度訊く。
+エディタを使わずに同じことをするなら `node scripts/layster-upgrade.mjs <フォルダ>... [--dry-run]`
+(先に `npm run build:main`。書くのは `project.json` だけ。Spatial と新しすぎるファイルは断る)。
 
 移行は `src/main/project/migrations.ts` に「前の版 → 次の版」を順に並べる。各移行は冪等で、
-今の版のプロジェクトに掛けても何も変えない (`migrations.test.ts`)。
+今の版のプロジェクトに掛けても何も変えない (`migrations.test.ts`)。見出しは `migrateProject` が最後に
+今の版のものを書くので、各移行では触らない。
 それまで `ProjectManager.loadProject` に散らばっていた後方互換の補正 (テンプレートの旧名、
 `arSettings` / `interaction` / `dataFlow` / `scripts` の補完、`logicGraphs` などの削除、
-一時期あった空専用の `analysis`) は、すべて **1 → 2** の移行として明文化した。
+一時期あった空専用の `analysis`) は、すべて **α1 → α2** の移行として明文化した。
 
-版を上げる手順:
+版を上げる手順 (`npm run ir:new -- "<説明>" ["<English>"] [--version x.y.z]` が 1〜3 の雛形を入れる):
 
-1. `CURRENT_IR_VERSION` を上げる
-2. `migrations.ts` に `{ from, to, id, apply }` を足す
-3. `src/renderer/i18n/strings.ts` に `ir.migration.<to>` の説明を足す (ダイアログに出る)
+1. `CURRENT_IR_VERSION` を上げ、`VIRTUAL_FORMATS` に名前 (β x.y.z。既定は直前の β の minor + 1) を足す
+2. `migrations.ts` に `defineMigration(<新しい版>, { ops: [...] })` を足す
+3. `src/renderer/i18n/strings.ts` に `ir.migration.<新しい版>` の説明を足す (ダイアログに出る)
 4. `migrations.test.ts` に「古い形 → 新しい形」を足す
 
-版の履歴: 2 で `irVersion` と `models`、3 でモデルの `use` (画像 / 文章 / テンソル) と `text` (doc/16)。
+版の履歴: α2 で `irVersion` と `models`、α3 でモデルの `use` (画像 / 文章 / テンソル) と `text` (doc/16)、
+α4 で拡張機能、α5 でキャラクターと保存、β 1.0.0 で `layster` の見出し。
 
-Unity 側のマニフェストにも `irVersion` を入れている。実機のログから「どの版のエディタで作った APK か」が追える。
+Unity 側のマニフェストにも `irVersion` と `layster` を入れている。実機のログから「どの版のエディタで作った APK か」が追える。
 
 ## 4. 検証
 
@@ -209,4 +235,4 @@ npm run make:sample-onnx  # 動作確認用の ONNX
 ```
 
 実機を持っていない状態で確かめられないのは「行順の測定が正しく効くか」と「Inference Engine の
-バックエンド選択」の二つ。どちらもログに証拠が出る (§2.1 と `Model '<id>' loaded: backend=…`)。
+バックエンド選択」の二つ。どちらもログに証拠が出る (§2.2 の `GPU frame reader: …` と `Model '<id>' loaded: backend=…`)。

@@ -16,6 +16,32 @@ const electronAPI = {
         /** 古い版の IR を今の版で書き戻す (承諾後)。元のファイルは Backups/ に残る */
         upgrade: () => electron_1.ipcRenderer.invoke('project:upgrade'),
     },
+    // Layster.Spatial (project.spatial.json)。チャンネルと型は src/shared/layster/spatial/ipc.ts
+    spatial: {
+        /** フォルダが Virtual / Spatial / どちらでもないか ({ kind, label, name, file }) */
+        detect: (dir) => electron_1.ipcRenderer.invoke('spatial:detect', dir),
+        create: (request) => electron_1.ipcRenderer.invoke('spatial:create', request),
+        load: (dir) => electron_1.ipcRenderer.invoke('spatial:load', dir),
+        save: (project) => electron_1.ipcRenderer.invoke('spatial:save', project),
+        /** 組み込みとプロジェクトの「試す空間」 */
+        spaces: () => electron_1.ipcRenderer.invoke('spatial:spaces'),
+        saveSpace: (fixture) => electron_1.ipcRenderer.invoke('spatial:save-space', fixture),
+        /** Mind に 1 回問い合わせる (main から HTTP。鍵は main の中だけ) */
+        tryMind: (request) => electron_1.ipcRenderer.invoke('spatial:try-mind', request),
+        /** 鍵の名前の一覧 / 値を入れる / 消す ({ op: 'list' | 'set' | 'remove', … })。値は返らない */
+        secrets: (request) => electron_1.ipcRenderer.invoke('spatial:secrets', request),
+        importAsset: (request) => electron_1.ipcRenderer.invoke('spatial:import-asset', request),
+        /** ビルド。進み具合とログは unity.onBuildProgress / onBuildLog に届く (Virtual と同じ) */
+        build: (request) => electron_1.ipcRenderer.invoke('spatial:build', request),
+        /** project.spatial.json / spaces/*.json が外 (エージェント) で書き換えられた */
+        onChanged: (callback) => {
+            const handler = (_, payload) => callback(payload);
+            electron_1.ipcRenderer.on('spatial:changed', handler);
+            return () => {
+                electron_1.ipcRenderer.removeListener('spatial:changed', handler);
+            };
+        },
+    },
     // 学習済みモデル (ONNX)
     model: {
         /** ファイル選択 → Assets/Models へコピー → 入出力を読んで定義の下書きを返す */

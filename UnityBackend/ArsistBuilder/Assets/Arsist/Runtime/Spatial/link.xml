@@ -1,0 +1,10 @@
+<linker>
+  <!--
+    Layster.Spatial のランタイム。WorldWrapper (スクリプトの world) は Jint が反射で呼び、
+    ArsistSpatialRuntime はビルドが型の名前で足す。IL2CPP のストリッピングで消えると実機でだけ壊れるので、まるごと残す。
+  -->
+  <assembly fullname="Assembly-CSharp">
+    <namespace fullname="Arsist.Runtime.Spatial" preserve="all" />
+    <namespace fullname="Arsist.Runtime.Spatial.Core" preserve="all" />
+  </assembly>
+</linker>

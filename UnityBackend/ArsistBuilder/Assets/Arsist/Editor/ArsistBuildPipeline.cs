@@ -59,6 +59,8 @@ namespace Arsist.Builder
 
             // ランタイムでも参照できるよう Resources にコピー
             EnsureRuntimeManifestResource(_manifest);
+            // Layster.Spatial: spatial.json も Resources へ (無ければ前のビルドの写しを消す)
+            EnsureSpatialResource();
 
             try
             {
@@ -693,6 +695,7 @@ namespace Arsist.Builder
                     foreach (JObject obj in objects)
                     {
                         var go = CreateGameObject(obj);
+                        TagSpatialThing(go, obj);
                         if (go != null && contentParent != null)
                         {
                             // 親に配置（worldPositionStays = false でローカル座標を保持）
@@ -3020,6 +3023,78 @@ namespace Arsist.Builder
             }
         }
 
+        // ---- Layster.Spatial (doc/19-layster.md §4.1、doc/20-spatial-runtime.md) ----
+
+        private static string SpatialJsonPath => Path.Combine(Application.dataPath, "ArsistGenerated", "spatial.json");
+        private static string SpatialResourcePath => Path.Combine(Application.dataPath, "Resources", Arsist.Runtime.Spatial.ArsistSpatialHooks.ResourceName + ".json");
+        private static HashSet<string> _spatialObjectIds;
+        private static bool _spatialIdsRead;
+
+        /// <summary>spatial.json の things[].object (シーンの物の id)。spatial.json が無ければ null (Virtual のビルド)。</summary>
+        private static HashSet<string> SpatialSpecIds()
+        {
+            if (_spatialIdsRead) return _spatialObjectIds;
+            _spatialIdsRead = true;
+            if (!File.Exists(SpatialJsonPath)) return null;
+            try
+            {
+                var spec = JObject.Parse(File.ReadAllText(SpatialJsonPath));
+                _spatialObjectIds = new HashSet<string>();
+                foreach (var t in spec["things"] as JArray ?? new JArray())
+                {
+                    var id = t["object"]?.ToString() ?? t["id"]?.ToString();
+                    if (!string.IsNullOrEmpty(id)) _spatialObjectIds.Add(id);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Arsist] spatial.json could not be read: {e.Message}");
+                _spatialObjectIds = new HashSet<string>();
+            }
+            return _spatialObjectIds;
+        }
+
+        /// <summary>
+        /// spatial.json を Resources/ArsistSpatial.json に写す (実機は ArsistSpatialHooks がこれを読む)。
+        /// 作業用の Unity プロジェクトはビルドの間で使い回すので、Spatial でないビルドでは前の写しを必ず消す
+        /// (残すと Virtual のアプリに空間のランタイムが紛れ込む)。
+        /// </summary>
+        private static void EnsureSpatialResource()
+        {
+            try
+            {
+                if (File.Exists(SpatialJsonPath))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(SpatialResourcePath));
+                    File.WriteAllText(SpatialResourcePath, File.ReadAllText(SpatialJsonPath));
+                    Debug.Log($"[Arsist] Layster.Spatial: spatial.json → Resources/{Arsist.Runtime.Spatial.ArsistSpatialHooks.ResourceName}.json");
+                }
+                else if (File.Exists(SpatialResourcePath))
+                {
+                    File.Delete(SpatialResourcePath);
+                    if (File.Exists(SpatialResourcePath + ".meta")) File.Delete(SpatialResourcePath + ".meta");
+                    Debug.Log("[Arsist] removed a stale Resources/ArsistSpatial.json from an earlier Spatial build");
+                }
+                AssetDatabase.Refresh();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Arsist] Layster.Spatial resource failed: {e.Message}");
+            }
+        }
+
+        /// <summary>spatial.json の物に当たるシーンの物に ArsistSpatialThing を付ける (ランタイムはこれで物を見つける)。</summary>
+        private static void TagSpatialThing(GameObject go, JObject objData)
+        {
+            var ids = SpatialSpecIds();
+            if (ids == null || go == null) return;
+            var id = objData["id"]?.ToString();
+            if (string.IsNullOrEmpty(id) || !ids.Contains(id)) return;
+            var tag = go.GetComponent<Arsist.Runtime.Spatial.ArsistSpatialThing>();
+            if (tag == null) tag = go.AddComponent<Arsist.Runtime.Spatial.ArsistSpatialThing>();
+            tag.thingId = id;
+        }
+
         private static void EnsureRemoteInputInScene(JObject manifest)
         {
             try
@@ -3866,6 +3941,16 @@ ScriptedImporter:
             // リモート制御有効時はスクリプト機能OFFでもランタイムを生成する。
             scriptingEnabled = scriptingEnabled || remoteControlEnabled;
 
+            // Layster.Spatial: 空間のランタイムを 1 つ置く。スクリプトの world・パネルのボタン・store の保存は
+            // スクリプトエンジンの上で動くので、スクリプトが無くてもエンジンは置く。
+            if (SpatialSpecIds() != null)
+            {
+                scriptingEnabled = true;
+                var spatialGO = new GameObject("[LaysterSpatial]");
+                spatialGO.AddComponent<Arsist.Runtime.Spatial.ArsistSpatialRuntime>();
+                Debug.Log("[Arsist] Layster.Spatial runtime attached (spatial.json present).");
+            }
+
             if (scriptingEnabled)
             {
                 var scriptEngineGO = new GameObject("[ArsistScriptEngine]");
@@ -3962,15 +4047,16 @@ ScriptedImporter:
         /// </summary>
         private static void CopyVRMFilesToStreamingAssets(JArray scenes)
         {
-            if (scenes == null || scenes.Count == 0) return;
-
             var vrmDir = Path.Combine(Application.dataPath, "StreamingAssets", "VRM");
             Directory.CreateDirectory(vrmDir);
 
             var vrmFiles = new HashSet<string>();
+            // 今回写したファイル名。作業用の Unity プロジェクトは使い回すので、前のビルドの VRM
+            // (別のプロジェクトのものも) が残ったまま APK に入っていた (16 MB 余計に入った例がある)
+            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             // シーンのすべてのオブジェクトから VRM ファイルを収集
-            foreach (var scene in scenes)
+            foreach (var scene in scenes ?? new JArray())
             {
                 var sceneObj = scene as JObject;
                 if (sceneObj == null) continue;
@@ -4056,6 +4142,7 @@ ScriptedImporter:
                     var destPath = Path.Combine(vrmDir, fileName);
 
                     File.Copy(foundPath, destPath, overwrite: true);
+                    keep.Add(fileName);
                     copiedCount++;
                     Debug.Log($"[Arsist] ✅ VRM file copied to StreamingAssets/VRM/: {fileName} (src={foundPath})");
                 }
@@ -4065,7 +4152,26 @@ ScriptedImporter:
                 }
             }
 
-            if (vrmFiles.Count > 0)
+            var removed = 0;
+            foreach (var file in Directory.GetFiles(vrmDir))
+            {
+                var name = Path.GetFileName(file);
+                if (name.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
+                if (keep.Contains(name)) continue;
+                try
+                {
+                    File.Delete(file);
+                    if (File.Exists(file + ".meta")) File.Delete(file + ".meta");
+                    removed++;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[Arsist] Could not remove a stale VRM copy {name}: {e.Message}");
+                }
+            }
+            if (removed > 0) Debug.Log($"[Arsist] Removed {removed} VRM file(s) left in StreamingAssets/VRM by an earlier build");
+
+            if (vrmFiles.Count > 0 || removed > 0)
             {
                 AssetDatabase.Refresh();
                 Debug.Log($"[Arsist] ✅ {copiedCount}/{vrmFiles.Count} VRM file(s) copied to StreamingAssets");

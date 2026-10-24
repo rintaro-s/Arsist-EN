@@ -2,7 +2,7 @@
  * プロジェクトの書き出し / 読み込み (`.arsist`、kind: "project")。
  *
  * 入れ物は拡張機能の `.arsist` と同じ zip (src/main/extensions/zip.ts):
- *   arsist-package.json   { format: 1, kind: "project", name, irVersion, targetDevice, createdAt,
+ *   arsist-package.json   { format: 1, kind: "project", name, irVersion, layster, targetDevice, createdAt,
  *                           files: { "<path>": "<sha256>" }, extensions: [{ id, version, bundled }] }
  *   project.json / Scenes/ / UI/ / Scripts/ / Assets/ …   プロジェクトのファイル
  *   _extensions/<id>/…    プロジェクトが使う拡張機能 (受け取った人のエディタに無ければ入れられるように)
@@ -18,6 +18,7 @@ import { openZipFile, writeZipFile, ZipFormatError, type ZipFileInput } from '..
 import { collectExtensionFiles, installExtension, compareVersions, safeEntryPath, PACKAGE_META, type InstallResult } from '../extensions/packages';
 import { findAdapterProvider } from '../../shared/extensions';
 import { readIrVersion } from '../../shared/irVersion';
+import { readLaysterHeader, virtualHeaderFor, type LaysterHeader } from '../../shared/layster/version';
 import type { InstalledExtension } from '../extensions/ExtensionCatalog';
 
 const EXTENSIONS_PREFIX = '_extensions/';
@@ -32,6 +33,8 @@ export interface ProjectPackageMeta {
   name: string;
   id?: string;
   irVersion: number;
+  /** 形式の名前 (Layster.Virtual α5 / β 1.0.0 …)。読み手のための見出しで、判定は irVersion で行う */
+  layster?: LaysterHeader;
   targetDevice?: string;
   createdAt: string;
   files: Record<string, string>;
@@ -109,6 +112,7 @@ export async function exportProject(
     name: String(project.name ?? path.basename(projectDir)),
     id: project.id,
     irVersion: readIrVersion(project),
+    layster: readLaysterHeader(project) ?? virtualHeaderFor(readIrVersion(project)),
     targetDevice: project.targetDevice,
     createdAt: new Date().toISOString(),
     files,

@@ -9,6 +9,13 @@
 画面を並べ、動きを決め、ビルドを押す。出てくるのは Unity 製のネイティブ APK です。
 XREAL でも Meta Quest でも Android スマホでも、**同じプロジェクト 1 つ**から同じ動きのアプリが出ます。
 
+プロジェクト (IR) は **Layster** と呼び、作り方が 2 つあります。新規作成のときに選びます (互いに変換はしません)。
+
+| | 何を書くか | ファイル |
+|---|---|---|
+| **Layster.Virtual** | 画面と座標。シーンに物を並べ、UI を作る (下の「何ができるのか」はほぼこちら) | `project.json` |
+| **Layster.Spatial** | 空間。「机の上に」「ユーザーの近くに」と条件で置き、AI (Mind) やロボット (Body) とつなぐ | `project.spatial.json` |
+
 ```
     デスクトップのエディタ                    実機
  ┌──────────────────────┐          ┌──────────────────┐
@@ -143,11 +150,29 @@ npm run ext:new -- hand-wave --requires cap:hand-tracking
 - **使っている AI エージェントにボタン 1 つで追加** — ツールバーの「AI エージェントにつなぐ (MCP)」から、
   Claude Code・Codex・Qwen Code・Claude Desktop・Gemini CLI・Cursor・VS Code・Windsurf・LM Studio の設定に
   Arsist を書き込めます (他の設定には触れず、書く前のものはバックアップ)。その他のエージェントには JSON をコピー。
-  エージェントは 38 個のツールで、物を置く・UI を組む・スクリプトを書く・拡張機能を設定する、までできます
+  エージェントは Virtual 用 43 個 (`ir_*` ほか)・Spatial 用 14 個 (`spatial_*`) のツールで、物を置く・UI を組む・
+  スクリプトを書く・拡張機能を設定する・空間での置き場所を解く、までできます
 - **エディタの中のアシスタント** — OpenAI 互換の API (OpenAI・OpenRouter・DeepSeek・Qwen・Groq・Ollama・LM Studio …)
   ならどれでも。「1.5 m 先にパネルを置いて、押すと箱が消える Start ボタンを付けて」と頼むと、その場で編集されます。
   1 回の依頼ぶんは「元に戻す」で丸ごと戻せます
 - エージェントが外でプロジェクトを書き換えても、エディタは自動で読み直します (未保存の編集があるときは訊きます)
+
+### 空間で作る (Layster.Spatial)
+
+座標の代わりに「何の上に・誰の近くに・見える所に」を書くと、エンジンが実際の部屋でそれを解きます。
+机が無い部屋では書いておいた別の置き方 (fallback) に落ち、物が消えることはありません。
+
+- **Space Lab** — ワンルーム・机の前・教室・スキャン無し…の 7 つの部屋で、同時に置き場所を解いて見せます
+- **Mind** — PC やクラウドの AI (OpenAI 互換のチャット API、または自作サーバー用の `layster.mind/1`) に今の空間を渡し、
+  返ってきた行動 (話す・指し示す・置き直す…) と推測 (belief) を実行します。エディタの中からその場で試せます
+- **Body** — ロボットアームなどを WebSocket (`layster.body/1`) か rosbridge でつなぎます。命令は必ず安全の門
+  (動ける範囲・ユーザーの手が近い・承諾・回数) を通ります
+- **規則と記録** — コード無しの「きっかけ → 条件 → 行動」と、同意を取ってからの記録 (`layster.episode/1`)
+
+見本は `samples/spatial/` (desk-buddy・world-model-lab・robot-helper)、Mind と Body の見本サーバーは `python/layster/`
+(標準ライブラリだけ)。samples/spatial は見本の拡張機能 `quest-room` を使うので、ビルドの前に
+`npm run ext:link -- samples/extensions` が要ります。詳しくは `doc/19-layster.md` と `doc/20-spatial-runtime.md`。
+**Spatial は Quest 向けの APK ができるところまでで、実機ではまだ動かしていません。**
 
 ### プロジェクトを 1 ファイルで渡す
 
@@ -215,17 +240,28 @@ npm install
 npm run dev
 ```
 
-エディタが開きます。新規プロジェクトを作って、UI を置いて、ビルドを押すだけです。
+エディタが開きます。新規プロジェクトで Layster.Virtual か Layster.Spatial を選び、物や UI を置いて、ビルドを押すだけです。
+既存のフォルダを開くと、`project.json` / `project.spatial.json` のどちらがあるかで画面が切り替わります。
+
+コマンドだけでも扱えます (どちらも先に `npm run build:main`):
+
+```bash
+node scripts/layster-build.mjs samples/spatial/desk-buddy --device Meta_Quest   # Spatial のプロジェクトをビルド
+node scripts/layster-build.mjs <フォルダ> --lower-only --out <出力先>             # Unity を使わず中間ファイルだけ
+node scripts/layster-upgrade.mjs <フォルダ>... [--dry-run]                       # 古い Virtual のプロジェクトを今の版へ
+```
 
 ---
 
 ## 設計の方針
 
-- **プロジェクトは 1 つの IR (`project.json`)**。端末ごとの差は「アダプタ」が吸収します。同じプロジェクトを
-  Quest に出してもスマホに出しても、同じ動きになることを前提に作っています
+- **プロジェクトは 1 つの IR (Layster)**。Virtual は `project.json`、Spatial は `project.spatial.json` で、どちらにも端末の名前は
+  出てきません。端末ごとの差は「アダプタ」が吸収します。同じプロジェクトを Quest に出してもスマホに出しても、
+  同じ動きになることを前提に作っています
 - **端末・機能・拡張機能はタグでつながる**。端末は「何ができるか」を名乗り、機能と拡張機能は
   「何が要るか」を書くだけ。新しい端末を足しても、比較のコードを探して回る必要がありません
-- **IR には版がある**。形が変わるときは版を上げて移行を書きます。古いプロジェクトは勝手に書き換えません
+- **IR には版がある**。今は Layster.Virtual β 1.0.0 と Layster.Spatial β 1.0.0 (それより前の Virtual は α1〜α5)。
+  形が変わるときは版を上げて移行を書きます (`npm run ir:new`)。古いプロジェクトは勝手に書き換えません
   (読み取り専用で開き、アップグレードを訊きます)
 - **頭の追跡や描画は自分で作らない**。XREAL と Meta のそれぞれの Unity SDK に任せます。エンジンが持つのは
   「作る仕組み」です
@@ -233,8 +269,8 @@ npm run dev
   依存しない形で書いてあり、Unity 無しで数値検証できます
 
 ```bash
-npm test                 # エディタ側 (226 件)
-npm run test:perception  # 幾何・画像処理・ジャイロ・推論 (Unity 不要)
+npm test                 # エディタ側 (vitest。Spatial の置き方の表も)
+npm run test:perception  # 幾何・画像処理・ジャイロ・推論・Spatial の置き方 (Unity 不要)
 npm run build            # エディタのビルド
 ```
 
@@ -246,9 +282,10 @@ npm run build            # エディタのビルド
 コントローラー / 視線 / タッチでの操作、画像認識パイプライン、OCR、ビルドから実機インストールまで。
 
 開発中: 一部のアダプタ機能 (XREAL の 6DoF 周り)、大きなモデルの速度、UI の作り込み。
+Layster.Spatial はエディタ・ビルド (Quest 向けの APK) まで。実機での確認はこれからです。
 うまく動かないときは `npm run logs` に理由が出るようにしてあります。
 
-詳しい作りは [CODEMAP.md](CODEMAP.md) と [`doc/`](doc/) にあります (`00-overview` … `17-extensions`)。
+詳しい作りは [CODEMAP.md](CODEMAP.md) と [`doc/`](doc/) にあります (`00-overview` … `20-spatial-runtime`)。
 
 ## ライセンス
 

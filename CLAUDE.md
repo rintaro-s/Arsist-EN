@@ -5,8 +5,9 @@ Guidance for AI agents (Claude Code and others) working in this repository.
 ## Start here
 
 Read [CODEMAP.md](CODEMAP.md) first for the module map and the XREAL/Quest device-responsibility map, then the
-relevant deep-dive in [`doc/`](doc/) (`00-overview` … `17-extensions`). [README.md](README.md) covers user-facing
+relevant deep-dive in [`doc/`](doc/) (`00-overview` … `20-spatial-runtime`). [README.md](README.md) covers user-facing
 setup.
+To *write Layster / build apps* (rather than change the engine), use the agent skills in [`skills/`](skills/README.md) (`layster-spatial`, `layster-virtual`, `layster-mind-server`; symlink them into `.claude/skills/`).
 
 ## What this project is
 
@@ -32,7 +33,9 @@ npm run ext:new -- <id> --device My_Glasses              # scaffold an extension
 npm run ext:pack -- <extension folder>                   # → <id>-<version>.arsist (zip + SHA-256 of every file)
 npm run ext:install -- <file.arsist | folder> [--force]  # same as the editor's Extensions → Import
 npm run ext:override -- <extension folder> <path under Assets/Arsist>  # start an engine modification
-npm run ir:new -- "<説明>" ["<English>"]                  # scaffold an IR version bump (+ migration + upgrade text)
+npm run ir:new -- "<説明>" ["<English>"] [--version x.y.z] # scaffold a Layster.Virtual version bump (+ migration + upgrade text)
+node scripts/layster-upgrade.mjs <dir>... [--dry-run]      # upgrade Virtual project.json files outside the editor (needs build:main)
+node scripts/layster-build.mjs <spatial dir> [--device X] [--out D] [--lower-only]   # build / lower a Layster.Spatial project
 ```
 
 Unity builds and on-device verification require a full Unity install, the `sdk/` directory, and hardware — usually
@@ -90,9 +93,25 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   `tags`) gives a device its tags (`src/shared/adapterTags.ts`), `src/shared/engineFeatures.ts` says what each
   engine feature needs, an extension's `requires` says where it runs. Prefer adding a tag over another
   `isQuestTarget()`-style name check. `requires` lists only hard needs (a feature with a fallback has none).
+- **The IR is called Layster and has two profiles that are NOT compatible** (doc/19-layster.md): **Layster.Virtual**
+  (screens and coordinates — everything below about `project.json`, scenes, UI) and **Layster.Spatial** (`project.spatial.json`:
+  entities, placements as conditions + fallbacks, minds, bodies, rules, recording). Never add a converter between them.
+  Both files carry a `layster` header; show versions only through `src/shared/layster/version.ts` (`formatLayster`,
+  `describeVirtualIrVersion`) — "Layster.Virtual α5", "Layster.Spatial β 1.0.0", never "IR vN".
+- **Layster.Spatial lives in one place per layer:** contracts in `src/shared/layster/spatial/` (types, vocabulary, built-in
+  test spaces, solver, validate, mindProtocol, observe, lower, scriptApi), main side in `src/main/layster/`
+  (`SpatialProjectManager` is the only reader/writer of `project.spatial.json`), editor in `src/renderer/spatial/` (strings in
+  `i18n/spatialStrings.ts`), agent tools `src/main/mcp/spatialTools.ts` (`spatial_*`; imports only types from tools.ts),
+  runtime `Runtime/Spatial/` (doc/20). `Runtime/Spatial/Core/` is UnityEngine-free and mirrors solver / vocabulary /
+  mindProtocol / observe: **change both sides** and run `npm test` + `npm run test:perception` (SpatialChecks re-solves
+  `solver-cases.json`; regenerate it with `UPDATE_SOLVER_CASES=1` and read the diff). Spatial ↔ Unity coordinates are converted
+  only in `SpatialFrames`. Extensions feed the world through `context.Spatial.AddProvider` (`ISpatialProvider`). Mind keys are
+  referenced by name; values live in `<project>/.layster/secrets.local.json`, stay in main, and are baked in at build time.
+  `samples/spatial/` must stay error-free and placeable in every space it uses (`samples.test.ts`).
 - **IR is the source of truth.** TypeScript IR types live in [src/shared/types.ts](src/shared/types.ts); a schema
   change usually touches the type, [src/bridge/UnityBridge.ts](src/bridge/UnityBridge.ts), and the Unity consumer.
-- **IR has a version.** When `project.json` changes shape, bump `CURRENT_IR_VERSION` in
+- **IR has a version (Virtual).** `irVersion` 1–5 = α1–α5, 6 = Layster.Virtual β 1.0.0 (table `VIRTUAL_FORMATS`);
+  `migrateProject` stamps the `layster` header. When `project.json` changes shape, bump `CURRENT_IR_VERSION` in
   [src/shared/irVersion.ts](src/shared/irVersion.ts) and add a migration in
   [src/main/project/migrations.ts](src/main/project/migrations.ts) (+ `ir.migration.<n>` string + test).
   `npm run ir:new` scaffolds all three; write the change as declarative ops (`src/shared/irOps.ts`:

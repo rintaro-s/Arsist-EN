@@ -8,6 +8,7 @@
  * ユーザーが扱うのは「UI定義」と「データ定義」のみ。
  */
 import type { ProjectExtensionState } from './extensions';
+import type { LaysterHeader } from './layster/version';
 export type { ProjectExtensionState } from './extensions';
 export type ProjectTemplate = '3d_ar_scene' | '2d_floating_screen' | 'head_locked_hud';
 export type TrackingMode = '6dof' | '3dof' | 'head_locked';
@@ -852,12 +853,19 @@ export interface ScriptBundle {
     storage?: StorageSettings;
 }
 export interface ArsistProject {
+    /**
+     * 形式の見出し (Layster.Virtual β 1.0.0〜、irVersion 6〜)。{ profile: 'virtual', stage, version }。
+     * 人とエージェントが「何のファイルか・どの版か」を読むためのもので、版の判定は irVersion で行う。
+     * 移行 (migrations.ts の migrateProject) が今の版のものを書く。doc/19-layster.md §1。
+     */
+    layster?: LaysterHeader;
     id: string;
     name: string;
     /** アプリ (プロジェクト) のバージョン。ユーザーが決める。IR の版ではない */
     version: string;
     /**
-     * IR (このファイル形式) の版。src/shared/irVersion.ts の CURRENT_IR_VERSION。
+     * IR (このファイル形式) の版の数。src/shared/irVersion.ts の CURRENT_IR_VERSION。
+     * 1〜5 = α1〜α5、6 = Layster.Virtual β 1.0.0 (名前は layster/version.ts の VIRTUAL_FORMATS)。
      * 無ければ 1 (この項目が無かった頃のプロジェクト)。
      * 古い版のプロジェクトを開くと、Unity と同じように「アップグレードするか」を訊く。
      * 移行の中身は src/main/project/migrations.ts。

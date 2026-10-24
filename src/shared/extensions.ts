@@ -33,6 +33,7 @@
 import { applyIrOps, validateIrOps, type IrOp } from './irOps';
 import { matchAdapterName } from './adapterNames';
 import { checkReplaceable } from './engineParts';
+import { describeVirtualIrVersion } from './layster/version';
 import {
   describeTagQuery,
   isKnownNamespace,
@@ -477,7 +478,7 @@ export function resolveExtensions(
       continue;
     }
     if (manifest.minIrVersion !== undefined && manifest.minIrVersion > options.irVersion) {
-      skipped.push({ id, reason: 'engineTooOld', detail: `needs IR v${manifest.minIrVersion}, this editor is v${options.irVersion}` });
+      skipped.push({ id, reason: 'engineTooOld', detail: `needs Layster.Virtual ${describeVirtualIrVersion(manifest.minIrVersion)}, this editor is ${describeVirtualIrVersion(options.irVersion)}` });
       continue;
     }
     const dataVersion = Number.isInteger(state.dataVersion) ? state.dataVersion : 1;
@@ -654,7 +655,7 @@ export function checkProjectRequirements(
       });
     }
     if (manifest.minIrVersion !== undefined && manifest.minIrVersion > irVersion) {
-      missing.push({ kind: 'engineTooOld', id, detail: `"${id}" ${manifest.version} needs a newer Arsist (IR v${manifest.minIrVersion}; this one is v${irVersion})` });
+      missing.push({ kind: 'engineTooOld', id, detail: `"${id}" ${manifest.version} needs a newer Arsist (Layster.Virtual ${describeVirtualIrVersion(manifest.minIrVersion)}; this one reads ${describeVirtualIrVersion(irVersion)})` });
     }
   }
 

@@ -17,6 +17,9 @@ import { PackageResultDialog } from './ai/packageActions';
 import { useProjectStore } from './stores/projectStore';
 import { useUIStore } from './stores/uiStore';
 import { DataStoreProvider } from './stores/dataStoreContext';
+import { SpatialWorkspace } from './spatial/SpatialWorkspace';
+import { useSpatialStore } from './spatial/store';
+import { openProjectFolder } from './spatial/openProject';
 
 declare global {
   interface Window {
@@ -223,6 +226,8 @@ declare global {
         undo: (snapshotId: string) => Promise<{ ok: boolean; error?: string }>;
         onEvent: (callback: (payload: { conversationId: string; event: import('./ai/types').AssistantEvent }) => void) => () => void;
       };
+      /** Layster.Spatial (src/shared/layster/spatial/ipc.ts) */
+      spatial?: import('./spatial/api').SpatialBridge;
       projectPackage?: {
         export: (projectPath: string, bundleExtensions: boolean) => Promise<{ ok: boolean; canceled?: boolean; file?: string; files?: number; bytes?: number; extensions?: Array<{ id: string; version: string; bundled: boolean }>; error?: string }>;
         import: () => Promise<import('./ai/types').PackageImportReply>;
@@ -251,7 +256,9 @@ declare global {
 }
 
 export default function App() {
-  const { project, loadProject, saveProject, handleExternalChange } = useProjectStore();
+  const { project, saveProject, handleExternalChange } = useProjectStore();
+  // Layster.Spatial のプロジェクトを開いているときは、Virtual の画面の代わりに Spatial の画面を出す
+  const spatialProject = useSpatialStore((s) => s.project);
 
   // 開いているプロジェクトが外 (AI エージェント・MCP) で変わったら読み直す
   useEffect(() => {
@@ -316,15 +323,18 @@ export default function App() {
       });
 
       window.electronAPI.menu.onSave(() => {
-        saveProject();
+        if (useSpatialStore.getState().project) void useSpatialStore.getState().save();
+        else saveProject();
       });
 
       window.electronAPI.menu.onBuild(() => {
-        setShowBuildDialog(true);
+        if (useSpatialStore.getState().project) useSpatialStore.getState().setShowBuild(true);
+        else setShowBuildDialog(true);
       });
 
       window.electronAPI.menu.onBuildSettings(() => {
-        setShowBuildDialog(true);
+        if (useSpatialStore.getState().project) useSpatialStore.getState().setShowBuild(true);
+        else setShowBuildDialog(true);
       });
 
       window.electronAPI.menu.onSettings(() => {
@@ -339,7 +349,8 @@ export default function App() {
       });
 
       window.electronAPI.menu.onProjectOpen(async (path) => {
-        await loadProject(path);
+        // Virtual (project.json) か Spatial (project.spatial.json) かで開く画面を変える
+        await openProjectFolder(path);
       });
     }
   }, []);
@@ -349,7 +360,9 @@ export default function App() {
       <div className="flex flex-col h-screen w-screen bg-arsist-bg">
         <TitleBar />
         
-        {project ? (
+        {spatialProject ? (
+          <SpatialWorkspace />
+        ) : project ? (
           // ライブ配置モードは通常の編集UIと完全に別画面（パネル構成もツールバーも共有しない）
           appMode === 'live' ? <LiveLayoutMode /> : <MainLayout />
         ) : (

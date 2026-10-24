@@ -66,6 +66,12 @@ export interface UnityBuildConfig {
   scriptsData?: object;
 
   /**
+   * Layster.Spatial のランタイムが読む spatial.json (doc/19-layster.md §4.1、lower.ts が作る)。
+   * Virtual のビルドでは無い (前のビルドの spatial.json は消える)。
+   */
+  spatialData?: object;
+
+  /**
    * true の場合、作業用Unityプロジェクト（Library/を含む）を捨ててゼロから作り直す。
    * 通常は false（差分ビルド）でよい。キャッシュ由来の不整合を疑うときの逃げ道。
    */
@@ -1848,6 +1854,16 @@ export class UnityBuilder extends EventEmitter {
       this.emit('log', '[Arsist] scripts.json exported');
     }
 
+    // Layster.Spatial のランタイムが読む (ArsistSpatialRuntime)。Virtual のビルドでは書かない
+    if (config.spatialData) {
+      await fs.writeJSON(
+        path.join(dataDir, 'spatial.json'),
+        config.spatialData,
+        { spaces: 2 }
+      );
+      this.emit('log', '[Arsist] spatial.json exported (Layster.Spatial)');
+    }
+
     // 前回ビルドで出力した json のうち、今回出力しなかったものを消す
     // （dataflow/scripts を削除したのに Unity 側に残り続けるのを防ぐ）
     const expectedGeneratedFiles = new Set([
@@ -1856,6 +1872,7 @@ export class UnityBuilder extends EventEmitter {
       'ui_layouts.json',
       ...(dataFlowData ? ['dataflow.json'] : []),
       ...(config.scriptsData ? ['scripts.json'] : []),
+      ...(config.spatialData ? ['spatial.json'] : []),
     ]);
     for (const entry of await fs.readdir(dataDir)) {
       if (entry.endsWith('.meta')) continue;
@@ -3225,7 +3242,13 @@ export class UnityBuilder extends EventEmitter {
       uiLayouts: config.uiData,
       scripts: Array.isArray(scriptsData?.scripts) ? scriptsData!.scripts : [],
     } as unknown as ArsistProject;
-    const features = projectFeatureTags(projectLike);
+    // 第2層が Spatial のときは、IR から直接は読めない機能 (Mind がカメラの画を見る等) を lower.ts が
+    // manifest の requiresFeatures に書いてくる。それも足す
+    const declared = (manifest as { requiresFeatures?: unknown }).requiresFeatures;
+    const features = uniqueTags([
+      ...projectFeatureTags(projectLike),
+      ...(Array.isArray(declared) ? declared.filter((f): f is string => typeof f === 'string') : []),
+    ]);
 
     this.emit('log', `[Arsist] Device tags (${config.targetDevice}): ${deviceTags.join(' ') || '(none)'}`);
     this.emit('log', `[Arsist] Features used: ${features.join(' ') || '(none)'}`);

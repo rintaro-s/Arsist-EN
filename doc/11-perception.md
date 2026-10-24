@@ -7,6 +7,15 @@
 > dependency and is verified against synthetic data by `npm run test:perception`
 > ([tools/perception-check/](../tools/perception-check/)). **Run it after touching any of that math** —
 > a wrong sign there moves anchors by centimetres and the device build will not tell you.
+>
+> **Profile:** image anchors and perception tasks are **Layster.Virtual** features (`project.json`
+> `perception`, `SceneObject.anchor`). Layster.Spatial (`project.spatial.json`, doc/19) has no
+> `perception` block; it places things by conditions and feeds the world through providers / minds.
+> Spatial builds still reuse the camera runtime (`ArsistPerceptionManager`) for a mind's `observe.camera`
+> stills (doc/20).
+>
+> Related: regions, placement and OCR / vision tasks on top of these anchors → `doc/12`; image pipelines →
+> `doc/14`; camera readback and models → `doc/15`.
 
 ---
 
@@ -80,7 +89,7 @@ export type PerceptionTargetType = 'image';   // future: 'plane' | 'objectClass'
 export interface PerceptionTarget {
   id: string;
   name: string;
-  type: 'image';
+  type: PerceptionTargetType;
 
   /** Reference photo, project-relative. Copied to StreamingAssets/Perception/ at build. */
   imagePath: string;
@@ -96,14 +105,17 @@ export interface PerceptionTarget {
 
   /** Editor-computed trackability score 0–100, advisory only. See §6.1. */
   quality?: number;
+
+  /** Named rectangles on the photo — placement bases and OCR / vision sources. doc/12 §2.1. */
+  regions?: PerceptionRegion[];
 }
 ```
 
 `ArsistProject` gains:
 
 ```ts
-  /** Perception targets (optional, back-compatible). */
-  perception?: { targets: PerceptionTarget[] };
+  /** Perception targets (optional, back-compatible). tasks: doc/12 §2.3, doc/14. */
+  perception?: { targets: PerceptionTarget[]; tasks?: PerceptionTask[] };
 ```
 
 ### 3.2 `ObjectAnchor` — where an object goes
@@ -113,6 +125,8 @@ export interface ObjectAnchor {
   /** PerceptionTarget.id */
   targetId: string;
   whenNotFound: 'hidden' | 'lastKnown' | 'visible';
+  /** "10 cm to the right of it" — direction + gap from real sizes. doc/12 §2.2. */
+  placement?: AnchorPlacement;
 }
 ```
 
@@ -124,9 +138,6 @@ export interface ObjectAnchor {
 
 `lastKnown` is the default because it is what "stick this on that thing" means in practice: the
 object should not vanish when you look away. See §5.3.
-
-```ts
-```
 
 `SceneObject` gains `anchor?: ObjectAnchor`. **When `anchor` is present, `transform` is reinterpreted
 as an offset in the target's local frame** instead of an absolute world pose. Nothing else about
@@ -193,12 +204,20 @@ No new trigger type. Perception reuses the existing `ScriptTrigger` `event` chan
 
 Fired through `ArsistScriptEvent.Fire(...)`, the same path `ArsistGazeTarget` already uses.
 
-A `perception` JS global is added alongside `scene` / `viewer` / `ui`:
+A `perception` JS global is added alongside `scene` / `viewer` / `ui` (`Runtime/Scripting/PerceptionWrapper.cs`;
+listed in `src/shared/scriptApi.ts`):
 
 ```js
-perception.isTracked("microwave_panel")   // -> bool
-perception.getPose("microwave_panel")     // -> {position, rotation} in world space, or null
+perception.isTracked("microwave_panel")   // -> bool: localised at least once (then world-fixed)
+perception.isVisible("microwave_panel")   // -> bool: actually seen within holdMs
+perception.getPose("microwave_panel")     // -> { id, name, localized, visible, x, y, z, rotationX/Y/Z (Euler °),
+                                          //      observations, rmse } in Unity world space, or null
+perception.getRegionPose("microwave_panel", "display")   // same shape, X/Y/Z = the region's centre
+perception.listTargets()                  // -> target ids
 ```
+
+Poses are Unity world coordinates (after the build's X mirror, §3.3), not editor coordinates. Task-related
+calls (`run` / `lastResult` / `value` / `gated`) are in doc/12 §3.4.
 
 ---
 
@@ -223,54 +242,63 @@ ordinary `SceneObject` with a parent.
 
 ### 5.1 Frame source contract (per device — the only device-specific code)
 
+`Runtime/Perception/ArsistCameraFrame.cs`:
+
 ```csharp
 public struct ArsistCameraFrame {
-    public NativeArray<byte> Gray;     // single channel, tightly packed
-    public int Width, Height;
-    public Vector2 FocalLength;        // fx, fy in pixels
-    public Vector2 PrincipalPoint;     // cx, cy in pixels
+    public GrayImage Image;            // luminance, rows bottom-up
+    public ColorImage Color;           // same picture in colour, only when CaptureColor was set
+    public CameraIntrinsics Intrinsics;// in Image's resolution, bottom-left pixel origin
     public Pose CameraPose;            // Unity world space, at capture time
     public double TimestampSeconds;
 }
 
 public interface IArsistCameraFrameSource {
     bool IsSupported { get; }
-    bool TryAcquireFrame(out ArsistCameraFrame frame);   // false = no new frame
-    void Release(ArsistCameraFrame frame);
+    bool CaptureColor { get; set; }        // colour conversion only when someone needs it
+    int RequestedMaxWidth { get; set; }    // FrameBudget: widest consumer waiting; 0 = full resolution
+    bool Initialize();
+    bool TryAcquire(out ArsistCameraFrame frame);   // false = no new frame; main thread
+    void Shutdown();
+    string Description { get; }
 }
 ```
 
-Implementations:
+Implementations (`Runtime/Perception/Sources/`, tried in this order by `ArsistPerceptionManager`):
 
-- **Quest** — `Meta.XR.MRUtilityKit.PassthroughCameraAccess`. Supplies everything directly:
-  `GetColors()`, `Intrinsics` (`FocalLength` / `PrincipalPoint` / `SensorResolution`), `GetCameraPose()`,
-  `IsUpdatedThisFrame`. Requires `horizonos.permission.HEADSET_CAMERA` and a runtime permission
-  request. Request `640×480` to skip a downscale.
-- **XREAL / ARCore** — `ARCameraManager.TryAcquireLatestCpuImage` + `TryGetIntrinsics`, pose from the
-  AR camera transform at the frame's timestamp.
-- **Editor** — `WebCamTexture`, or a render of the authored scene, so the recognizer is testable with
-  no device attached.
+- **Quest** — `ArsistQuestCameraSource`: MRUK's `Meta.XR.PassthroughCameraAccess`, reached by
+  reflection (MRUK is absent from XREAL builds). Intrinsics and `GetCameraPose()` come from it; pixels
+  are read with `GpuFrameReader` (GPU downscale + `AsyncGPUReadback`), not `GetColors()`, which stalls
+  the frame. Requests 1280×960 so OCR crops keep detail. Requires `horizonos.permission.HEADSET_CAMERA`
+  (added by `QuestBuildPatcher`) and a runtime permission request.
+- **XREAL / ARCore** — `ArsistARFoundationCameraSource`: `ARCameraManager.TryAcquireLatestCpuImage` +
+  `TryGetIntrinsics`, downscaled natively by `XRCpuImage.Convert`, pose from the AR camera at capture time.
+- **Phone / editor** — `ArsistWebcamCameraSource`: `WebCamTexture` through the same `GpuFrameReader`.
+
+The readback row order differs between graphics APIs and is **measured at runtime**
+(`GpuFrameReader.EnsureProbe`), not assumed. Details and logs: doc/15 §2.
 
 `CameraPose` **must** be the pose at capture time, not at consumption time, or the anchor lands
 offset whenever the head is moving.
 
 ### 5.2 Recognizer (device-independent)
 
-Standard planar target pipeline, implemented in C# with Burst/Jobs — no native library, no
-Asset Store dependency, no licence question:
+Standard planar target pipeline in plain C# (`Runtime/Perception/Vision/`, UnityEngine-free) — no native
+library, no Burst, no Asset Store dependency, no licence question:
 
 | Stage | Choice | Note |
 |-------|--------|------|
-| Reference prep | 4-level image pyramid, once at startup | lets the target be recognised near and far |
-| Keypoints | FAST-9 | |
+| Reference prep | 6-level image pyramid (scale 1.2), once at startup | lets the target be recognised near and far |
+| Keypoints | FAST (threshold 18), spread over 32 px cells, ≤ 900 per image | `FastDetector`, `FeatureExtractor` |
 | Descriptors | rotated BRIEF (ORB), 256-bit | Hamming distance = popcount, very cheap |
-| Matching | brute force + Lowe ratio test (0.75) | reference sets are small (≤1000 keypoints) |
-| Geometry | RANSAC homography → IPPE planar pose | physical size + intrinsics give metric scale |
-| Acceptance | ≥ 20 inliers **and** reprojection RMSE < 3 px | rejects the false positives that make marker tracking feel broken |
-| Output | pose smoothed, then **frozen in world space** | §2.1 — platform tracking holds it |
+| Matching | brute force + Lowe ratio test (0.78) | `DescriptorMatcher` |
+| Geometry | RANSAC homography (3 px, 2000 iterations) → planar pose | `Homography`, `PlanarPoseSolver`; physical size + intrinsics give metric scale |
+| Acceptance | ≥ 20 inliers **and** reprojection RMSE ≤ 2.5 px | `RecognizerSettings`; rejects the false positives that make marker tracking feel broken |
+| Output | observations fused (weighted by inliers, RMSE, distance), then **fixed in world space** | §2.1 — platform tracking holds it |
 
-Runs on a worker thread at a target 5 Hz; the main thread never blocks. Budget: ≈15–30 ms per
-detection at 640×480 on Quest 3.
+Runs on a worker thread on frames downscaled to 640 px wide; the main thread never blocks. Detection runs at
+6 Hz and drops to 1 Hz once a target has 8 observations (`DetectionRate` / `SettledDetectionRate`) — more
+observations refine the pose, they are not needed to follow it.
 
 ### 5.3 Anchor application
 
@@ -285,7 +313,7 @@ feature is unused.
 |---------|--------------|
 | Nothing is ever detected, and the editor shows a low trackability score | The reference photo. Blurry, low-contrast or repetitive images have no usable keypoints (§6.1). |
 | Nothing is detected, no `[Arsist] Perception target localized` in logcat | Camera permission (`horizonos.permission.HEADSET_CAMERA`) was denied, or the headset is not a Quest 3/3S on Horizon OS ≥ v74. `PassthroughCameraAccess.IsSupported` gates this and Arsist logs which frame source it chose. |
-| It detects, but the object appears **mirrored or upside down** | The camera readback row order. Set `ArsistQuestCameraSource.FlipReadbackRows = true`. A vertical flip is itself a valid homography, so the reprojection error stays low and nothing else reports a problem — this is the one failure the maths cannot catch for you. |
+| It detects, but the object appears **mirrored or upside down** | The camera readback row order. It is measured at startup (`GpuFrameReader.EnsureProbe`, log `GPU frame reader: … readback rows are …`); check that line first. A vertical flip is itself a valid homography, so the reprojection error stays low and nothing else reports a problem — this is the one failure the maths cannot catch for you. |
 | The object sits at the right place but the **distance is wrong** | `physicalWidth` does not match the real object. Scale comes only from that number. |
 | The object lands on the wrong side of the surface | Sign of the authored `z` offset, or the anchor frame — see the handedness table in §3.3. |
 
@@ -298,9 +326,9 @@ feature is unused.
 | [src/shared/types.ts](../src/shared/types.ts) | `PerceptionTarget`, `ObjectAnchor`, `ArsistProject.perception`, `SceneObject.anchor` |
 | [src/bridge/UnityBridge.ts](../src/bridge/UnityBridge.ts) | emit `perception` into `manifest.json`; emit `anchor` per object |
 | `ArsistBuildPipeline.cs` | copy reference photos → `StreamingAssets/Perception/`; add `ArsistPerceptionManager` to the scene only when targets exist; attach `ArsistImageAnchor` |
-| `Adapters/Meta_Quest/` | `horizonos.permission.HEADSET_CAMERA` in the manifest; MRUK package requirement |
-| `Adapters/XREAL_One/` | `android.permission.CAMERA` |
-| `AdapterManager.ts` | `AdapterFeatures.imageTracking` becomes meaningful; add `cameraFrameAccess` |
+| `Adapters/Meta_Quest/` | `horizonos.permission.HEADSET_CAMERA` (`QuestBuildPatcher`); MRUK package requirement |
+| `Adapters/XREAL_One/`, `Adapters/Android_Phone/` | `android.permission.CAMERA` |
+| `adapter.json` `tags` / `src/shared/engineFeatures.ts` | devices that can supply frames carry `cap:camera-access`; the `image-anchors` and `vision` features require it |
 | `src/renderer/i18n/strings.ts` | all new UI strings (en/ja), per project convention |
 
 Reference photos go to StreamingAssets as plain files — **not** as Unity textures and **not** as an
@@ -335,8 +363,8 @@ Quest + XREAL + Editor; multiple targets tracked simultaneously.
 
 ## 8. Later: native fast path
 
-`IArsistImageRecognizer` sits behind the same interface, so an `ARTrackedImageManager`-backed
-recognizer can be added for XREAL/ARCore without touching the IR, the editor, or user projects.
+There is no recognizer interface yet — `ImageRecognizer` is called directly. Putting one in front of it
+would let an `ARTrackedImageManager`-backed recognizer be added for XREAL/ARCore without touching the IR, the editor, or user projects.
 Worth doing only if the universal recognizer proves too slow or too jittery in practice — and it
 must be measured against the universal path first, because divergent per-device behaviour is a real
 cost to authors.

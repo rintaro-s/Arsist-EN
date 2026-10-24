@@ -9,7 +9,11 @@ used by two different callers:
 | Built-in assistant (any OpenAI-compatible `/chat/completions` endpoint with function calling) | in the editor's main process | `src/main/agent/assistant.ts` |
 
 There is one tool implementation, `src/main/mcp/tools.ts` (`ARSIST_TOOLS`, `callArsistTool`). Add a tool there and
-both callers get it.
+both callers get it. The Layster.Spatial tools (`spatial_*`) live in `src/main/mcp/spatialTools.ts` (`SPATIAL_TOOLS`,
+spread into `ARSIST_TOOLS`; it imports only types from `tools.ts`).
+
+The two Layster profiles have **separate tools**: `ir_*` for Layster.Virtual (`project.json`), `spatial_*` for
+Layster.Spatial (`project.spatial.json`). `arsist_open_project` reports which one a folder is and which tools to use.
 
 ---
 
@@ -18,14 +22,18 @@ both callers get it.
 | File | Role |
 |---|---|
 | `src/main/mcp/tools.ts` | Every tool: name, description, JSON schema, `readOnly`, `run(args, session)` |
+| `src/main/mcp/spatialTools.ts` | The `spatial_*` tools and `spatialReferenceText()` (`spatial_reference`) |
 | `src/main/mcp/scriptReference.ts` | Script API reference (`arsist_script_reference`, also put in the assistant's system prompt). Each installed extension's README `## スクリプト` section is appended |
 | `src/main/mcp/server.ts` | `runStdioServer()` — stdio MCP server, tool annotations (`readOnlyHint`), errors as `isError` |
 | `src/main/mcp/sdk.ts` | Loads `@modelcontextprotocol/sdk` through `require` (main tsconfig uses node10 resolution, which ignores `exports`) |
 | `src/main/mcp/launch.ts` | `arsistLaunchSpec()` — the command an agent should run; `selfTestMcp()` — starts it exactly like an agent would and lists the tools |
 | `src/main/mcp/agentTargets.ts` | One-click registration into each agent's settings file |
+| `src/main/mcp/configPaths.ts` | `arsistConfigDir()` — the editor's config folder, also from outside Electron (rule in `src/main/platform/paths.ts`) |
 | `src/main/project/projectIO.ts` | Safe read/modify/write of a project from outside the editor |
 | `src/main/project/projectWatcher.ts` | Watches the open project so the editor sees what an agent wrote |
-| `src/main/ipc/aiIpc.ts` | IPC: `mcp:*`, `assistant:*`, `project:export-package` / `import-package` |
+| `src/main/layster/SpatialProjectManager.ts` | The only reader/writer of `project.spatial.json` (`withSpatialWrite`: queued, atomic) |
+| `src/main/layster/spatialWatcher.ts` | Same as `ProjectWatcher` for `project.spatial.json` and `spaces/*.json` (→ `spatial:changed`) |
+| `src/main/ipc/aiIpc.ts` | IPC: `mcp:agents` / `register` / `unregister` / `self-test`, `assistant:*`, `project:export-package` / `import-package` / `install-staged-extension` |
 | `scripts/mcp-ir-server.mjs` | Thin launcher: requires `dist/main/main/mcp/server.js` |
 
 ---
@@ -99,12 +107,17 @@ The agent edits the files; the editor holds its own copy in memory. To keep both
 1. **Atomic writes** — every JSON file is written to a temp file and renamed (`atomicWriteJson`), also by the editor's
    own `saveProject`. A reader never sees half a file.
 2. **One write at a time per project** — `withProjectWrite` queues read-modify-write per path inside a process.
-3. **IR version** — tools refuse to write to a project whose IR is older than this Arsist (open it in the editor
+3. **IR version** — `ir_*` tools refuse to write to a project whose Layster.Virtual version is older than this Arsist (open it in the editor
    and accept the upgrade first; projects are never upgraded silently) and refuse to read a newer one.
 4. **Editor reload** — `ProjectWatcher` watches `project.json`, `Scenes/`, `UI/`. The editor's own writes are
    recognised by content hash and ignored. On an external change:
    - no unsaved edits → the editor reloads quietly, keeping the current scene, layout, selection and script;
    - unsaved edits → a banner asks: reload (drop mine) or keep mine (saving overwrites theirs).
+
+Layster.Spatial follows the same rules through its own code: `spatial_set_*` / `spatial_remove` / `spatial_set_settings`
+go through `withSpatialWrite` (per-folder queue, atomic write, refuses a file written by a newer Arsist), and
+`SpatialWatcher` tells the Spatial editor (`spatial:changed`): no unsaved edits → it reloads, otherwise it only shows
+a notice.
 
 ---
 
@@ -116,8 +129,13 @@ The IR is plain JSON, so any agent that can edit text can work on a project, and
 |---|---|
 | `project.json` | everything: settings, `scripts[]` (code inline), `dataFlow`, `extensions`, `models`, and copies of `scenes[]` / `uiLayouts[]` |
 | `Scenes/<id>.json`, `UI/<id>.json` | one scene / one UI layout each |
+| `project.spatial.json` | a Layster.Spatial project (things, minds, bodies, rules, scripts, settings) — one file, no copies |
+| `spaces/<id>.json` | a Spatial project's own test spaces |
 
-**Two copies.** Scenes and UI layouts are written in both places. Before, the per-file copy always won, so an edit
+Mind keys of a Spatial project are **not** in these files: only their names are; values live in
+`.layster/secrets.local.json`, stay in main and are baked in at build time (doc/19).
+
+**Two copies (Virtual only).** Scenes and UI layouts are written in both places. Before, the per-file copy always won, so an edit
 inside `project.json` was ignored and then erased by the next save (a scene without a `Scenes/` file was dropped).
 Now `src/main/project/sceneCopies.ts` decides:
 
@@ -146,9 +164,10 @@ Debugging: `ARSIST_DEBUG_WATCH=1` prints when each change is seen and when the e
 
 ---
 
-## Tools (41)
+## Tools (57)
 
-`projectPath` is optional everywhere once a project is open (`ARSIST_PROJECT_PATH` / `arsist_open_project`).
+43 general / Layster.Virtual tools + 14 Layster.Spatial tools. `projectPath` is optional everywhere once a project is
+open (`ARSIST_PROJECT_PATH` / `arsist_open_project`). The server logs the count on start (`[arsist-mcp] ready: N tools`).
 
 | Group | Tools |
 |---|---|
@@ -161,10 +180,11 @@ Debugging: `ARSIST_DEBUG_WATCH=1` prints when each change is seen and when the e
 | DataFlow | `ir_add_datasource`, `ir_update_datasource`, `ir_remove_datasource`, `ir_add_transform`, `ir_update_transform`, `ir_remove_transform` |
 | Scripts | `ir_list_scripts`, `ir_get_script`, `ir_check_script`, `ir_add_script`, `ir_update_script`, `ir_remove_script` — the trigger is validated and code with a syntax error is refused (with the line) |
 | Extensions | `ir_list_extensions`, `ir_set_extension`, `ir_set_object_extension` — values are checked against the extension's `extension.json` fields |
+| Spatial (14) | `spatial_reference` (read first: frames, vocabulary, placement, actions, minds, bodies, recording, `world.*`), `spatial_create_project`, `spatial_get_project`, `spatial_get` (one item or `settings`), `spatial_set_thing` / `_mind` / `_body` / `_rule` / `_script` (whole item as JSON, replace-or-add by id; returns that item's problems), `spatial_remove`, `spatial_set_settings`, `spatial_validate`, `spatial_solve` (the device's placement solver over test spaces), `spatial_list_spaces` |
 
 Errors come back as `{ "success": false, "error": "…" }` (MCP: `isError: true`) so the agent can correct itself.
 
-Coordinates in the IR (also in `arsist_script_reference`): meters, origin = the head at start, **+Z ahead, +X = the
+Coordinates in Layster.Virtual (also in `arsist_script_reference`): meters, origin = the head at start, **+Z ahead, +X = the
 user's left**, +Y up.
 
 ---
@@ -172,7 +192,7 @@ user's left**, +Y up.
 ## Built-in assistant
 
 Toolbar → robot icon. A chat panel that sends the request to an OpenAI-compatible endpoint and lets the model call the
-tools above in-process.
+tools above in-process. The panel is shown only while a Layster.Virtual project is open (`App.tsx`).
 
 - **Settings**: preset (OpenAI, OpenRouter, DeepSeek, Qwen DashScope, Groq, Ollama, LM Studio, Custom), base URL
   (`…/v1`), API key, model (with "List models" → `GET /models`), max tool calls per request (default 24). The model must

@@ -132,6 +132,9 @@ namespace Arsist.Runtime.Scripting
             // 組み込みの名前は上書きできない (ArsistScriptBridge.Set が断る)。
             Arsist.Runtime.Extensions.ArsistExtensions.InstallScriptGlobals(_engine);
 
+            // Layster.Spatial のプロジェクトだけ `world` を出す (Virtual では何もしない)
+            Arsist.Runtime.Spatial.ArsistSpatialHooks.InstallScriptGlobals(_engine, _js);
+
             // 互換グローバルを提供（window / globalThis / console）
             // 既存サンプルやユーザースクリプトが browser-like API を使っても落ちないようにする
             _engine.Execute(@"
@@ -300,6 +303,8 @@ namespace Arsist.Runtime.Scripting
             var rules = new List<string>();
             if (bundle?["storage"]?["persist"] is JArray persist)
                 foreach (var item in persist) { var rule = item?.ToString(); if (!string.IsNullOrWhiteSpace(rule)) rules.Add(rule); }
+            // Layster.Spatial: PC のアドレスと keep: forever の置き場所 (layster.*) も残す
+            Arsist.Runtime.Spatial.ArsistSpatialHooks.AddPersistRules(rules);
             Arsist.Runtime.Data.ArsistPersistentStore.Instance?.Configure(rules);
         }
 

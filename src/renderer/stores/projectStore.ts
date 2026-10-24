@@ -27,6 +27,7 @@ import type {
   ModelDefinition,
 } from '../../shared/types';
 import { CHARACTER_DEFAULTS } from '../../shared/types';
+import { describeVirtualIrVersion } from '../../shared/layster/version';
 
 /** 古い版の IR を開いたときの提案 (main の PendingUpgrade と同じ形)。 */
 export interface IrUpgradeOffer {
@@ -340,7 +341,7 @@ export const useProjectStore = create<ProjectState>()(
         } else if (result.error === 'irTooNew') {
           notifyProjectError(
             'This project was saved by a newer Arsist',
-            `project irVersion ${result.irVersion?.found} > supported ${result.irVersion?.supported}`,
+            `the project is Layster.Virtual ${describeVirtualIrVersion(result.irVersion?.found ?? 0)}, this Arsist reads up to ${describeVirtualIrVersion(result.irVersion?.supported ?? 0)}`,
           );
         } else {
           notifyProjectError('Failed to open project', result.error);

@@ -17,8 +17,9 @@ headset                                    dev machine
 
 ## Why the builder machine is trusted automatically
 
-`UnityBuilder.resolveLogRelay` reads this machine's LAN IPv4 addresses at build time and writes them into
-the manifest, and `ArsistBuildPipeline.EnsureLogRelayInScene` bakes them into the scene. **The app can
+`UnityBuilder.resolveLogRelay` reads this machine's LAN IPv4 addresses at build time (`listLanAddresses`,
+skipping loopback and virtual NICs such as `docker*` / `veth*` / `virbr*` / `br-*`) and writes them into
+the manifest as `logRelay { enabled, hosts, port, token }`, and `ArsistBuildPipeline.EnsureLogRelayInScene` bakes them into the scene. **The app can
 only talk to the machine that built it**, so there is no pairing step, no discovery protocol, and no
 service to run on the device.
 
@@ -37,7 +38,10 @@ npm run logs -- --for 20        # listen 20s then exit — the form to use in sc
 npm run logs -- --grep Arsist   # only matching lines
 npm run logs -- --level error   # error and above
 npm run logs -- --json          # one JSON object per line
+npm run logs -- --port 9771     # another port (also ARSIST_LOG_PORT; default 9770)
 ```
+
+The receiver is `scripts/arsist-logs.mjs`; the sender is `Runtime/Diagnostics/ArsistLogRelay.cs`.
 
 Then launch the app on the headset. No cable, no `adb`, and the headset can stay on the user's head.
 
@@ -47,6 +51,7 @@ Then launch the app on the headset. No cable, no `adb`, and the headset can stay
 
 - exit `0` — lines were received
 - exit `2` — nothing arrived in N seconds (app not running, different network, or relay disabled)
+- exit `1` — the port could not be bound (socket error)
 
 That distinction is the point: a silent zero-line run is otherwise indistinguishable from a crash.
 
@@ -57,15 +62,21 @@ npm run logs -- --for 25 --grep 'Arsist|Task' > /tmp/run.log; echo $?
 ## Turning it off
 
 Ship builds should not stream logs over the LAN in plaintext. Set `arSettings.logRelay.enabled = false`
-in the IR; the pipeline then adds no component and the manifest carries no addresses. It is **on by
+in a Layster.Virtual `project.json` (`arSettings.logRelay.port` changes the port); the pipeline then adds no
+component and the manifest carries no addresses. Layster.Spatial builds go through the same builder, but
+`lower.ts` writes no `logRelay` setting, so they always relay with the defaults. It is **on by
 default** because the whole point is not having to configure anything while developing.
 
 ## Shape of a line
 
 ```json
-{"token":"arsist","app":"ArsistPerception","level":"info","t":1788748514215,
- "msg":"[Arsist] Task 'scanView' -> \"…\"","stack":"…","dropped":0}
+{"token":"arsist","app":"ArsistPerception","level":"info","t":63896345314215,
+ "msg":"[Arsist] Task 'scanView' -> \"…\"","stack":"…","dropped":3}
 ```
+
+`stack` is present only when there is a stack trace, `dropped` only when lines were lost. `t` is
+`DateTime.UtcNow.Ticks / TicksPerMillisecond` — milliseconds since 0001-01-01, **not** Unix time (the receiver
+only shows the time of day, which comes out right either way).
 
 `token` lets the receiver ignore unrelated traffic on the port. It is a filter, not a secret.
 
@@ -79,4 +90,4 @@ The relay must never affect the app it is reporting on:
   missing listener is not an error.
 - The queue is capped at 512 entries; overflow drops the **oldest** and reports the count in the next
   line (`dropped`), so a burst is visibly truncated rather than silently lost.
-- Individual messages are truncated to ~3.5 KB so a long stack trace cannot blow the datagram.
+- Individual messages (and stack traces) are truncated to 3500 characters so a long stack trace cannot blow the datagram.

@@ -16,7 +16,8 @@ import type {
   UILayoutData,
 } from '../../shared/types';
 import { CURRENT_IR_VERSION } from '../../shared/irVersion';
-import { IrVersionError, migrateProject, type MigrationOutcome } from './migrations';
+import { virtualHeaderFor } from '../../shared/layster/version';
+import { IrVersionError, migrateProject, virtualBackupTag, type MigrationOutcome } from './migrations';
 import { checkProjectRequirements, migrateExtensionData, type ExtensionDataUpgrade, type MissingRequirement } from '../../shared/extensions';
 import { getExtensionCatalog } from '../extensions/catalogService';
 import { describeJsonError, resolveSceneAndUiCopies, seenAfterSave, stableStringify, syncStaleCopies, type CopySeen } from './sceneCopies';
@@ -129,6 +130,7 @@ export class ProjectManager {
       const isQuest = normalizedTarget.includes('quest') || normalizedTarget.includes('meta');
 
       const project: ArsistProject = {
+        layster: virtualHeaderFor(CURRENT_IR_VERSION),
         id: uuidv4(),
         name: options.name,
         version: '1.0.0',
@@ -321,12 +323,14 @@ export class ProjectManager {
       const backupDir = path.join(this.projectPath, 'Backups');
       await fs.ensureDir(backupDir);
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupPath = path.join(backupDir, `project.v${upgrade.from}.${stamp}.json`);
+      // 名前に版を入れる (project.alpha5.<時刻>.json / project.beta1.0.0.<時刻>.json)。どの Arsist に戻せば読めるかが分かる
+      const backupPath = path.join(backupDir, `project.${virtualBackupTag(upgrade.from)}.${stamp}.json`);
       if (await fs.pathExists(projectFile)) await fs.copy(projectFile, backupPath);
 
       this.readOnly = false;
       this.pendingUpgrade = null;
       this.currentProject.irVersion = CURRENT_IR_VERSION;
+      this.currentProject.layster = virtualHeaderFor(CURRENT_IR_VERSION);
 
       const saved = await this.saveProject({});
       if (!saved.success) {
@@ -571,6 +575,7 @@ export class ProjectManager {
       projectName: this.currentProject.name,
       version: this.currentProject.version,
       irVersion: this.currentProject.irVersion ?? CURRENT_IR_VERSION,
+      layster: this.currentProject.layster ?? virtualHeaderFor(this.currentProject.irVersion ?? CURRENT_IR_VERSION),
       appType: this.currentProject.appType,
       targetDevice: this.currentProject.targetDevice,
       arSettings: this.currentProject.arSettings,

@@ -3,7 +3,7 @@
 A machine-readable orientation map. If you are an AI agent modifying this repo, **read this first**, then the
 relevant `doc/NN-*.md` deep-dive. For "where do I change X" jump to [Task index](#task-index).
 
-> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `17-extensions`). This file is the fast index +
+> Deep-dive docs live in [`doc/`](doc/) (`00-overview` … `20-spatial-runtime`). This file is the fast index +
 > the device/SDK responsibility map that those docs don't cover.
 
 ---
@@ -45,14 +45,14 @@ Build system: **npm + Vite + tsc + electron-builder** (no CMake/Cargo). Unity pr
 |------|----------------|
 | [main.ts](src/main/main.ts) | App lifecycle, IPC handlers, menu, project watcher, Unity path detection, OS tuning |
 | [ipc/aiIpc.ts](src/main/ipc/aiIpc.ts) | IPC for MCP agent registration, the built-in assistant, and `.arsist` project export/import |
-| `mcp/` | `tools.ts` (all 41 IR tools, shared by MCP and the assistant), `server.ts` (stdio server), `agentTargets.ts` (one-click registration into Claude Code / Codex / Qwen Code / …), `launch.ts` (launch spec + self-test), `scriptReference.ts` |
+| `mcp/` | `tools.ts` (43 `ir_*`/`arsist_*` tools + the 14 `spatial_*` tools from `spatialTools.ts`, shared by MCP and the assistant), `server.ts` (stdio server), `agentTargets.ts` (one-click registration into Claude Code / Codex / Qwen Code / …), `launch.ts` (launch spec + self-test), `scriptReference.ts` |
 | [agent/assistant.ts](src/main/agent/assistant.ts) | Built-in agent: OpenAI-compatible chat completions + function calling, snapshot/undo in `Backups/agent/` |
 | `project/projectIO.ts`, `projectWatcher.ts`, `projectPackage.ts` | Atomic writes + per-project write queue for out-of-editor edits; reload on external change; `.arsist` project export/import (bundles extensions) |
 | [preload.ts](src/main/preload.ts) | contextBridge IPC surface exposed to renderer |
 | [project/ProjectManager.ts](src/main/project/ProjectManager.ts) | IR create/load/save/export; old-format projects open read-only until the user accepts an upgrade |
 | [project/migrations.ts](src/main/project/migrations.ts) | IR version migrations (`CURRENT_IR_VERSION` in `src/shared/irVersion.ts`); idempotent, tested |
 | `model/` | ONNX inspection without dependencies (`protobuf.ts` + `OnnxInspector.ts`), import into `Assets/Models/`, sample model builder |
-| [unity/UnityBuilder.ts](src/main/unity/UnityBuilder.ts) | **6-phase headless Unity build**; license retry; toolchain/SDK detection (largest file) |
+| [unity/UnityBuilder.ts](src/main/unity/UnityBuilder.ts) | **phased headless Unity build** (Virtual and Spatial); license retry; toolchain/SDK detection (largest file) |
 | [adapters/AdapterManager.ts](src/main/adapters/AdapterManager.ts) | Discover/apply device adapter folders |
 | `platform/` *(added in portability work)* | Centralized OS-dependent detection (Unity/JDK/Android SDK/license/config paths) |
 
@@ -121,10 +121,10 @@ migrations, script globals, Android permissions, C# entry), `Runtime/*.cs`, opti
 
 ## Build pipeline (IR → APK)
 
-`renderer "Build"` → IPC `unity:build` → `UnityBuilder.build()` runs 6 phases:
-`prepare-unity` → `prepare-jint` → `transfer` (writes `manifest/scenes/ui_layouts/dataflow/scripts.json`) →
-`patch` (device adapter manifest + editor scripts) → `sdk` (copy XREAL/Quest packages into Unity `Packages/`) →
-`build` (spawn Unity `-batchmode -nographics -quit`, invoke `ArsistBuildPipeline.BuildFromCLI`). See `doc/04-unity-builder.md`.
+`renderer "Build"` → IPC `unity:build` (Virtual) or `spatial:build` (Spatial: validate → `lower.ts`) → `UnityBuilder.build()`:
+`prepare` → `prepare-unity` → `prepare-jint` → `transfer` (writes `manifest/scenes/ui_layouts/dataflow/scripts.json`, + `spatial.json`) →
+`patch` (device adapter manifest + editor scripts) → `sdk` (copy XREAL/Quest packages into Unity `Packages/`) → `extensions` →
+`sdk-vrm` → `build` (spawn Unity `-batchmode -nographics -quit`, invoke `ArsistBuildPipeline.BuildFromCLI`) → `verify`. See `doc/04-unity-builder.md`.
 
 **The working Unity project is reused between builds** (`<outputPath>/TempUnityProject`) so `Library/` — and with it
 asset imports, C# compilation, IL2CPP and Gradle output — stays warm. Everything Arsist copies in goes through
@@ -339,6 +339,14 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   `UnityBuilder.stageEngineOverrides` (refuses if the engine's original no longer matches `replaces`).
 - **Add a feature without editing the engine** → an extension: `npm run ext:new -- <id> [--requires <tag>]`,
   then enable it in the right panel (nothing selected) → Extensions. `doc/17-extensions.md`.
+- **Layster (the IR's name), Virtual vs Spatial** → `doc/19-layster.md`; names/versions `src/shared/layster/version.ts`;
+  Virtual upgrades outside the editor `scripts/layster-upgrade.mjs`. **Spatial**: contracts `src/shared/layster/spatial/`
+  (placement solver + built-in test spaces + `solver-cases.json`), main `src/main/layster/` (`projectKind`, `SpatialProjectManager`,
+  `spatialIpc`, `spatialWatcher`, `mindClient`), editor `src/renderer/spatial/` (Space Lab, inspectors, Mind I/O), agent tools
+  `src/main/mcp/spatialTools.ts`, build = `lower.ts` → `runUnityBuild` (+ `spatial.json` via `UnityBuildConfig.spatialData`,
+  extra features via `manifest.requiresFeatures`), runtime `Runtime/Spatial/` + Mind/Body protocols + episodes in
+  `doc/20-spatial-runtime.md`, demo servers `python/layster/`, samples `samples/spatial/`.
+- **Agent skills for writing Layster / building apps** → `skills/` (`layster-spatial`, `layster-virtual`, `layster-mind-server`; Agent Skills format, see `skills/README.md`). Update them when tool names, IR fields or defaults change.
 - **Change the IR's shape** → `npm run ir:new -- "<説明>"`, then write declarative ops in the new
   `defineMigration` (`src/shared/irOps.ts`). An extension's own data changes via its `data.version` /
   `data.migrations` instead, with no IR bump. `doc/17` §3.
@@ -459,9 +467,9 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   `Quaternion.LookRotation(outwardNormal, printedUp)` — its local +X is the printed *left*. `doc/11-perception.md`
   §3.3 has the derivation; changing either half alone mirrors every anchored object.
 - **`adapter.json` is not what selects an adapter — the folder name is.** `resolveAdapterDir` matches
-  `targetDevice` against directory names under `Adapters/` (case/`-`/`_`-insensitive), so a project targeting
-  `Meta_Quest3` silently gets *no* device patcher (logged as "No specific patch for …") even though
-  `Adapters/Meta_Quest/` exists.
+  `targetDevice` against directory names under `Adapters/` (case/`-`/`_`-insensitive; exact name first, then the
+  longest folder name the target starts with — `src/shared/adapterNames.ts`), so `Meta_Quest3` resolves to
+  `Adapters/Meta_Quest/` but a name that does not start with any folder name gets *no* device patcher.
 - Unity version: project is pinned in `ProjectVersion.txt`; keep detection scripts and README consistent with it.
 - Standalone helper scripts (`scripts/*.js`) reconstruct the electron-store config path by hand — keep in sync with
   `src/main/platform/` config-path logic.

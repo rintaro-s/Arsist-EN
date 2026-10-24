@@ -7,6 +7,7 @@ exports.referencedModels = referencedModels;
 exports.generateBuildManifest = generateBuildManifest;
 exports.generateUnityManifest = generateUnityManifest;
 const irVersion_1 = require("../shared/irVersion");
+const version_1 = require("../shared/layster/version");
 /**
  * シーンデータをUnity用JSONに変換
  */
@@ -351,6 +352,9 @@ function generateUnityManifest(project) {
         scriptBundle,
         // IR の版。Unity 側は読むだけだが、ログに残ると「どの版のエディタで作った APK か」が追える。
         irVersion: project.irVersion ?? irVersion_1.CURRENT_IR_VERSION,
+        // 形式の名前 (Layster.Virtual β 1.0.0 …)。ビルドのログと実機のログに出る。
+        // Spatial から作った内部用のプロジェクトは自分の見出し (profile: 'spatial') を持って来るので、それを優先する
+        layster: project.layster ?? (0, version_1.virtualHeaderFor)(project.irVersion ?? irVersion_1.CURRENT_IR_VERSION),
         // 学習済みモデル。パイプラインの `infer` op が参照しているものだけを出す。
         // 使っていないモデルまで APK に入れると、数十 MB 単位で膨らむ。
         models: shippedModels(project),

@@ -121,6 +121,15 @@ namespace Arsist.Runtime.Extensions
             return GameObject.Find(idOrAssetId);
         }
 
+        // ---- Layster.Spatial ----
+
+        /// <summary>
+        /// 空間 (Layster.Spatial) の窓口。provider (世界の状態を埋めるもの) を足す:
+        /// <c>if (context.Spatial.Active) context.Spatial.AddProvider(new MyProvider());</c>
+        /// Virtual のプロジェクトでは Active が false で、足しても何も起きない。doc/20-spatial-runtime.md §3。
+        /// </summary>
+        public Arsist.Runtime.Spatial.SpatialAccess Spatial => Arsist.Runtime.Spatial.SpatialAccess.Instance;
+
         // ---- ログ (npm run logs にも流れる) ----
 
         public void Log(string message) => Debug.Log($"[Arsist:{Id}] {message}");

@@ -18,6 +18,7 @@ import { installExtension, packExtension, uninstallExtension, PACKAGE_EXTENSION 
 import { describeCatalogProblems } from './extensions/ExtensionCatalog';
 import { registerAiIpc } from './ipc/aiIpc';
 import { ProjectWatcher } from './project/projectWatcher';
+import { closeSpatialWatcher, registerSpatialIpc } from './layster/spatialIpc';
 import { importAnimation, listAnimations } from './project/animationAssets';
 import { readVrmSpec } from './project/vrmInfo';
 import { adapterTags } from '../shared/adapterTags';
@@ -97,6 +98,7 @@ function shutdownBackgroundWork(): void {
     // 止められなくても、下の killAllChildren で木ごと落とす
   }
   projectWatcher.close();
+  closeSpatialWatcher();
   if (trackedCount() > 0) {
     console.log(`[Arsist] Closing: stopping ${trackedCount()} background process(es): ${trackedLabels().join(', ')}`);
   }
@@ -939,7 +941,10 @@ ipcMain.handle('unity:get-path', async () => {
   return store.get('unityPath');
 });
 
-ipcMain.handle('unity:build', async (_, buildConfig) => {
+ipcMain.handle('unity:build', async (_, buildConfig) => runUnityBuild(buildConfig));
+
+/** Unity のビルド。Virtual のビルド画面 ('unity:build') と Layster.Spatial のビルド (spatialIpc) が同じ道を通る */
+async function runUnityBuild(buildConfig: any) {
   const unityPath = store.get('unityPath') as string;
   const unityVersion = store.get('unityVersion') as string;
   if (!unityPath) {
@@ -973,6 +978,15 @@ ipcMain.handle('unity:build', async (_, buildConfig) => {
     ...buildConfig,
     unityVersion: buildConfig?.unityVersion || unityVersion,
   });
+}
+
+// Layster.Spatial (project.spatial.json) のプロジェクト。作成・読み書き・Mind を試す・ビルド (doc/19-layster.md)
+registerSpatialIpc({
+  getWindow: () => mainWindow,
+  addRecent: (projectPath) => updateRecentProjects(projectPath),
+  runUnityBuild: (config) => runUnityBuild(config),
+  buildLog: (line) => mainWindow?.webContents.send('unity:build-log', line),
+  getSetting: (key) => store.get(key as any),
 });
 
 ipcMain.handle('unity:cancel-build', async () => {

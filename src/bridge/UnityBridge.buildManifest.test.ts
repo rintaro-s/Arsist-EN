@@ -58,6 +58,7 @@ describe('generateBuildManifest', () => {
   it('carries the IR version and the script bundle', () => {
     const manifest = generateBuildManifest(project()) as any;
     expect(manifest.irVersion).toBe(CURRENT_IR_VERSION);
+    expect(manifest.layster).toEqual({ profile: 'virtual', stage: 'beta', version: '1.0.0' });
     expect(manifest.scriptBundle).toBeDefined();
   });
 

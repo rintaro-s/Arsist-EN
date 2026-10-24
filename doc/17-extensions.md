@@ -1,4 +1,4 @@
-# 17. 拡張機能・タグ・IR の変え方 (`doc/17-extensions.md`)
+# 17. 拡張機能・タグ・IR (Layster) の変え方 (`doc/17-extensions.md`)
 
 `Extensions/<id>/` ・ `samples/extensions/` ・ `src/shared/{tags,irOps,extensions,engineFeatures,adapterTags}.ts`
 ・ `src/main/extensions/` ・ `Runtime/Extensions/` ・ `Editor/Extensions/`
@@ -9,7 +9,11 @@
 
 - **エンジンの機能・端末 (アダプタ)・拡張機能を、名前ではなくタグで結ぶ** (§1)
 - **機能はフォルダ 1 つの「拡張機能」として足す**。エンジン本体は触らない (§2)
-- **IR の形は宣言的な操作 1 行で変えられる**。本体と拡張機能で別々に版を持つ (§3)
+- **IR (Layster.Virtual) の形は宣言的な操作 1 行で変えられる**。本体と拡張機能で別々に版を持つ (§3)
+
+IR は Layster と呼び、Layster.Virtual (`project.json`) と Layster.Spatial (`project.spatial.json`) の 2 つの形がある
+(doc/19)。拡張機能はどちらのプロジェクトでも同じ仕組みでビルドに入る。下で `project.json` と書いたところは、Spatial では
+`project.spatial.json` の同じ名前の項目 (`extensions.<id>`、物の `ext.<id>`) になる。
 
 にしてある。
 
@@ -92,6 +96,7 @@ npm run ext:unlink -- samples/extensions   # 登録を外す (フォルダの中
 | どの端末で動くか | `requires` | 合わない端末のビルドには **C# ごと入れない** (ログに理由) |
 | 設定 | `data.settings` | エディタの入力欄を自動で作る → `project.json` の `extensions.<id>.settings` |
 | 物ごとの指定 | `data.object` | 物のインスペクタに自動で出す → シーンの物の `ext.<id>` → 実機の `ArsistObjectExt` |
+| 空間 (Spatial) の世界の状態を埋める | 入口の `OnStart` で `context.Spatial.AddProvider` | 部屋のスキャン・検出した物を entity として世界の状態に入れる (doc/20 §3) |
 | データの形を変える | `data.version` + `data.migrations` | 開いたプロジェクトのその拡張機能のデータだけを移行 (§3.2) |
 | スクリプトの API | `script.globals` + 入口の `RegisterScriptGlobals` | Jint に登録。組み込みの名前は `replaces` に書いたときだけ上書きできる |
 | エンジンの部品を置き換える | `replaces` + 入口の `ReplaceEngineParts` | エンジンがその部品を使うとき、拡張機能の実装を使う (§2.6) |
@@ -176,6 +181,10 @@ IR は「どの拡張機能を有効にしたか」(`extensions.<id>`) と「ど
 (`MissingRequirementsDialog`)。足りないまま開くと、その設定が画面に出ないまま保存され、ビルドからも黙って外れるため。
 ビルドも同じ規則で止まる (無効にした拡張機能・端末に合わないだけの拡張機能は止めない)。
 
+Layster.Spatial のプロジェクトは、今は**開くときにはこの確認をしない** (ビルドでは同じ規則で止まる)。Spatial のエディタには
+拡張機能を有効にする画面も物ごとの指定の欄もまだ無いので、`project.spatial.json` の `extensions.<id>` / 物の `ext.<id>` を
+直接書く (samples/spatial は `quest-room` を有効にしている)。
+
 ### 2.3 実機側で使えるもの (`ArsistExtensionContext`)
 
 拡張機能がエンジンに触れる窓口はこれ 1 つ。エンジンの内部を直接いじらない
@@ -190,6 +199,7 @@ IR は「どの拡張機能を有効にしたか」(`extensions.<id>`) と「ど
 | `ObjectsWithData` / `ObjectData` / `FindObject` | IR で指定された物、名前や assetId で探す |
 | `Host` | コルーチン用の MonoBehaviour |
 | `Log` / `Warn` / `Error` | `[Arsist:<id>]` 付きで出る (`npm run logs` にも流れる) |
+| `Spatial` (`Active` / `AddProvider`) | Layster.Spatial の世界の状態に provider を足す。Virtual のプロジェクトでは `Active` が false で、足しても何も起きない (doc/20 §3) |
 
 スクリプトとの値の受け渡しは `ArsistScriptBridge` (`ToJs` / `FromJs` / `Call`)。素の値 ⇔ JSON で渡すので、
 プロパティ名が C# 流になったり、IL2CPP で消えた getter が実機でだけ undefined になったりしない。
@@ -217,10 +227,13 @@ ArsistBuildPipeline             CreateGameObject: ext を ArsistObjectExt に
 
 ## 3. IR の形を変える
 
-### 3.1 エンジン本体の IR
+### 3.1 エンジン本体の IR (Layster.Virtual)
 
-`npm run ir:new -- "<変更の説明>" ["<English>"]` が雛形を入れる
-(`CURRENT_IR_VERSION` +1・`defineMigration(<版>, { ops: [] })`・アップグレード画面の説明)。
+`npm run ir:new -- "<変更の説明>" ["<English>"] [--version x.y.z]` が雛形を入れる
+(`CURRENT_IR_VERSION` +1・`src/shared/layster/version.ts` の `VIRTUAL_FORMATS` に `β x.y.z` を 1 行・
+`defineMigration(<版>, { ops: [] })`・アップグレード画面の説明)。`--version` を省くと直前の β の minor を 1 上げる。
+中の数 (`irVersion`) は 1〜5 = α1〜α5、6 = β 1.0.0。画面やログには `describeVirtualIrVersion` / `formatLayster` を通して
+「Layster.Virtual β 1.0.0」のように出す。Layster.Spatial にはまだ移行の仕組みが無い (β 1.0.0 だけ。今より新しい版のファイルは開かない)。
 変更は宣言的な操作で書く (`src/shared/irOps.ts`):
 
 ```ts
@@ -329,6 +342,8 @@ VRM 0.x のモデルも読み込み時に 1.0 に変換して読む。表情と�
 - `room.*` をストアに入れ、UI の文字にそのままつなげられる
 - スクリプトの `room` (`room.place` / `room.lookAt` / `room.list` / `room.pin` …)
 - `room.pin(id)`: 空間アンカーで、次に起動しても同じ場所に戻る
+- Layster.Spatial のプロジェクトでは、読んだ部屋 (床・壁・家具) を provider (`QuestRoomSpatialProvider`) として世界の状態に入れる。
+  置き方の `on: { is: ["table"] }` が本物の机に当たるのはこれのおかげ
 
 `requires: cap:scene-understanding + sdk:meta-mruk` なので、XREAL・スマホ向けのビルドには入らない。
 同じプロジェクトをそれらに出しても、パネルは作者が置いた場所にそのまま出る (壁に貼られないだけ)。

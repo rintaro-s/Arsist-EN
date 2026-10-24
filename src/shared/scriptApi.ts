@@ -189,7 +189,9 @@ export const ENGINE_SCRIPT_API: ScriptApiSection[] = [
     ja: '画像アンカーと画像処理 (画像処理タブ)',
     entries: [
       { sig: 'perception.isTracked(targetId) / perception.isVisible(targetId) / perception.getPose(targetId) / perception.listTargets()', en: 'Image anchors', ja: '画像アンカー' },
+      { sig: 'perception.getRegionPose(targetId, regionId)', en: 'Pose of a named region on a tracked image', ja: '追跡中の画像の上の領域の姿勢' },
       { sig: 'perception.run(taskId[, fn(r)]) / perception.value(storeAs, key) / perception.lastResult(taskId)', en: 'Run a vision task', ja: '画像処理を走らせる' },
+      { sig: 'perception.gated(storeAs)', en: 'true when the last run stopped at a gate step', ja: '前回の実行が gate で止まったら true' },
     ],
   },
   {

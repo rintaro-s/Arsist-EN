@@ -7,6 +7,35 @@ declare const electronAPI: {
         /** 古い版の IR を今の版で書き戻す (承諾後)。元のファイルは Backups/ に残る */
         upgrade: () => Promise<any>;
     };
+    spatial: {
+        /** フォルダが Virtual / Spatial / どちらでもないか ({ kind, label, name, file }) */
+        detect: (dir: string) => Promise<any>;
+        create: (request: {
+            parentDir: string;
+            name: string;
+            targetDevice: string;
+        }) => Promise<any>;
+        load: (dir: string) => Promise<any>;
+        save: (project: unknown) => Promise<any>;
+        /** 組み込みとプロジェクトの「試す空間」 */
+        spaces: () => Promise<any>;
+        saveSpace: (fixture: unknown) => Promise<any>;
+        /** Mind に 1 回問い合わせる (main から HTTP。鍵は main の中だけ) */
+        tryMind: (request: unknown) => Promise<any>;
+        /** 鍵の名前の一覧 / 値を入れる / 消す ({ op: 'list' | 'set' | 'remove', … })。値は返らない */
+        secrets: (request: unknown) => Promise<any>;
+        importAsset: (request: {
+            kind: string;
+            sourcePath?: string;
+        }) => Promise<any>;
+        /** ビルド。進み具合とログは unity.onBuildProgress / onBuildLog に届く (Virtual と同じ) */
+        build: (request: unknown) => Promise<any>;
+        /** project.spatial.json / spaces/*.json が外 (エージェント) で書き換えられた */
+        onChanged: (callback: (payload: {
+            projectPath: string;
+            files: string[];
+        }) => void) => () => void;
+    };
     model: {
         /** ファイル選択 → Assets/Models へコピー → 入出力を読んで定義の下書きを返す */
         import: (projectPath: string, sourcePath?: string) => Promise<any>;

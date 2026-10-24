@@ -1,0 +1,103 @@
+{
+  "layster": { "profile": "spatial", "stage": "beta", "version": "1.0.0" },
+  "id": "c3a1e7b4-9d2f-4a6c-b8e0-5f4d3c2b1a03",
+  "name": "Robot Helper",
+  "version": "1.0.0",
+  "createdAt": "2026-10-21T00:00:00.000Z",
+  "updatedAt": "2026-10-21T00:00:00.000Z",
+  "targetDevice": "Meta_Quest",
+  "app": { "packageName": "com.layster.robothelper", "versionCode": 1, "minSdkVersion": 32, "targetSdkVersion": 34, "edge": "192.168.0.23:8765" },
+  "presentation": { "reality": "passthrough", "assumedEyeHeight": 1.5 },
+  "interaction": { "controllers": true, "hands": true, "gazeDwellSeconds": 0 },
+  "things": [
+    {
+      "id": "arm-base",
+      "name": "アームの根元",
+      "visual": { "kind": "shape", "shape": "cylinder", "size": [0.12, 0.02, 0.12], "color": "#FFB000", "opacity": 0.6 },
+      "place": {
+        "on": { "is": ["desk", "table"] }, "distance": [0.4, 1.2], "prefer": "center", "keep": "forever", "facing": "user",
+        "fallback": [ { "on": { "has": ["support"], "not": ["bed", "couch", "floor"] }, "distance": [0.4, 1.6], "height": [0.4, 1.2] } ]
+      },
+      "grabbable": true
+    },
+    {
+      "id": "target",
+      "name": "つかむ場所の目印",
+      "visual": { "kind": "shape", "shape": "sphere", "size": [0.04, 0.04, 0.04], "color": "#4EC9B0", "opacity": 0.8 },
+      "place": {
+        "on": { "has": ["support"], "not": ["bed", "couch", "floor"] }, "near": { "thing": "arm-base" }, "prefer": "closest",
+        "fallback": [ { "near": { "thing": "arm-base" }, "around": [0.2, 0.3] } ]
+      },
+      "grabbable": true
+    },
+    {
+      "id": "pad",
+      "name": "操作パネル",
+      "visual": {
+        "kind": "panel", "size": [0.34, 0.25], "background": "#14161CE6", "padding": 18,
+        "items": [
+          { "type": "text", "id": "state", "text": "", "size": 26, "color": "#DDDDDD", "align": "center", "bind": "body.arm.status" },
+          { "type": "row", "gap": 12, "items": [
+            { "type": "button", "id": "pick", "text": "つかむ", "size": 28 },
+            { "type": "button", "id": "home", "text": "戻る", "size": 28 },
+            { "type": "button", "id": "stop", "text": "止める", "size": 28, "background": "#B00020" }
+          ] },
+          { "type": "button", "id": "auto", "text": "AI にまかせる", "size": 26 }
+        ]
+      },
+      "place": {
+        "near": { "thing": "arm-base" }, "around": [0.35, 0.6], "height": [0.7, 1.3], "avoid": ["arm-base", "target"], "visible": 50, "facing": "user",
+        "fallback": [ { "near": { "user": "head" }, "around": [0.6, 0.8], "visible": true, "facing": "user" } ]
+      }
+    }
+  ],
+  "minds": [
+    {
+      "id": "policy",
+      "name": "方策 (PC の VLA)",
+      "role": "act",
+      "where": "edge",
+      "protocol": "layster",
+      "endpoint": "http://{edge}/mind",
+      "instructions": "Pick up the object at the target marker and put it back near the base. Small, safe steps.",
+      "observe": { "frame": "body:arm", "world": { "within": 1.5, "max": 20 }, "things": ["target", "arm-base"], "user": ["hands"], "camera": { "width": 320 }, "events": 10, "store": ["body.arm"] },
+      "output": { "actions": ["command", "say", "highlight"], "beliefs": true },
+      "run": { "on": "event", "event": "policy.step", "minGapMs": 800, "timeoutMs": 5000 },
+      "onFail": { "say": "方策のサーバーに届きません" }
+    }
+  ],
+  "bodies": [
+    {
+      "id": "arm",
+      "name": "卓上アーム (SO-101 など)",
+      "kind": "arm",
+      "link": { "protocol": "layster-body", "url": "ws://{edge-host}:8766" },
+      "base": { "thing": "arm-base" },
+      "workspace": { "center": [0, 0.15, 0.18], "size": [0.5, 0.35, 0.36] },
+      "commands": [
+        { "name": "pick", "description": "Grasp what is at the target", "args": { "target": "target" }, "confirm": "always" },
+        { "name": "place", "description": "Put the held object at the target", "args": { "target": "target" }, "confirm": "always" },
+        { "name": "home", "description": "Rest pose", "confirm": "never" },
+        { "name": "stop", "description": "Stop immediately", "confirm": "never" }
+      ],
+      "safety": { "stopIfHandWithin": 0.25, "maxPerSecond": 2 },
+      "twin": { "showWorkspace": true }
+    }
+  ],
+  "rules": [
+    { "id": "pick", "when": { "select": "pad.pick" }, "do": [ { "do": "command", "body": "arm", "name": "pick", "args": { "target": { "thing": "target" } } } ] },
+    { "id": "home", "when": { "select": "pad.home" }, "do": [ { "do": "command", "body": "arm", "name": "home" } ] },
+    { "id": "stop", "when": { "select": "pad.stop" }, "do": [ { "do": "command", "body": "arm", "name": "stop" } ] },
+    { "id": "auto", "when": { "select": "pad.auto" }, "do": [ { "do": "emit", "event": "policy.step" } ] },
+    { "id": "auto-next", "when": { "mind": "policy" }, "if": [ { "store": "body.arm.busy", "ne": true } ], "do": [ { "do": "emit", "event": "policy.step" } ], "cooldownMs": 1500 }
+  ],
+  "scripts": [],
+  "memory": { "persist": [] },
+  "recording": {
+    "enabled": false, "streams": ["pose", "hands", "world", "events", "actions", "minds"], "hz": 10,
+    "consent": { "text": "ロボットの学習用に、この体験 (頭と手の位置・部屋の形・操作・ロボットへの命令) を記録します。よろしいですか？" }
+  },
+  "spaces": { "use": ["desk-front", "studio", "living", "classroom", "tiny", "no-scan"] },
+  "models": [],
+  "extensions": { "quest-room": { "enabled": true, "dataVersion": 1, "settings": {} } }
+}

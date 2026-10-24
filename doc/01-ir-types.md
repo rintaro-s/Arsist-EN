@@ -1,6 +1,21 @@
 # IR Type Definitions — `src/shared/types.ts`
 
-This file is the **single source of truth** for every data shape that flows through the system. All three processes (main, renderer, Unity via JSON) consume these structures.
+The IR is called **Layster** and has two incompatible profiles ([19-layster.md](19-layster.md)). This file
+describes **Layster.Virtual** — the `project.json` format — whose types live in `src/shared/types.ts`, the
+**single source of truth** for that format. Main, renderer and (via the generated JSON) Unity all consume these
+structures. **Layster.Spatial** (`project.spatial.json`) has its own types; see the last section.
+
+---
+
+## Version and header
+
+| Field | Meaning |
+|-------|---------|
+| `irVersion` | Integer format version, `CURRENT_IR_VERSION` in `src/shared/irVersion.ts` (now **6**). 1–5 = **α1–α5**, 6 = **Layster.Virtual β 1.0.0**. Missing = 1. Older projects are migrated in memory and open read-only until the user accepts the upgrade; newer ones do not open (`doc/03`, `doc/15` §3) |
+| `layster` | Header `{ profile: 'virtual', stage: 'beta', version: '1.0.0' }` (`LaysterHeader`, `src/shared/layster/version.ts`). Written first in the file by `migrateProject`; informational — the version decision uses `irVersion` |
+| `version` | The **app's** version, chosen by the user. Not the IR version |
+
+Show versions to people only through `formatLayster` / `describeVirtualIrVersion` ("Layster.Virtual α5"), never "IR v5".
 
 ---
 
@@ -8,9 +23,10 @@ This file is the **single source of truth** for every data shape that flows thro
 
 ```
 ArsistProject
-├── id, name, version, createdAt, updatedAt
+├── layster?: LaysterHeader           (β 1.0.0〜)
+├── id, name, version, irVersion?, createdAt, updatedAt
 ├── appType: ProjectTemplate         ('3d_ar_scene' | '2d_floating_screen' | 'head_locked_hud')
-├── targetDevice: string             ('XREAL_Air2', 'Quest3', ...)
+├── targetDevice: string             adapter folder name: 'XREAL_One' | 'Meta_Quest' | 'Android_Phone' | an extension's device
 ├── arSettings: ARSettings
 ├── designSystem: DesignSystem
 ├── dataFlow: DataFlowDefinition
@@ -18,10 +34,16 @@ ArsistProject
 ├── uiLayouts: UILayoutData[]
 ├── buildSettings: BuildSettings
 ├── scripts?: ScriptData[]
-└── perception?: PerceptionSettings   (画像アンカー)
+├── perception?: PerceptionSettings   (画像アンカー・画像処理タスク)
+├── models?: ModelDefinition[]        (ONNX, α2〜; use image/text/tensor α3〜 — doc/15, doc/16)
+├── extensions?: Record<id, ProjectExtensionState>   (有効にした拡張機能と設定, α4〜 — doc/17)
+└── storage?: { persist: string[] }   (端末に保存する store のキー, α5〜 — doc/18)
 ```
 
-The entire project is serialised to `project.json` at the project root. Individual scenes and UI layouts are additionally written to `Scenes/<id>.json` and `UI/<id>.json` for granular diff-ability.
+The entire project is serialised to `project.json` at the project root. Scenes and UI layouts are **also** written
+to `Scenes/<id>.json` and `UI/<id>.json`; when only one copy is changed outside the editor, the changed copy wins
+(`src/main/project/sceneCopies.ts`, `doc/03`). Missing fields in scenes/layouts are filled in by
+`src/shared/irRepair.ts` instead of crashing the view.
 
 ---
 
@@ -31,14 +53,20 @@ The entire project is serialised to `project.json` at the project root. Individu
 |-------|------|---------|
 | `trackingMode` | `'6dof' \| '3dof' \| 'head_locked'` | 6DoF = full spatial, 3DoF = rotation only, head_locked = fixed to camera |
 | `presentationMode` | `'world_anchored' \| 'floating_screen' \| 'head_locked_hud'` | How objects anchor in AR space |
-| `worldScale` | number | Multiplier applied during Unity export (default 1) |
-| `defaultDepth` | number | Default Z placement for floating mode |
+| `worldScale` | number | Default 1. Carried into the manifest, but currently not read by the Unity build/runtime |
+| `defaultDepth` | number | Default Z placement; also how far the editor draws the spawn-view frustum |
 | `floatingScreen` | object | Width/height/distance/gaze-lock for floating_screen mode |
 | `enableRemoteControl` | boolean | Start WebSocket server on device for runtime control |
 | `remoteControlPort` | number | WebSocket port (default 8765) |
 | `remoteControlPassword` | string | Auth password for remote control (empty = no auth) |
 | `backgroundMode` | `'passthrough' \| 'skybox' \| 'solidColor'` | How the camera clears the background (default `passthrough`). Only meaningful on video see-through headsets (Quest); optical see-through glasses (XREAL) are always passthrough because black is transparent in hardware. |
 | `backgroundColor` | string | `#RRGGBB` used when `backgroundMode === 'solidColor'` (default `#000000`) |
+| `interaction` | `InteractionSettings` | `{ controllerRay, handTracking, gazeDwellSeconds?, textInput? }` (default ray on, hands off). Both `controllerRay` and `handTracking` off is rejected at build time. `textInput`: `'auto' \| 'device' \| 'inApp'` |
+| `phone` | `PhoneSettings` | For `Android_Phone`: `stereo`, `cameraFov` (default 63), `orientation`. AR vs VR follows `backgroundMode` |
+| `logRelay` | `{ enabled, port? }` | LAN log relay to the build machine (default on, port 9770 — `doc/13`) |
+
+`trackingMode` is read by the XREAL patcher (initial XREAL tracking type); `presentationMode` /
+`floatingScreen.distance` by `ArsistBuildPipeline` for HUD placement.
 
 ---
 
@@ -156,11 +184,17 @@ The scene viewport draws this spawn viewpoint (marker + forward arrow + the devi
   modelPath?: string             // relative path inside project Assets/
   assetId?: string               // script-addressable ID
   canvasSettings?: CanvasSettings  // only when type === 'canvas'
+  anchor?: ObjectAnchor          // pinned to an image target (see Perception below)
   transform: Transform           // position, rotation, scale (all Vector3)
-  material?: MaterialData
+  material?: MaterialData        // color, metallic, roughness, texture, emissive, emissiveIntensity
   children?: SceneObject[]
+  ext?: Record<extId, Record<string, unknown>>   // per-object extension options (α4〜, doc/17)
+  character?: CharacterSettings  // type === 'vrm' only (α5〜): { animation?, blink?, breathe?, lookAtUser? } (doc/18)
 }
 ```
+
+A VRM without `character` stands still (relaxed standing pose, never a T-pose); a VRM newly placed in the editor
+gets `CHARACTER_DEFAULTS` (`blink`, `breathe`, `lookAtUser: 'nearby'`).
 
 **`CanvasSettings`** — when a SceneObject is type `canvas`, it renders a UILayout into 3D space:
 
@@ -278,6 +312,7 @@ UILayoutData
   layout?: 'FlexRow' | 'FlexColumn' | 'Absolute'
   style: UIStyle
   children: UIElement[]
+  reveal?: { speed: number }  // Text / Button: write the text out letter by letter (chars/s, α5〜)
 }
 ```
 
@@ -325,21 +360,28 @@ ScriptData
 | `interval` | On a timer | Milliseconds between executions |
 | `event` | A named event is emitted | Event name string |
 
-**Script bundle** (`ScriptBundle`) is the export format written to `Assets/ArsistGenerated/scripts.json`:
+**Script bundle** (`ScriptBundle`) is the export format written to `Assets/ArsistGenerated/scripts.json`
+(only enabled scripts):
 
 ```typescript
 {
   version: '1.0',
-  scripts: [{ id, trigger, code, enabled }, ...]
+  scripts: [{ id, trigger, code, enabled }, ...],
+  storage?: { persist: string[] }   // project.storage; read by ArsistPersistentStore before scripts run
 }
 ```
 
-Scripts interact with the runtime via a sandboxed API injected by Jint:
-- `api.get(url, cb)`, `api.post(url, body, cb)` — HTTP
-- `ui.setText(id, text)`, `ui.setVisibility(id, bool)`, `ui.setColor(id, hex)`, `ui.setAlpha(id, 0-1)` — UI mutation
-- `event.emit(name, payload)`, `event.on(name, cb)` — event bus
-- `store.get(key)`, `store.set(key, value)` — persistent storage
-- `log(msg)`, `error(msg)` — debug output
+All scripts share one JavaScript world. The globals they can use (`log`, timers, `store`, `storage`, `ui`,
+`scene`, `viewer`, `vrm`, `audio`, `camera`, `api`, `model`, `perception`, `remote`) are listed **once**, in
+[src/shared/scriptApi.ts](../src/shared/scriptApi.ts) — the Script tab's reference and the agents' reference are
+both generated from it. A few examples:
+- `store.get(key)` / `store.set(key, value)` — the one DataStore (UI `bind.key` shows the same slot)
+- `ui.setText(bindingId, text)`, `ui.on(eventName, fn)`, `ui.triggerEvent(name)` — UI and script events
+- `api.request({...}, fn)`, `api.get(url[, headersJson], fn)` — HTTP
+- `log(msg)` / `error(msg)` — device log (`npm run logs`)
+
+`storage.*` keeps the keys listed in `project.storage.persist` on the device (`'memory.'` = prefix match;
+`isPersistedKey` in `types.ts` and the runtime must agree). Extension globals are documented in each extension's README.
 
 ---
 
@@ -356,4 +398,31 @@ BuildSettings {
 }
 ```
 
-`RemoteInputSettings` enables UDP/TCP sockets inside the APK for external event injection.
+`RemoteInputSettings` (`{ udp?: { enabled, port }, tcp?: { enabled, port }, allowedEvents? }`, new projects:
+UDP 19100 / TCP 19101) configures UDP/TCP sockets inside the APK for external event injection
+(`Runtime/RemoteInput/ArsistRemoteInputBehaviour.cs`).
+
+---
+
+## Layster.Spatial types (not this file)
+
+`project.spatial.json` is a different format with no converter to or from `ArsistProject`. Its types are
+`SpatialProject` in [src/shared/layster/spatial/types.ts](../src/shared/layster/spatial/types.ts):
+
+```
+SpatialProject
+├── layster: { profile: 'spatial', stage: 'beta', version: '1.0.0' }
+├── id, name, version, createdAt, updatedAt, targetDevice
+├── app, presentation, interaction
+├── things[]      what to show, placed by conditions + fallbacks (no coordinates)
+├── minds[]       AI endpoints (observe → actions)
+├── bodies[]      real bodies (robots) behind a safety gate
+├── rules[], scripts[]
+├── memory: { persist }, recording
+├── spaces: { use }   test spaces for the editor (built-in + spaces/*.json)
+├── models[], extensions   (same definitions as Virtual)
+```
+
+Spec: [19-layster.md](19-layster.md) §3; runtime: [20-spatial-runtime.md](20-spatial-runtime.md). At build time
+`src/shared/layster/spatial/lower.ts` turns it into an internal `ArsistProject` (for the shared manifest) plus
+`spatial.json`.

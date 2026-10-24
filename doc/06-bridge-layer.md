@@ -1,157 +1,110 @@
-# Bridge Layer — `src/bridge/UnityBridge.ts` + `src/renderer/utils/uiCodeSync.ts`
+# Bridge Layer — `src/bridge/UnityBridge.ts`
 
-Two conversion utilities that translate between the Arsist IR and other representations.
+Turns a **Layster.Virtual** `ArsistProject` into the build manifest that Unity reads from
+`Assets/ArsistGenerated/manifest.json`. It is pure TypeScript (no Electron, no Node APIs), so the renderer, the
+main process, CLI scripts and tests all import it.
 
----
-
-## `UnityBridge.ts` — IR → Unity JSON
-
-Converts `ArsistProject` IR into the JSON formats that the Unity C# runtime (`ArsistBuildPipeline`) expects. Called by `ProjectManager.generateUnityManifest()` and directly inside `UnityBuilder.transferProjectData()`.
-
-### Functions
-
-#### `convertSceneToUnity(scene: SceneData): UnitySceneData`
-
-Converts a single `SceneData` into a Unity scene descriptor.
-
-**Output shape (`UnitySceneData`):**
-```typescript
-{
-  id: string
-  name: string
-  gameObjects: UnityGameObject[]
-}
-```
-
-Each `SceneObject` becomes a `UnityGameObject`:
-```typescript
-{
-  id: string
-  name: string
-  type: string
-  components: UnityComponent[]
-  children: UnityGameObject[]
-}
-```
-
-Component mapping per object type:
-
-| IR type | Unity components added |
-|---------|----------------------|
-| `primitive` | `Transform`, `MeshRenderer`, `MeshFilter` (with primitive mesh name), `MaterialProperties` |
-| `model` | `Transform`, `ModelLoader` (with `modelPath`) |
-| `vrm` | `Transform`, `VRMLoader` (with `modelPath`), `VRMController` |
-| `canvas` | `Transform`, `Canvas` (with `layoutId`, `widthMeters`, `heightMeters`, `pixelsPerUnit`) |
-| `light` | `Transform`, `Light` |
-| `camera` | `Transform`, `Camera` |
-| `empty` | `Transform` only |
-
-The `Transform` component always maps IR `position/rotation/scale` (Euler angles in degrees) directly to Unity component properties.
-
-#### `convertUIToUnity(layouts: UILayoutData[]): UnityUIData`
-
-Converts all UI layouts into a Unity UI data structure.
-
-**Output shape (`UnityUIData`):**
-```typescript
-{
-  layouts: UnityUILayout[]
-}
-```
-
-Each `UILayoutData` becomes a `UnityUILayout`:
-```typescript
-{
-  id: string
-  name: string
-  scope: 'uhd' | 'canvas'
-  resolution: { width: number; height: number }
-  elements: UnityUIElement[]
-}
-```
-
-The `root` UIElement tree is **flattened** into a list of `UnityUIElement` objects using a depth-first traversal. Each element has a `parentId` reference instead of a nested children array.
-
-**`UnityUIElement`:**
-```typescript
-{
-  id: string
-  parentId: string | null
-  type: UIElementType
-  content?: string
-  bindingId?: string
-  bind?: UIBinding
-  layout?: string
-  style: UnityUIStyle   // same keys as UIStyle, serialised for C#
-}
-```
-
-#### `generateUnityManifest(project: ArsistProject): object`
-
-Builds the top-level manifest object written to `Assets/ArsistGenerated/manifest.json`. Includes all project-level settings plus a `scenes` array (list of scene IDs with names) and the full `dataFlow` definition.
+**Every build goes through `generateBuildManifest`** — the Virtual Build dialog, `scripts/run-unity-build.js`, and
+the Layster.Spatial build (`src/shared/layster/spatial/lower.ts` builds an *internal* `ArsistProject` from the
+Spatial project and passes it here, so model shipping, extensions, features and log relay behave the same).
+The Build dialog used to hand-roll its own manifest and silently shipped no models and no perception; never build
+a manifest anywhere else. `src/bridge/UnityBridge.buildManifest.test.ts` locks this.
 
 ---
 
-## `uiCodeSync.ts` — IR ↔ HTML
+## Where the bridge sits in a build
 
-Provides bidirectional conversion between `UIElement` IR and HTML strings. Used by:
-- `UIEditor.tsx` — when the user switches between "visual" and "code" modes
-- `CodeEditor.tsx` — for displaying/editing the raw HTML representation
+```
+Virtual:  BuildDialog ──generateBuildManifest(project, { targetDevice })──┐
+          scenesData = project.scenes        (raw IR, not converted)      │
+          uiData     = project.uiLayouts     (raw IR)                     ├─► IPC unity:build ─► runUnityBuild
+          scriptsData = projectStore.exportScriptBundle()                 │
+                                                                          │
+Spatial:  spatial:build ─► validate ─► lowerSpatialProject()              │
+          manifestData = { ...generateBuildManifest(internal), layster,   │
+                           scripting, requiresFeatures }                   │
+          scenesData / uiData / scriptsData / spatialData ────────────────┘
 
-### `elementToHtml(element: UIElement): string`
+UnityBuilder.transferProjectData writes Assets/ArsistGenerated/:
+  manifest.json  = manifestData + scenes + logRelay + deviceTags + features + extensions
+                   + absentExtensions + replacements   (added by UnityBuilder)
+  scenes.json, ui_layouts.json, dataflow.json (from manifest.dataFlow), scripts.json, spatial.json (Spatial only)
+```
 
-Converts a `UIElement` (tree) to an HTML string.
+Scenes and UI layouts are passed to Unity **as IR**; `ArsistBuildPipeline` (C#) interprets them directly,
+including the editor → Unity coordinate mirror (`x → -x`, `doc/01`).
 
-- `Panel` → `<div>`
-- `Text` → `<p>`
-- `Button` → `<button>`
-- `Image` → `<img>`
-- `Slider` → `<input type="range">`
-- `Input` → `<input type="text">`
-- `Gauge` → `<div data-type="gauge">`
-- `Graph` → `<canvas data-type="graph">`
+---
 
-Style is serialised to an inline CSS `style` attribute via `styleToCSS()`.
+## Functions
 
-Binding data is written as `data-bind-key` and `data-bind-format` attributes. `bindingId` is written as `data-binding-id`.
+### `generateBuildManifest(project, overrides?)`
 
-`layout` is written as `data-layout` on Panel elements.
+`overrides.targetDevice` (the device picked in the build screen) wins over `project.targetDevice`. Returns
+`generateUnityManifest(project)` plus:
 
-Children are recursively serialised and appended as inner HTML.
+| Key | Content |
+|-----|---------|
+| `targetDevice` | override or project value |
+| `version` | the app version |
+| `build` | `buildSettings` without `remoteInput` |
+| `buildSettings`, `remoteInput`, `designSystem` | as in the IR |
+| `scenes` | full `project.scenes` (UnityBuilder overwrites it with `scenesData` anyway) |
+| `projectExtensions` | `project.extensions` as enabled in the IR; which ones actually go in is decided by `UnityBuilder.planExtensions` and written as `extensions` |
+| `storage` | `{ persist }` (feature detection and logs; the device reads `scripts.json`'s `storage`) |
+| `exportedAt` | timestamp |
 
-### `htmlToElement(html: string): UIElement`
+### `generateUnityManifest(project)`
 
-Parses an HTML string (using the browser's `DOMParser`) back into a `UIElement` tree.
+The base manifest:
 
-- Tag → UIElementType mapping is the reverse of the above
-- Inline `style` attribute is parsed back to `UIStyle` via `cssToStyle()`
-- `data-*` attributes restore `bind`, `bindingId`, and `layout`
-- Children are recursively parsed
+| Key | Content |
+|-----|---------|
+| `arsistVersion` | `'1.0.0'` |
+| `projectId`, `projectName`, `appType`, `targetDevice`, `arSettings`, `dataFlow` | from the IR |
+| `build` | `packageName`, `version`, `versionCode`, `minSdkVersion`, `targetSdkVersion` |
+| `design` | the design system's font and colours |
+| `scenes` | `{ id, name, objectCount }[]` (replaced by the full scenes later) |
+| `uiLayouts` | `{ id, name, scope }[]` |
+| `scriptBundle` | enabled scripts `{ id, trigger, code, enabled }` + `storage` |
+| `irVersion` | `project.irVersion ?? CURRENT_IR_VERSION` — logged on the device |
+| `layster` | `project.layster`, else `virtualHeaderFor(irVersion)`. A Spatial build passes its own `{ profile: 'spatial', … }` header so the build and device logs show "Layster.Spatial β 1.0.0" |
+| `models` | `shippedModels(project)` |
+| `perception` | `undefined` unless there are targets or tasks; then targets (with `holdMs` default 2000 and regions) and the tasks that still resolve (see below), with `engine` defaulting to `{ kind: 'mlkit', script: 'japanese' }` and `pipeline` only for `vision` tasks |
+| `generatedAt` | timestamp |
 
-### `styleToCSS(style: UIStyle): string`
+Covered by `UnityBridge.perception.test.ts`.
 
-Serialises a `UIStyle` object to a CSS string. Key mappings:
+### `shippedModels(project)`
 
-| UIStyle field | CSS property |
-|--------------|-------------|
-| `width` / `height` | `width` / `height` (numbers → `px`, strings passed through) |
-| `margin` / `padding` | Shorthand `{top}px {right}px {bottom}px {left}px` |
-| `backgroundColor` | `background-color` |
-| `borderRadius` | `border-radius` |
-| `borderWidth` | `border-width` |
-| `borderColor` | `border-color` |
-| `fontSize` | `font-size` (→ `{n}px`) |
-| `fontWeight` | `font-weight` |
-| `textAlign` | `text-align` |
-| `flexDirection` | `flex-direction` |
-| `justifyContent` | `justify-content` |
-| `alignItems` | `align-items` |
-| `gap` | `gap` (→ `{n}px`) |
-| `opacity` | `opacity` |
-| `blur` | `filter: blur({n}px)` |
-| `position`, `top/right/bottom/left` | CSS positioning properties |
-| `shadow` | `box-shadow` |
+Every model with an `id` and a `file` whose `includeInBuild` is not `false`. Scripts reach models by name
+(`model.*`), which cannot be traced statically, so all imported models ship; untick "include in build" (or delete
+the model) to leave one out. (The inline comment above `models:` in `generateUnityManifest` still says only
+`infer`-referenced models are shipped — that is outdated.)
 
-### `cssToStyle(cssText: string): UIStyle`
+### `referencedModels(project)`
 
-Parses a CSS text string back to a `UIStyle` object. Handles `px` suffix stripping and shorthand expansion for `margin`/`padding`.
+Models referenced by `infer` ops in vision tasks. Used by the Vision editor's preview, not by the build.
+
+### `isTaskResolvable(task, targets)` (internal)
+
+Drops perception tasks that would build fine and then never work: no `storeAs`, a `vision` task with no ops, or a
+`region` source whose target / region no longer exists. `viewport` sources need no target.
+
+---
+
+## Unused converters
+
+`convertSceneToUnity(scene)` and `convertUIToUnity(layout)` (with the private `convertObjectToUnity`,
+`convertUIElementToUnity`, `calculateRectTransform`, …) are still exported but **nothing calls them**: the build
+sends raw IR scenes and layouts. Their output shapes (`UnitySceneData` with `MeshFilter` / `MeshRenderer` /
+`ArsistModelRuntimeLoader` / `ArsistCanvasSurface` components, `UnityUIData` with `rectTransform` /
+`layoutGroup`) are not what the Unity side reads. Do not build on them.
+
+---
+
+## Removed: `uiCodeSync.ts`
+
+This doc used to describe `src/renderer/utils/uiCodeSync.ts` (UI layout ↔ HTML). The file still exists
+(`layoutToHtml` / `htmlToLayout`), but no component imports it — the UI editor no longer has an HTML code mode,
+and the file references element types and style fields that are not in `types.ts`. Treat it as dead code.

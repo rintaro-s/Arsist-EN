@@ -31,6 +31,17 @@
     <Compile Include="DataStoreChecks.cs" />
     <Compile Include="QuestInputChecks.cs" />
     <Compile Include="ScriptRuntimeChecks.cs" />
+    <Compile Include="SpatialChecks.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/SpatialMath.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/SpatialModel.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/Vocabulary.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/PlacementSolver.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/WorldState.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/SafetyGate.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/MindProtocol.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/ActionModel.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/ObservationBuilder.cs" />
+    <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Spatial/Core/EpisodeFormat.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Audio/AudioDecoding.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Scripting/CameraRegionMath.cs" />
     <Compile Include="../../UnityBackend/ArsistBuilder/Assets/Arsist/Runtime/Data/PersistentValues.cs" />

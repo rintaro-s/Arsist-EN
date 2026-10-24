@@ -1615,6 +1615,11 @@ class UnityBuilder extends events_1.EventEmitter {
             await fs.writeJSON(path.join(dataDir, 'scripts.json'), config.scriptsData, { spaces: 2 });
             this.emit('log', '[Arsist] scripts.json exported');
         }
+        // Layster.Spatial のランタイムが読む (ArsistSpatialRuntime)。Virtual のビルドでは書かない
+        if (config.spatialData) {
+            await fs.writeJSON(path.join(dataDir, 'spatial.json'), config.spatialData, { spaces: 2 });
+            this.emit('log', '[Arsist] spatial.json exported (Layster.Spatial)');
+        }
         // 前回ビルドで出力した json のうち、今回出力しなかったものを消す
         // （dataflow/scripts を削除したのに Unity 側に残り続けるのを防ぐ）
         const expectedGeneratedFiles = new Set([
@@ -1623,6 +1628,7 @@ class UnityBuilder extends events_1.EventEmitter {
             'ui_layouts.json',
             ...(dataFlowData ? ['dataflow.json'] : []),
             ...(config.scriptsData ? ['scripts.json'] : []),
+            ...(config.spatialData ? ['spatial.json'] : []),
         ]);
         for (const entry of await fs.readdir(dataDir)) {
             if (entry.endsWith('.meta'))
@@ -2861,7 +2867,13 @@ class UnityBuilder extends events_1.EventEmitter {
             uiLayouts: config.uiData,
             scripts: Array.isArray(scriptsData?.scripts) ? scriptsData.scripts : [],
         };
-        const features = (0, engineFeatures_1.projectFeatureTags)(projectLike);
+        // 第2層が Spatial のときは、IR から直接は読めない機能 (Mind がカメラの画を見る等) を lower.ts が
+        // manifest の requiresFeatures に書いてくる。それも足す
+        const declared = manifest.requiresFeatures;
+        const features = (0, tags_1.uniqueTags)([
+            ...(0, engineFeatures_1.projectFeatureTags)(projectLike),
+            ...(Array.isArray(declared) ? declared.filter((f) => typeof f === 'string') : []),
+        ]);
         this.emit('log', `[Arsist] Device tags (${config.targetDevice}): ${deviceTags.join(' ') || '(none)'}`);
         this.emit('log', `[Arsist] Features used: ${features.join(' ') || '(none)'}`);
         // キャラクターの動きの名前の食い違い (実機では「動かない」だけで何も言わないので、ここで言う)

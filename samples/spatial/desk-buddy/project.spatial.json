@@ -1,0 +1,93 @@
+{
+  "layster": { "profile": "spatial", "stage": "beta", "version": "1.0.0" },
+  "id": "8b0e3c52-6f0e-4d5e-9a51-1d6c2f6a0b01",
+  "name": "Desk Buddy",
+  "version": "1.0.0",
+  "createdAt": "2026-10-21T00:00:00.000Z",
+  "updatedAt": "2026-10-21T00:00:00.000Z",
+  "targetDevice": "Meta_Quest",
+  "app": { "packageName": "com.layster.deskbuddy", "versionCode": 1, "minSdkVersion": 32, "targetSdkVersion": 34, "edge": "192.168.0.23:11434" },
+  "presentation": { "reality": "passthrough", "assumedEyeHeight": 1.5 },
+  "interaction": { "controllers": true, "hands": true, "gazeDwellSeconds": 0 },
+  "things": [
+    {
+      "id": "card",
+      "name": "問題カード",
+      "visual": {
+        "kind": "panel", "size": [0.38, 0.36], "background": "#F4EFE6F0", "padding": 20,
+        "items": [
+          { "type": "text", "id": "title", "text": "きょうの 1 問", "size": 30, "color": "#5A4A3A", "align": "center" },
+          { "type": "text", "id": "body", "text": "3x + 5 = 17", "size": 56, "color": "#222222", "align": "center", "reveal": 12 },
+          { "type": "row", "gap": 16, "items": [
+            { "type": "button", "id": "hint", "text": "ヒント", "size": 30 },
+            { "type": "button", "id": "talk", "text": "話す", "size": 30 }
+          ] }
+        ]
+      },
+      "place": {
+        "on": { "is": ["desk", "table"] }, "distance": [0.3, 1.4], "clearance": [0.4, 0.3], "facing": "user", "keep": "forever",
+        "fallback": [
+          { "on": { "has": ["support"] }, "distance": [0.3, 1.8], "height": [0.35, 1.2], "facing": "user" },
+          { "at": { "frame": "user", "at": [0.15, 1.0, 0.7] }, "facing": "user" }
+        ]
+      }
+    },
+    {
+      "id": "buddy",
+      "name": "相棒",
+      "visual": { "kind": "character", "file": "Assets/Characters/buddy.vrm", "blink": true, "breathe": true, "lookAtUser": "nearby", "height": 1.45 },
+      "place": {
+        "near": { "thing": "card" }, "around": [0.7, 1.4], "avoid": ["card"], "prefer": "inView", "facing": "user",
+        "fallback": [ { "near": { "user": "feet" }, "around": [1.0, 2.2], "facing": "user" } ]
+      }
+    },
+    {
+      "id": "subtitle",
+      "name": "字幕",
+      "visual": { "kind": "panel", "size": [0.6, 0.08], "background": "#00000099", "padding": 10,
+        "items": [ { "type": "text", "id": "line", "text": "", "size": 34, "color": "#FFFFFF", "align": "center", "bind": "say.text" } ] },
+      "place": { "mode": "head", "at": { "frame": "head", "at": [0, -0.3, 1.5] } }
+    }
+  ],
+  "minds": [
+    {
+      "id": "talk",
+      "name": "会話 (PC の Ollama)",
+      "role": "converse",
+      "where": "edge",
+      "protocol": "openai-chat",
+      "endpoint": "http://{edge}/v1/chat/completions",
+      "model": "qwen3.5:9b",
+      "instructions": "あなたはユーザーの机のそばにいる、勉強の相棒です。日本語のタメ口で、1〜2 文で話します。答えそのものは言わず、考え方の手がかりだけを渡します。",
+      "observe": { "frame": "user", "world": { "within": 2.5, "max": 15 }, "things": ["card"], "user": ["head", "gaze"], "events": 5, "store": ["study."] },
+      "output": { "actions": ["say", "look", "highlight", "set"], "beliefs": false },
+      "run": { "on": "manual", "minGapMs": 1500, "timeoutMs": 15000 },
+      "extra": { "reasoning_effort": "none" },
+      "onFail": { "say": "ごめん、いま考えがまとまらないや。" }
+    }
+  ],
+  "bodies": [],
+  "rules": [
+    { "id": "hello", "when": { "placed": "buddy" }, "do": [
+      { "do": "look", "thing": "buddy", "at": { "user": "head" } },
+      { "do": "say", "thing": "buddy", "text": "やっほ。机の上に 1 問置いといたよ。" }
+    ] },
+    { "id": "hint", "when": { "select": "card.hint" }, "do": [
+      { "do": "set", "key": "study.asked", "value": "hint" },
+      { "do": "ask", "mind": "talk", "text": "ヒントをちょうだい" }
+    ], "cooldownMs": 3000 },
+    { "id": "talk", "when": { "select": "card.talk" }, "do": [ { "do": "ask", "mind": "talk" } ], "cooldownMs": 3000 },
+    { "id": "no-desk", "when": { "fallback": "card" }, "do": [
+      { "do": "say", "thing": "buddy", "text": "机が見つからなかったから、ここに置いとくね。" }
+    ] }
+  ],
+  "scripts": [],
+  "memory": { "persist": ["study."] },
+  "recording": {
+    "enabled": false, "streams": ["pose", "hands", "world", "events", "actions", "minds"], "hz": 10,
+    "consent": { "text": "この体験の動き (頭と手の位置・部屋の形・操作) を記録します。カメラの画は記録しません。よろしいですか？" }
+  },
+  "spaces": { "use": ["studio", "desk-front", "living", "classroom", "tiny", "no-scan"] },
+  "models": [],
+  "extensions": { "quest-room": { "enabled": true, "dataVersion": 1, "settings": {} } }
+}

@@ -19,7 +19,11 @@ export interface Entry {
   ja: string;
 }
 
+import { SPATIAL_STRINGS } from './spatialStrings';
+
 export const STRINGS: Record<string, Entry> = {
+  // Layster.Spatial のエディタの文字は spatialStrings.ts (キーは 'spatial.')
+  ...SPATIAL_STRINGS,
   // ── common ─────────────────────────────────────────────
   'common.save': { en: 'Save', ja: '保存' },
   'common.saveAs': { en: 'Save As', ja: '名前を付けて保存' },
@@ -1534,7 +1538,7 @@ export const STRINGS: Record<string, Entry> = {
 
   // ---- IR の版 (アップグレード) ----
   'ir.readOnlyBadge': { en: 'read-only (old format)', ja: '読み取り専用 (古い形式)' },
-  'ir.upgradeTitle': { en: 'Upgrade this project from format v{from} to v{to}?', ja: 'このプロジェクトを形式 v{from} から v{to} にアップグレードしますか？' },
+  'ir.upgradeTitle': { en: 'Upgrade this project from {from} to {to}?', ja: 'このプロジェクトを {from} から {to} にアップグレードしますか？' },
   'ir.upgradeBody': {
     en: 'This project was saved by an older Arsist. It has been converted in memory so you can look at it. To save changes, its file has to be rewritten in the current format — like opening an old project in a newer Unity.',
     ja: 'このプロジェクトは古い Arsist で保存されています。見るためにメモリ上では今の形式に直してありますが、保存するにはファイルを今の形式で書き直す必要があります (古いプロジェクトを新しい Unity で開くときと同じです)。',
@@ -1555,6 +1559,10 @@ export const STRINGS: Record<string, Entry> = {
   'ir.migration.5': {
     en: 'Characters and saving. VRM objects get character (starting animation, blinking, breathing, looking at the user), UI text gets reveal (appears as if being written), and project.storage.persist lists store keys kept on the device. VRMs in older projects keep behaving as before (no motion).',
     ja: 'キャラクターと保存。VRM の物に character (最初の動き・まばたき・呼吸・こちらを見る)、UI の文字に reveal (書いていくように出す)、project.storage.persist (端末に保存する store のキー) を追加。古いプロジェクトの VRM は今までどおり (動きなし) のまま',
+  },
+  'ir.migration.6': {
+    en: 'Names the format: from now on the project format is "Layster.Virtual β 1.0.0" (the older versions are called α1–α5). Only a "layster" heading is added at the top of project.json; scenes, UI, scripts and everything else stay exactly as they are. Older Arsist versions will refuse to open the upgraded file.',
+    ja: '形式に名前を付けます。これからのプロジェクトの形式は「Layster.Virtual β 1.0.0」です (今までの版は α1〜α5 と呼びます)。project.json の先頭に "layster" の見出しが入るだけで、シーン・UI・スクリプトなどの中身は一切変わりません。アップグレードしたファイルは古い Arsist では開けなくなります。',
   },
   // @ir-migration-strings-end (npm run ir:new はこの行の上に足す)
   'ir.extUpgradeTitle': { en: 'Update extension data in this project?', ja: 'このプロジェクトの拡張機能のデータを更新しますか？' },
@@ -1871,11 +1879,11 @@ export const STRINGS: Record<string, Entry> = {
   'models.hf.precision.uint8': { en: '8-bit (uint8)', ja: '8 ビット (uint8)' },
   'models.hf.precision.bnb4': { en: '4-bit (bnb4)', ja: '4 ビット (bnb4)' },
   'models.hf.precision.q8f16': { en: '8-bit + fp16 (q8f16)', ja: '8 ビット + fp16 (q8f16)' },
-  'models.hf.editorOnly': { en: 'editor only', ja: 'エディタのみ' },
+  'models.hf.editorOnly': { en: 'device: via ONNX Runtime', ja: '実機は ONNX Runtime で' },
   'models.hf.maybeDevice': { en: 'may run on the device', ja: '実機でも動く見込み' },
   'models.hf.deviceNote': {
-    en: 'Quantised files (q4, int8 …) use operators that only ONNX Runtime has, so they run in "Try" but Unity cannot import them. Which operators a file really uses is checked after the download.',
-    ja: '量子化されたファイル (q4、int8 など) は ONNX Runtime にしかない演算子を使うので、「試す」では動きますが Unity には取り込めません。実際にどの演算子を使っているかは、落とした後に確かめます。',
+    en: 'Quantised files (q4, int8 …) use operators that only ONNX Runtime has. Unity cannot import them, so on the device they run on the bundled ONNX Runtime (CPU, +33 MB, scripts only — not the image pipeline\'s infer step). Which operators a file really uses is checked after the download.',
+    ja: '量子化されたファイル (q4、int8 など) は ONNX Runtime にしかない演算子を使います。Unity には取り込めないので、実機では同梱の ONNX Runtime (CPU、+33 MB) で動きます (スクリプトからだけ。画像処理の infer では使えません)。実際にどの演算子を使っているかは、落とした後に確かめます。',
   },
   'models.hf.pull': { en: 'Download and import', ja: '落として取り込む' },
   'models.hf.close': { en: 'Close', ja: '閉じる' },

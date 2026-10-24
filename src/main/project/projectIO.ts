@@ -18,6 +18,10 @@
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { CURRENT_IR_VERSION, readIrVersion } from '../../shared/irVersion';
+import { describeVirtualIrVersion } from '../../shared/layster/version';
+
+/** 'Layster.Virtual α5' (エラーの文に出す) */
+const virtualLabel = (irVersion: number) => `Layster.Virtual ${describeVirtualIrVersion(irVersion)}`;
 import { describeJsonError, resolveSceneAndUiCopies } from './sceneCopies';
 
 /** readProjectFiles が読んだときの知らせ (どの写しを使った・何を補った)。ir_validate_project がエージェントに返す */
@@ -62,11 +66,12 @@ export async function readProjectFiles(projectPath: string, options: { forWrite?
   }
   const version = readIrVersion(project);
   if (version > CURRENT_IR_VERSION) {
-    throw new ProjectFormatError(`this project is IR v${version}, newer than this Arsist (v${CURRENT_IR_VERSION}); update Arsist`, 'tooNew');
+    throw new ProjectFormatError(
+      `this project is ${virtualLabel(version)}, newer than this Arsist (${virtualLabel(CURRENT_IR_VERSION)}); update Arsist`, 'tooNew');
   }
   if (options.forWrite && version < CURRENT_IR_VERSION) {
     throw new ProjectFormatError(
-      `this project is IR v${version} (current v${CURRENT_IR_VERSION}). Open it in the Arsist editor and accept the upgrade first; ` +
+      `this project is ${virtualLabel(version)} (current ${virtualLabel(CURRENT_IR_VERSION)}). Open it in the Arsist editor and accept the upgrade first; ` +
       'it is not rewritten silently.', 'needsUpgrade');
   }
 

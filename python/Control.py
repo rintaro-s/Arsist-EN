@@ -256,7 +256,7 @@ Generated demo script for VRM: {avatar_id}
 Auto-generated from capabilities
 """
 
-from python.arsist_controller import ArsistControl
+from Control import ArsistControl  # python/ で実行する
 import time
 
 def demo():

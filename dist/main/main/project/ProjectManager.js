@@ -46,6 +46,7 @@ const fs = __importStar(require("fs-extra"));
 const uuid_1 = require("uuid");
 const YAML = __importStar(require("yaml"));
 const irVersion_1 = require("../../shared/irVersion");
+const version_1 = require("../../shared/layster/version");
 const migrations_1 = require("./migrations");
 const extensions_1 = require("../../shared/extensions");
 const catalogService_1 = require("../extensions/catalogService");
@@ -94,6 +95,7 @@ class ProjectManager {
             const normalizedTarget = (options.targetDevice || '').toLowerCase();
             const isQuest = normalizedTarget.includes('quest') || normalizedTarget.includes('meta');
             const project = {
+                layster: (0, version_1.virtualHeaderFor)(irVersion_1.CURRENT_IR_VERSION),
                 id: (0, uuid_1.v4)(),
                 name: options.name,
                 version: '1.0.0',
@@ -273,12 +275,14 @@ class ProjectManager {
             const backupDir = path.join(this.projectPath, 'Backups');
             await fs.ensureDir(backupDir);
             const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const backupPath = path.join(backupDir, `project.v${upgrade.from}.${stamp}.json`);
+            // 名前に版を入れる (project.alpha5.<時刻>.json / project.beta1.0.0.<時刻>.json)。どの Arsist に戻せば読めるかが分かる
+            const backupPath = path.join(backupDir, `project.${(0, migrations_1.virtualBackupTag)(upgrade.from)}.${stamp}.json`);
             if (await fs.pathExists(projectFile))
                 await fs.copy(projectFile, backupPath);
             this.readOnly = false;
             this.pendingUpgrade = null;
             this.currentProject.irVersion = irVersion_1.CURRENT_IR_VERSION;
+            this.currentProject.layster = (0, version_1.virtualHeaderFor)(irVersion_1.CURRENT_IR_VERSION);
             const saved = await this.saveProject({});
             if (!saved.success) {
                 this.readOnly = true;
@@ -496,6 +500,7 @@ class ProjectManager {
             projectName: this.currentProject.name,
             version: this.currentProject.version,
             irVersion: this.currentProject.irVersion ?? irVersion_1.CURRENT_IR_VERSION,
+            layster: this.currentProject.layster ?? (0, version_1.virtualHeaderFor)(this.currentProject.irVersion ?? irVersion_1.CURRENT_IR_VERSION),
             appType: this.currentProject.appType,
             targetDevice: this.currentProject.targetDevice,
             arSettings: this.currentProject.arSettings,

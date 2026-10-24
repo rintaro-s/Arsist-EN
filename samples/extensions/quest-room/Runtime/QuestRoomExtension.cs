@@ -41,6 +41,8 @@ namespace Arsist.Extensions.QuestRoom
             Service = go.AddComponent<QuestRoomService>();
             ServiceStarted?.Invoke();
             Service.Init(context);
+            // Layster.Spatial のプロジェクトなら、読んだ部屋を世界の状態に書く (Virtual では Active が false)
+            if (context.Spatial.Active) context.Spatial.AddProvider(new QuestRoomSpatialProvider(() => Service));
         }
     }
 }
