@@ -8,6 +8,7 @@
 
 import type { MindReply, MindRequest, Mind, SpaceFixture, SpatialProject } from './types';
 import type { SpatialProblem } from './validate';
+import type { MissingRequirement } from '../../extensions';
 
 export const SPATIAL_IPC = {
   /** フォルダが Virtual / Spatial / どちらでもないか */
@@ -54,6 +55,11 @@ export interface SpatialLoadResult {
   notices?: string[];
   /** 新しい Arsist で作られている */
   tooNew?: boolean;
+  /**
+   * error === 'requirementsMissing' のとき: 使う拡張機能・端末のうち、このエディタに無いもの (Virtual と同じ形)。
+   * エディタは開かずに MissingRequirementsDialog を出す
+   */
+  missing?: MissingRequirement[];
   error?: string;
 }
 

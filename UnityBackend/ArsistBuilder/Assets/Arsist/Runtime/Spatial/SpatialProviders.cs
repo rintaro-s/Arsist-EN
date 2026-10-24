@@ -29,15 +29,29 @@ namespace Arsist.Runtime.Spatial
     }
 
     /// <summary>
-    /// keep: "forever" の置き場所を、端末の空間アンカーで覚えられる provider が持つ能力 (任意)。
-    /// 持っている provider が無ければ、ランタイムは「載せた面からの相対位置」を store に残す。
+    /// 本物の物 (壁・家具) の形を「隠すための形」として出せる provider が持つ能力 (任意)。
+    /// occlusion: "auto" の物は、ここで出した箱の向こうにあると隠れる (深度だけ書く箱。SpatialOcclusion)。
+    /// 持っている provider が無ければ何も隠れない (現実が分からない端末では、隠す理由も無い)。
     /// </summary>
-    public interface ISpatialAnchorStore
+    public interface ISpatialOccluderSource
     {
-        bool CanAnchor { get; }
-        void Save(string key, Vector3 unityPosition, Quaternion unityRotation, Action<bool> done);
-        void Load(string key, Action<bool, Vector3, Quaternion> done);
-        void Erase(string key);
+        /// <summary>形が変わるたびに増やす (ランタイムはこれが変わったときだけ作り直す)</summary>
+        int OccluderVersion { get; }
+
+        /// <summary>今の形を into に足す。呼ばれるのはメインスレッド。</summary>
+        void CollectOccluders(List<SpatialOccluder> into);
+    }
+
+    /// <summary>
+    /// 隠すための箱 1 つ。Parent があればその子 (アンカーが動けば一緒に動く)、無ければ Unity の world。
+    /// 面 (壁) は厚みを裏側 (部屋の外) に持たせること。表がちょうど面になるように (物が壁に貼り付いても欠けない)。
+    /// </summary>
+    public struct SpatialOccluder
+    {
+        public Transform Parent;
+        public Vector3 Center;
+        public Quaternion Rotation;
+        public Vector3 Size;
     }
 
     /// <summary>provider に渡す窓口。座標の変換と、世界の状態への読み書き。</summary>
@@ -127,12 +141,6 @@ namespace Arsist.Runtime.Spatial
         }
 
         public static IReadOnlyList<ISpatialProvider> All => List;
-
-        public static ISpatialAnchorStore AnchorStore()
-        {
-            foreach (var p in List) if (p is ISpatialAnchorStore s && s.CanAnchor) return s;
-            return null;
-        }
     }
 
     /// <summary>拡張機能から見た Spatial (ArsistExtensionContext.Spatial)。</summary>

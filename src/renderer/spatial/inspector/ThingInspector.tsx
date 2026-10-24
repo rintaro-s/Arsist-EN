@@ -11,6 +11,7 @@ import { Section, Select, Toggle } from './fields';
 import { ItemHeader } from './ItemHeader';
 import { VisualEditor } from './VisualEditor';
 import { PlacementEditor } from './PlacementEditor';
+import { ThingExtensions } from './ExtensionsInspector';
 
 export function ThingInspector({ project, thing }: { project: SpatialProject; thing: Thing }) {
   const t = useT();
@@ -86,6 +87,8 @@ export function ThingInspector({ project, thing }: { project: SpatialProject; th
             onChange={(o) => edit((x) => { if (o === 'auto') delete x.occlusion; else x.occlusion = o; })} />
         </div>
       </Section>
+
+      <ThingExtensions project={project} thing={thing} />
     </div>
   );
 }

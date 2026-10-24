@@ -14,13 +14,13 @@ import type {
 } from '../../shared/layster/spatial/ipc';
 import type { SpaceFixture, SpatialProject } from '../../shared/layster/spatial/types';
 import { BUILTIN_SPACES } from '../../shared/layster/spatial/spaces';
-import { validateSpatialProject } from '../../shared/layster/spatial/validate';
 import { LowerError, lowerSpatialProject } from '../../shared/layster/spatial/lower';
 import type { UnityBuildConfig } from '../unity/UnityBuilder';
 import { detectProjectKind } from './projectKind';
 import {
   ASSET_KINDS, createSpatialProjectOnDisk, importSpatialAsset, listProjectSpaces, loadSpatialProject, readSecrets,
-  readSpatialProject, saveProjectSpace, saveSpatialProject, setSecret, setSpatialWriteObserver,
+  readSpatialProject, saveProjectSpace, saveSpatialProject, setSecret, setSpatialWriteObserver, spatialRequirements,
+  validateSpatialProjectAt,
 } from './SpatialProjectManager';
 import { SpatialWatcher } from './spatialWatcher';
 import { callMind } from './mindClient';
@@ -34,6 +34,8 @@ export interface SpatialIpcDeps {
   buildLog(line: string): void;
   /** electron-store の値 (unityManualLicenseFile など) */
   getSetting(key: string): unknown;
+  /** Spatial のプロジェクトを開いた / 作った (main が「開いているプロジェクト」を切り替える: arsist-file:// やモデルの既定の置き場) */
+  onOpened?(projectPath: string): void;
 }
 
 /** 今開いている Spatial のプロジェクトのフォルダ (無ければ null)。 */
@@ -45,6 +47,12 @@ export function currentSpatialProjectDir(): string | null {
 }
 
 export function closeSpatialWatcher(): void {
+  watcher?.close();
+}
+
+/** Virtual のプロジェクトを開いたとき main が呼ぶ。前の Spatial のプロジェクトを手放す (見張りも止める)。 */
+export function forgetSpatialProject(): void {
+  currentDir = null;
   watcher?.close();
 }
 
@@ -63,6 +71,7 @@ export function registerSpatialIpc(deps: SpatialIpcDeps): void {
     currentDir = dir;
     deps.addRecent(dir);
     watcher?.watch(dir);
+    deps.onOpened?.(dir);
   };
 
   ipcMain.handle(SPATIAL_IPC.detect, async (_e, dir: string) => detectProjectKind(dir));
@@ -149,7 +158,11 @@ export function registerSpatialIpc(deps: SpatialIpcDeps): void {
       const dir = requireDir();
       // ビルドするのは保存してあるもの (エディタはビルドの前に保存する。Virtual と同じ)
       const { project } = await readSpatialProject(dir);
-      const problems = validateSpatialProject(project);
+      // 開くときと同じ確認 (拡張機能・端末が足りないまま作ると、黙って外れる)
+      const missing = await spatialRequirements(project);
+      for (const m of missing) deps.buildLog(`[Layster] ERROR: ${m.detail}`);
+      if (missing.length > 0) return { success: false, error: `${missing.length} extension(s) / device(s) are missing: ${missing.map((m) => m.id).join(', ')}` };
+      const problems = await validateSpatialProjectAt(dir, project);
       const errors = problems.filter((p) => p.level === 'error');
       for (const p of problems) deps.buildLog(`[Layster] ${p.level === 'error' ? 'ERROR' : 'WARNING'}: ${p.path}: ${p.message.en}`);
       if (errors.length > 0) {

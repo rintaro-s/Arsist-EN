@@ -30,9 +30,14 @@ App.tsx
 The viewport area is selected by `uiStore.currentView`. `vision` / `models` / `extensions` are full-width
 screens (no left/right panels). Dialogs float above everything and are controlled by the `show*` flags in `uiStore`.
 
-`viewport/DataFlowEditor.tsx` and `viewport/UICanvas.tsx` still exist but are **not mounted anywhere**, and the
-`'dataflow'` view is redirected to `'ui'` — there is currently no DataFlow editing screen (agents can still use the
-`ir_*_datasource` / `ir_*_transform` tools, doc/09).
+The `'dataflow'` view is redirected to `'ui'` — there is currently no DataFlow editing screen (agents can still use
+the `ir_*_datasource` / `ir_*_transform` tools, doc/09). The screen was taken off in 2026-03 and is deliberately
+**kept off** because the device side does not run DataFlow (`ArsistDataFlowEngine.cs` is `.disabled`, doc/12): an
+editor whose sources and transforms do nothing on the device would mislead. The parts are kept, type-clean and
+exported, for when the runtime comes back: `viewport/DataFlowEditor.tsx` (three columns; its add dialogs only add,
+editing happens in the inspector; colours still need moving to `arsist-*` tokens), `LeftPanel` `DataFlowList`,
+`RightPanel` `DataFlowInspector`. Mount them together as a `'dataflow'` view. `viewport/UICanvas.tsx` and
+`viewport/CodeEditor.tsx` (unmounted, broken against the current types) were deleted in 2026-10.
 
 ---
 
@@ -120,7 +125,7 @@ Renders different content based on `currentView`:
 | `ui` | UI layout lists (UHD / canvas) + UIElement tree (`UIHierarchy`) |
 | `script` | Script file list (`ScriptFileList`) |
 
-(`DataFlowList` is defined in the file but not rendered.) Add buttons use `projectStore.addObject`, `addUILayout`, `addUIElement`, `addScript`.
+(`DataFlowList` is exported but not rendered, see above.) Add buttons use `projectStore.addObject`, `addUILayout`, `addUIElement`, `addScript`.
 
 Model import opens `window.electronAPI.fs.selectFile` (GLB/GLTF or VRM, separate entries) and then calls
 `window.electronAPI.assets.import({ kind: 'model' })`. "Image anchor" imports a PNG/JPG as a texture, scores its
@@ -170,7 +175,7 @@ Shows for the currently selected `UIElement`:
 - Delete button
 
 `DataSourceEditor` / `TransformEditor` (type-specific DataFlow parameter inputs) are defined in the same file
-inside `DataFlowInspector`, which is currently not rendered.
+inside `DataFlowInspector`, which is exported but currently not rendered (see the DataFlow note above).
 
 ---
 

@@ -22,6 +22,7 @@ import { checkProjectRequirements, migrateExtensionData, type ExtensionDataUpgra
 import { getExtensionCatalog } from '../extensions/catalogService';
 import { describeJsonError, resolveSceneAndUiCopies, seenAfterSave, stableStringify, syncStaleCopies, type CopySeen } from './sceneCopies';
 import { listBuiltinAdapterNames } from '../adapters/adapterDirs';
+import { generateBuildManifest, generateUnityManifest } from '../../bridge/UnityBridge';
 import { atomicWriteJson } from './projectIO';
 import { createARSettings, createInitialDataFlow } from './defaults';
 
@@ -34,10 +35,12 @@ export interface CreateProjectOptions {
   path: string;
   template: ProjectTemplate;
   targetDevice: string;
-  trackingMode?: string;
-  presentationMode?: string;
 }
 
+/**
+ * format: 'unity' と 'json' は manifest.json、'yaml' は manifest.yaml。中身はどれもビルドが
+ * Assets/ArsistGenerated/ に書くもの (UnityBridge.generateBuildManifest) と同じ。
+ */
 export interface ExportOptions {
   format: 'unity' | 'json' | 'yaml';
   outputPath: string;
@@ -410,31 +413,22 @@ export class ProjectManager {
       const exportDir = options.outputPath;
       await fs.ensureDir(exportDir);
 
-      // Unity用マニフェスト
-      const manifest = this.generateUnityManifest();
-
-      if (options.format === 'json') {
-        await fs.writeJSON(path.join(exportDir, 'manifest.json'), manifest, { spaces: 2 });
-      } else if (options.format === 'yaml') {
+      // ビルドの転送 (UnityBuilder.transferProjectData) と同じファイルを、同じ作り方で書く。
+      // ビルドの時にしか決まらないもの (logRelay・deviceTags・有効な拡張機能) は入らない。
+      const project = this.currentProject;
+      const manifest = generateBuildManifest(project);
+      if (options.format === 'yaml') {
         await fs.writeFile(path.join(exportDir, 'manifest.yaml'), YAML.stringify(manifest));
+      } else {
+        await fs.writeJSON(path.join(exportDir, 'manifest.json'), manifest, { spaces: 2 });
       }
-
-      // シーンデータ出力
-      await fs.writeJSON(path.join(exportDir, 'scenes.json'), this.currentProject.scenes, { spaces: 2 });
-
-      // UIレイアウトデータ出力
-      await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), this.currentProject.uiLayouts, { spaces: 2 });
-
-      // DataFlow 定義出力
-      await fs.writeJSON(path.join(exportDir, 'dataflow.json'), this.currentProject.dataFlow, { spaces: 2 });
-
-      // スクリプトバンドル出力 (Jint用 JSON IR)
-      const scriptBundle = {
-        version: '1.0',
-        scripts: (this.currentProject.scripts ?? [])
-          .filter((sc) => sc.enabled)
-          .map((sc) => ({ id: sc.id, trigger: sc.trigger, code: sc.code, enabled: sc.enabled })),
-      };
+      await fs.writeJSON(path.join(exportDir, 'scenes.json'), project.scenes, { spaces: 2 });
+      await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), project.uiLayouts, { spaces: 2 });
+      if (project.dataFlow) {
+        await fs.writeJSON(path.join(exportDir, 'dataflow.json'), project.dataFlow, { spaces: 2 });
+      }
+      // スクリプトバンドル (Jint 用。BuildDialog の exportScriptBundle と同じ形: 有効なスクリプト + storage.persist)
+      const { scriptBundle } = generateUnityManifest(project) as { scriptBundle: unknown };
       await fs.writeJSON(path.join(exportDir, 'scripts.json'), scriptBundle, { spaces: 2 });
 
       // アセットをコピー
@@ -561,34 +555,5 @@ export class ProjectManager {
     }
 
     return ui;
-  }
-
-  private generateUnityManifest(): object {
-    if (!this.currentProject) return {};
-
-    const { remoteInput, ...androidBuild } = this.currentProject.buildSettings as any;
-    const scripts = this.currentProject.scripts ?? [];
-    const hasActiveScripts = scripts.some((sc: any) => sc.enabled);
-
-    return {
-      projectId: this.currentProject.id,
-      projectName: this.currentProject.name,
-      version: this.currentProject.version,
-      irVersion: this.currentProject.irVersion ?? CURRENT_IR_VERSION,
-      layster: this.currentProject.layster ?? virtualHeaderFor(this.currentProject.irVersion ?? CURRENT_IR_VERSION),
-      appType: this.currentProject.appType,
-      targetDevice: this.currentProject.targetDevice,
-      arSettings: this.currentProject.arSettings,
-      designSystem: this.currentProject.designSystem,
-      dataFlow: this.currentProject.dataFlow,
-      build: androidBuild,
-      buildSettings: this.currentProject.buildSettings,
-      remoteInput,
-      scripting: {
-        enabled: hasActiveScripts,
-      },
-      models: this.currentProject.models ?? [],
-      exportedAt: new Date().toISOString(),
-    };
   }
 }

@@ -63,20 +63,21 @@ npm run logs -- --for 25 --grep 'Arsist|Task' > /tmp/run.log; echo $?
 
 Ship builds should not stream logs over the LAN in plaintext. Set `arSettings.logRelay.enabled = false`
 in a Layster.Virtual `project.json` (`arSettings.logRelay.port` changes the port); the pipeline then adds no
-component and the manifest carries no addresses. Layster.Spatial builds go through the same builder, but
-`lower.ts` writes no `logRelay` setting, so they always relay with the defaults. It is **on by
+component and the manifest carries no addresses. Layster.Spatial builds go through the same builder;
+`lower.ts` copies `app.logRelay` from `project.spatial.json` when it is set, otherwise the defaults apply. It is **on by
 default** because the whole point is not having to configure anything while developing.
 
 ## Shape of a line
 
 ```json
-{"token":"arsist","app":"ArsistPerception","level":"info","t":63896345314215,
+{"token":"arsist","app":"ArsistPerception","level":"info","t":1792800000000,
  "msg":"[Arsist] Task 'scanView' -> \"…\"","stack":"…","dropped":3}
 ```
 
-`stack` is present only when there is a stack trace, `dropped` only when lines were lost. `t` is
-`DateTime.UtcNow.Ticks / TicksPerMillisecond` — milliseconds since 0001-01-01, **not** Unix time (the receiver
-only shows the time of day, which comes out right either way).
+`stack` is present only when there is a stack trace, `dropped` only when lines were lost. `t` is **Unix time in
+milliseconds** (`DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()`), so `new Date(t)` reads it directly. Builds made
+before 2026-10 sent milliseconds since 0001-01-01 instead; `npm run logs` recognises those (`t > 1e13`) and converts
+them.
 
 `token` lets the receiver ignore unrelated traffic on the port. It is a filter, not a secret.
 

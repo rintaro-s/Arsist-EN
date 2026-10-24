@@ -93,18 +93,9 @@ Drops perception tasks that would build fine and then never work: no `storeAs`, 
 
 ---
 
-## Unused converters
+## Removed: scene / UI converters and `uiCodeSync.ts`
 
-`convertSceneToUnity(scene)` and `convertUIToUnity(layout)` (with the private `convertObjectToUnity`,
-`convertUIElementToUnity`, `calculateRectTransform`, …) are still exported but **nothing calls them**: the build
-sends raw IR scenes and layouts. Their output shapes (`UnitySceneData` with `MeshFilter` / `MeshRenderer` /
-`ArsistModelRuntimeLoader` / `ArsistCanvasSurface` components, `UnityUIData` with `rectTransform` /
-`layoutGroup`) are not what the Unity side reads. Do not build on them.
-
----
-
-## Removed: `uiCodeSync.ts`
-
-This doc used to describe `src/renderer/utils/uiCodeSync.ts` (UI layout ↔ HTML). The file still exists
-(`layoutToHtml` / `htmlToLayout`), but no component imports it — the UI editor no longer has an HTML code mode,
-and the file references element types and style fields that are not in `types.ts`. Treat it as dead code.
+`convertSceneToUnity` / `convertUIToUnity` (and their helpers) and `src/renderer/utils/uiCodeSync.ts`
+(UI layout ↔ HTML) were deleted in 2026-10. Nothing called them: the build sends the raw IR scenes and layouts,
+and the converters' output shapes were not what the Unity side reads. `UnityBridge.ts` now only holds the manifest
+builders (`generateUnityManifest`, `generateBuildManifest`) and the model helpers (`shippedModels`, `referencedModels`).

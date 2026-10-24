@@ -1,6 +1,12 @@
 /**
  * DataFlowEditor — Data pipeline configuration
  *
+ * 今はどの画面にも出していない (2026-03 に 'dataflow' タブを UI タブへ寄せた)。実機側の
+ * ArsistDataFlowEngine.cs が .disabled で、DataSource / Transform は端末で動かないため。
+ * 実機側を戻すときに、LeftPanel の DataFlowList・RightPanel の DataFlowInspector と一緒に
+ * 'dataflow' ビューとして付け直す (色は arsist-* トークンに直すこと)。IR の dataFlow は
+ * エージェント (ir_add_datasource など) からは今も編集できる。
+ *
  * Three-layer structure:
  * Left: DataSource (input source)
  * Middle: Transform (data processing)
@@ -211,7 +217,7 @@ interface DataSourceCardProps {
   onEditClose: () => void;
 }
 
-function DataSourceCard({ source, isEditing, onEdit, onDelete }: DataSourceCardProps) {
+function DataSourceCard({ source, onEdit, onDelete }: DataSourceCardProps) {
   const iconMap: Record<DataSourceType, React.ReactNode> = {
     XR_Tracker: <Smartphone size={14} />,
     XR_HandPose: <Smartphone size={14} />,
@@ -264,7 +270,7 @@ interface TransformCardProps {
   onEditClose: () => void;
 }
 
-function TransformCard({ transform, isEditing, onEdit, onDelete }: TransformCardProps) {
+function TransformCard({ transform, onEdit, onDelete }: TransformCardProps) {
   return (
     <div className="bg-[#1e1e1e] border border-[#2d2d2d] rounded-lg p-3 hover:border-[#3d3d3d] transition-colors">
       <div className="flex items-start gap-2">
@@ -309,7 +315,7 @@ interface SourceEditModalProps {
   dataSources: DataSourceDefinition[];
 }
 
-function SourceEditModal({ sourceId, onClose, onSave, dataSources }: SourceEditModalProps) {
+function SourceEditModal({ onClose, onSave }: SourceEditModalProps) {
   const t = useT();
   const [type, setType] = useState<DataSourceType>('REST_Client');
   const [storeAs, setStoreAs] = useState('');
@@ -393,7 +399,7 @@ interface TransformEditModalProps {
   dataStoreKeys: string[];
 }
 
-function TransformEditModal({ transformId, onClose, onSave, dataStoreKeys }: TransformEditModalProps) {
+function TransformEditModal({ onClose, onSave }: TransformEditModalProps) {
   const t = useT();
   const [type, setType] = useState<TransformType>('Formula');
   const [storeAs, setStoreAs] = useState('');

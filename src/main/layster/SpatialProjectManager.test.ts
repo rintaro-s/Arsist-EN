@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   createSpatialProjectOnDisk, importSpatialAsset, listProjectSpaces, loadSpatialProject, readSecrets, readSpatialProject,
-  saveProjectSpace, saveSpatialProject, setSecret, withSpatialWrite,
+  saveProjectSpace, saveSpatialProject, setSecret, validateSpatialProjectAt, withSpatialWrite,
 } from './SpatialProjectManager';
 import { detectProjectKind } from './projectKind';
 import { callMind } from './mindClient';
@@ -28,6 +28,24 @@ describe('SpatialProjectManager', () => {
     expect(loaded.success).toBe(true);
     expect(loaded.project?.id).toBe('id-1');
     await expect(createSpatialProjectOnDisk({ parentDir: root, name: 'Desk Buddy', targetDevice: 'Meta_Quest' }, 'x')).rejects.toThrow(/already exists/);
+  });
+
+  it('refuses to open a project whose extensions / device are missing (like Virtual)', async () => {
+    const { project, path: dir } = await createSpatialProjectOnDisk({ parentDir: root, name: 'Req', targetDevice: 'Meta_Quest' }, 'id-r');
+    project.extensions = { 'no-such-extension': { enabled: true, dataVersion: 1, settings: {} } };
+    await saveSpatialProject(dir, project);
+    const loaded = await loadSpatialProject(dir);
+    expect(loaded.success).toBe(false);
+    expect(loaded.error).toBe('requirementsMissing');
+    expect(loaded.missing?.map((m) => [m.kind, m.id])).toEqual([['extension', 'no-such-extension']]);
+  });
+
+  it('checks animation names against Assets/Animations when the folder is known', async () => {
+    const { project, path: dir } = await createSpatialProjectOnDisk({ parentDir: root, name: 'Anim', targetDevice: 'Meta_Quest' }, 'id-a');
+    project.rules.push({ id: 'r', when: { start: true }, do: [{ do: 'animate', thing: 'hello', clip: 'Wave' }] });
+    expect((await validateSpatialProjectAt(dir, project)).some((p) => p.path === 'rules[r].do[0].clip')).toBe(true);
+    fs.writeFileSync(path.join(dir, 'Assets', 'Animations', 'Wave.fbx'), 'x');
+    expect((await validateSpatialProjectAt(dir, project)).some((p) => p.path === 'rules[r].do[0].clip')).toBe(false);
   });
 
   it('detects Spatial and Virtual folders with their labels', async () => {

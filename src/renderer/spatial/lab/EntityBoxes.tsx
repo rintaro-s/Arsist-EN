@@ -33,20 +33,22 @@ interface Props {
   entities: Entity[];
   selected: string | null;
   onPick: (id: string) => void;
+  /** 仮の部屋 (VirtualRoom) を描いているとき: 箱は見えないまま選べるだけ (縁は選んだものだけ) */
+  ghost?: boolean;
 }
 
-export const EntityBoxes = memo(function EntityBoxes({ entities, selected, onPick }: Props) {
+export const EntityBoxes = memo(function EntityBoxes({ entities, selected, onPick, ghost }: Props) {
   const { lang } = useI18n();
   return (
     <group>
       {entities.map((e) => (
-        <EntityBox key={e.id} entity={e} selected={e.id === selected} label={entityName(e, lang)} onPick={onPick} />
+        <EntityBox key={e.id} entity={e} selected={e.id === selected} label={entityName(e, lang)} onPick={onPick} ghost={ghost} />
       ))}
     </group>
   );
 });
 
-function EntityBox({ entity, selected, label, onPick }: { entity: Entity; selected: boolean; label: string; onPick: (id: string) => void }) {
+function EntityBox({ entity, selected, label, onPick, ghost }: { entity: Entity; selected: boolean; label: string; onPick: (id: string) => void; ghost?: boolean }) {
   const color = entityColor(entity);
   const w = lookupWord(entity.is[0] ?? '');
   const structural = !!w?.structural;
@@ -57,8 +59,8 @@ function EntityBox({ entity, selected, label, onPick }: { entity: Entity; select
   const edges = useMemo(() => new THREE.EdgesGeometry(geometry), [geometry]);
   const lowConfidence = entity.confidence < 0.5;
   if (ceiling) return null;
-  const opacity = structural ? (w?.word === 'floor' ? 0.25 : 0.07) : lowConfidence ? 0.15 : 0.35;
-  const showLabel = selected || !structural;
+  const opacity = ghost ? 0 : structural ? (w?.word === 'floor' ? 0.25 : 0.07) : lowConfidence ? 0.15 : 0.35;
+  const showLabel = selected || (!structural && !ghost);
 
   return (
     <group position={toThree(entity.at)} rotation={[0, yawToThree(entity.yaw ?? 0), 0]}>
@@ -69,7 +71,7 @@ function EntityBox({ entity, selected, label, onPick }: { entity: Entity; select
       >
         <meshStandardMaterial color={color} transparent opacity={opacity} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
-      <lineSegments geometry={edges}>
+      <lineSegments geometry={edges} visible={!ghost || selected}>
         <lineBasicMaterial color={selected ? '#4ec9b0' : color} transparent opacity={selected ? 1 : structural ? 0.35 : 0.8} />
       </lineSegments>
       {showLabel && (

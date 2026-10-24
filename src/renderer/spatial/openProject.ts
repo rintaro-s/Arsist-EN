@@ -21,6 +21,11 @@ export async function openProjectFolder(path: string): Promise<OpenOutcome> {
     if (!api) return { kind: 'spatial', ok: false, error: { key: 'spatial.status.noBridge' } };
     try {
       const result = await api.load(path);
+      if (result.error === 'requirementsMissing') {
+        // Virtual と同じ: 足りない拡張機能・端末を見せ、読み込んだら開き直す (MissingRequirementsDialog)
+        useProjectStore.setState({ missingRequirements: { path, missing: result.missing ?? [] } });
+        return { kind: 'spatial', ok: false };
+      }
       if (!result.success || !result.project) {
         const error = result.tooNew
           ? { key: 'spatial.status.tooNew' }

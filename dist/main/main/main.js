@@ -79,7 +79,8 @@ electron_1.protocol.registerSchemesAsPrivileged([
 const store = new electron_store_1.default({
     defaults: {
         unityPath: '',
-        unityVersion: '2022.3.20f1',
+        // 受け付ける最低の版 (unity:validate)。テンプレートが固定している版 = UnityBackend/ArsistBuilder/ProjectSettings/ProjectVersion.txt
+        unityVersion: '6000.0.40f1',
         recentProjects: [],
         theme: 'dark',
         layoutSettings: {
@@ -128,11 +129,27 @@ function shutdownBackgroundWork() {
     (0, childProcesses_1.killAllChildren)((message) => console.log(message));
 }
 let adapterManager = null;
+/**
+ * 今開いているプロジェクトのフォルダ (Virtual でも Spatial でも)。arsist-file:// の配信範囲、
+ * model:* / vision:preview の既定の置き場、AI の IPC が見るプロジェクトはこれ。
+ */
 let currentProjectPathForAssets = null;
 // 開いているプロジェクトが外 (エージェント等) で変わったら、レンダラに知らせて読み直してもらう
 const projectWatcher = new projectWatcher_1.ProjectWatcher((projectPath, files) => {
     mainWindow?.webContents.send('project:external-change', { projectPath, files });
 });
+/** Virtual のプロジェクトを開いた: Spatial の側を手放し、Virtual の見張りを始める */
+function openedVirtualProject(projectPath) {
+    (0, spatialIpc_1.forgetSpatialProject)();
+    currentProjectPathForAssets = projectPath;
+    updateRecentProjects(projectPath);
+    projectWatcher.watch(projectPath);
+}
+/** Spatial のプロジェクトを開いた (spatialIpc から): Virtual の見張りを止める */
+function openedSpatialProject(projectPath) {
+    projectWatcher.close();
+    currentProjectPathForAssets = projectPath;
+}
 const isDev = process.env.NODE_ENV === 'development';
 function getAppLang() {
     try {
@@ -758,10 +775,7 @@ electron_1.ipcMain.handle('project:create', async (_, options) => {
     projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
     const res = await projectManager.createProject(options);
     if (res?.success) {
-        const projectDir = path.join(options.path, options.name);
-        currentProjectPathForAssets = projectDir;
-        updateRecentProjects(projectDir);
-        projectWatcher.watch(projectDir);
+        openedVirtualProject(path.join(options.path, options.name));
     }
     return res;
 });
@@ -771,11 +785,8 @@ electron_1.ipcMain.handle('project:load', async (_, projectPath) => {
     }
     projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
     const res = await projectManager.loadProject(projectPath);
-    if (res?.success) {
-        currentProjectPathForAssets = projectPath;
-        updateRecentProjects(projectPath);
-        projectWatcher.watch(projectPath);
-    }
+    if (res?.success)
+        openedVirtualProject(projectPath);
     return res;
 });
 electron_1.ipcMain.handle('project:save', async (_, data) => {
@@ -974,6 +985,7 @@ async function runUnityBuild(buildConfig) {
     runUnityBuild: (config) => runUnityBuild(config),
     buildLog: (line) => mainWindow?.webContents.send('unity:build-log', line),
     getSetting: (key) => store.get(key),
+    onOpened: (projectPath) => openedSpatialProject(projectPath),
 });
 electron_1.ipcMain.handle('unity:cancel-build', async () => {
     const unityPath = store.get('unityPath');
@@ -1009,12 +1021,6 @@ electron_1.ipcMain.handle('adapters:get', async (_, adapterId) => {
         adapterManager = new AdapterManager_1.AdapterManager();
     }
     return await adapterManager.getAdapter(adapterId);
-});
-electron_1.ipcMain.handle('adapters:apply-patch', async (_, adapterId, projectPath) => {
-    if (!adapterManager) {
-        adapterManager = new AdapterManager_1.AdapterManager();
-    }
-    return await adapterManager.applyPatch(adapterId, projectPath);
 });
 // 拡張機能 (Extensions/<id>/)。一覧と、端末のタグ (どの拡張機能がその端末で動くかを画面で示すため)。
 electron_1.ipcMain.handle('extensions:list', async (_, targetDevice) => {

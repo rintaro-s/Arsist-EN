@@ -16,7 +16,12 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { atomicWriteJson } from '../project/projectIO';
 import { describeJsonError } from '../project/sceneCopies';
-import { importAnimation } from '../project/animationAssets';
+import { importAnimation, listAnimations } from '../project/animationAssets';
+import { getExtensionCatalog } from '../extensions/catalogService';
+import { listBuiltinAdapterNames } from '../adapters/adapterDirs';
+import { checkProjectRequirements, type MissingRequirement } from '../../shared/extensions';
+import { CURRENT_IR_VERSION } from '../../shared/irVersion';
+import { checkSpatialAnimations, validateSpatialProject, type SpatialProblem } from '../../shared/layster/spatial/validate';
 import { compareLayster, formatLayster, LAYSTER_CURRENT, readLaysterHeader, SPATIAL_PROJECT_FILE } from '../../shared/layster/version';
 import { createSpatialProject, repairSpatialProject } from '../../shared/layster/spatial/defaults';
 import type { SpaceFixture, SpatialProject } from '../../shared/layster/spatial/types';
@@ -93,9 +98,30 @@ export async function readSpatialProject(dir: string): Promise<{ project: Spatia
   return { project: raw as SpatialProject, notices };
 }
 
+/**
+ * このプロジェクトが使う拡張機能と端末が、このエディタに揃っているか (Virtual の ProjectManager.loadProject と同じ確認)。
+ * 足りないまま開くと、拡張機能の設定が画面に出ないまま保存され、ビルドからも黙って外れる。
+ * minIrVersion は Virtual の版で書かれているので、今の Virtual の版と比べる (拡張機能のランタイムは両方で同じ)。
+ */
+export async function spatialRequirements(project: SpatialProject): Promise<MissingRequirement[]> {
+  const catalog = await getExtensionCatalog(true);
+  return checkProjectRequirements(project, catalog.extensions.map((e) => e.manifest), await listBuiltinAdapterNames(), CURRENT_IR_VERSION);
+}
+
+/**
+ * フォルダが分かるときの確かめ: validateSpatialProject + 動きの名前 (Assets/Animations/*.fbx)。
+ * エディタのビルド・エージェントの spatial_validate・scripts/layster-build.mjs が使う。
+ */
+export async function validateSpatialProjectAt(dir: string, project: SpatialProject): Promise<SpatialProblem[]> {
+  const animations = (await listAnimations(dir).catch(() => [])).map((a) => a.name);
+  return [...validateSpatialProject(project), ...checkSpatialAnimations(project, animations)];
+}
+
 export async function loadSpatialProject(dir: string): Promise<SpatialLoadResult> {
   try {
     const { project, notices } = await readSpatialProject(dir);
+    const missing = await spatialRequirements(project);
+    if (missing.length > 0) return { success: false, error: 'requirementsMissing', missing, path: dir };
     return { success: true, project, path: dir, notices: notices.length ? notices : undefined };
   } catch (e) {
     if (e instanceof SpatialFormatError && e.code === 'tooNew') return { success: false, tooNew: true, error: e.message };

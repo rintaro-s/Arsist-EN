@@ -10,6 +10,8 @@ import { createPortal } from 'react-dom';
 import { AlertTriangle, FolderOpen, Package, RefreshCw } from 'lucide-react';
 import { useT } from '../../i18n';
 import { useProjectStore } from '../../stores/projectStore';
+import { detectProjectKind } from '../../spatial/api';
+import { openProjectFolder } from '../../spatial/openProject';
 
 export function MissingRequirementsDialog() {
   const t = useT();
@@ -20,7 +22,14 @@ export function MissingRequirementsDialog() {
 
   const retry = async () => {
     setBusy(true);
-    await loadProject(missingRequirements.path);
+    const path = missingRequirements.path;
+    // Layster.Spatial のプロジェクトは Spatial の画面で開き直す (足りなければ、もう一度ここに来る)
+    if ((await detectProjectKind(path)).kind === 'spatial') {
+      clearMissingRequirements();
+      await openProjectFolder(path);
+    } else {
+      await loadProject(path);
+    }
     setBusy(false);
   };
 

@@ -50,6 +50,8 @@ export function createSpatialProject(options: CreateSpatialOptions): SpatialProj
       minSdkVersion: isQuest ? 32 : 29,
       // Unity 同梱の Android SDK が持っている版 (ProjectManager.createProject と同じ理由)
       targetSdkVersion: 34,
+      // 開発中は実機のログを PC で読めるように (npm run logs)。配布する前に切る (validate が知らせる)
+      logRelay: { enabled: true },
     },
     presentation: { reality: 'passthrough', assumedEyeHeight: 1.5 },
     interaction: { controllers: true, hands: true, gazeDwellSeconds: 0 },

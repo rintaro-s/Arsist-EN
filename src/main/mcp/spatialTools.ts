@@ -9,7 +9,8 @@
 import { randomUUID } from 'crypto';
 import type { ArsistTool, ToolSession } from './tools';
 import {
-  createSpatialProjectOnDisk, listProjectSpaces, readSpatialProject, SpatialFormatError, withSpatialWrite,
+  createSpatialProjectOnDisk, listProjectSpaces, readSpatialProject, SpatialFormatError, spatialRequirements,
+  validateSpatialProjectAt, withSpatialWrite,
 } from '../layster/SpatialProjectManager';
 import { formatLayster } from '../../shared/layster/version';
 import { BUILTIN_SPACES } from '../../shared/layster/spatial/spaces';
@@ -119,6 +120,10 @@ ENTITIES (the world state: room scan, detected objects, mind beliefs, test space
 ${vocab}
 
 THINGS (what the app shows): { id, name?, visual, place, visibleAtStart?, occlusion?, grabbable?, tags?, ext? }
+  occlusion: auto (default; hidden behind real walls/furniture when a provider supplies the room's shape) | off (always drawn)
+  grabbable: true → the user can grab it (controller grip, or pinch with a hand; far away via the ray) and move it; fires
+             events "grabbed" / "released" (data { thing, hand, by, at, yaw }) and "grabbed:<id>" / "released:<id>"; with
+             keep: forever the new spot is remembered. world-mode things only. ext: { "<extension id>": { …per-thing options } }
   visual: { kind: "shape", shape: cube|sphere|cylinder|capsule|quad, size: [w,h,d], color, opacity? }
           { kind: "model", file: "Assets/Models/x.glb", height? }
           { kind: "character", file: "Assets/Characters/x.vrm", animation?, blink?, breathe?, lookAtUser?: off|always|nearby, height? }
@@ -135,7 +140,7 @@ THINGS (what the app shows): { id, name?, visual, place, visibleAtStart?, occlus
     distance: [min,max] horizontal metres from the user · height: [min,max] metres of the thing's bottom above the floor
     facing: user (default) | away | surface | keep · visible: true | half-angle deg · clearance: [w,d] free area on the host
     avoid: [thing ids or words] (≥ 0.3 m apart) · prefer: closest (default) | farthest | largest | center | inView
-    fallback: [Placement, ...] · keep: none | session (default) | forever (spatial anchor, same spot next launch)
+    fallback: [Placement, ...] · keep: none | session (default) | forever (same spot next launch, kept relative to the scanned surface it stands on)
   Good default for a panel: { on: { has: ["support"] }, distance: [0.3, 1.8], height: [0.4, 1.3], fallback: [{ at: { frame: "user", at: [0, 1.1, 0.9] } }] }.
   Check placements with spatial_solve: it runs the same solver as the device in several different rooms.
 
@@ -217,7 +222,7 @@ export const SPATIAL_TOOLS: ArsistTool[] = [
     readOnly: true,
     async run(args, session) {
       const { dir, project, notices } = await readSpatial(session, args);
-      const problems = validateSpatialProject(project);
+      const problems = await validateSpatialProjectAt(dir, project);
       return {
         path: dir,
         format: formatLayster(project.layster),
@@ -299,10 +304,10 @@ export const SPATIAL_TOOLS: ArsistTool[] = [
   },
   {
     name: 'spatial_set_settings',
-    description: 'Change project settings. Each given object is merged into the current one: app (packageName, versionCode, minSdkVersion, targetSdkVersion, edge = default PC address "host:port"), presentation (reality: passthrough | virtual-room, assumedEyeHeight), interaction (controllers, hands, gazeDwellSeconds), recording, memory ({ persist: [store keys, "memory." = prefix] }), spaces ({ use: [space ids] }); targetDevice, name and version are replaced.',
+    description: 'Change project settings. Each given object is merged into the current one: app (packageName, versionCode, minSdkVersion, targetSdkVersion, edge = default PC address "host:port", logRelay = { enabled, port? }: stream device logs to this PC over the LAN, on when omitted, turn off before sharing the APK), presentation (reality: passthrough | virtual-room, assumedEyeHeight), interaction (controllers, hands, gazeDwellSeconds), recording, memory ({ persist: [store keys, "memory." = prefix] }), spaces ({ use: [space ids] }), extensions ({ "<id>": { enabled, dataVersion, settings } } merged per id — the same shape as Layster.Virtual; per-thing options go in the thing\'s ext.<id>); targetDevice, name and version are replaced.',
     inputSchema: schema({
       app: { type: 'object' }, presentation: { type: 'object' }, interaction: { type: 'object' }, recording: { type: 'object' },
-      memory: { type: 'object' }, spaces: { type: 'object' }, targetDevice: { type: 'string' }, name: { type: 'string' }, version: { type: 'string' },
+      memory: { type: 'object' }, spaces: { type: 'object' }, extensions: { type: 'object' }, targetDevice: { type: 'string' }, name: { type: 'string' }, version: { type: 'string' },
     }),
     readOnly: false,
     async run(args, session) {
@@ -314,6 +319,15 @@ export const SPATIAL_TOOLS: ArsistTool[] = [
             p[key] = { ...(p[key] ?? {}), ...args[key] };
             changed.push(key);
           }
+        }
+        if (args.extensions && typeof args.extensions === 'object') {
+          const all = (p.extensions ?? (p.extensions = {})) as Record<string, Args>;
+          for (const [id, state] of Object.entries(args.extensions as Record<string, Args>)) {
+            if (!state || typeof state !== 'object') continue;
+            const cur = all[id] ?? { enabled: false, dataVersion: 1, settings: {} };
+            all[id] = { ...cur, ...state, settings: { ...(cur.settings ?? {}), ...(state.settings ?? {}) } };
+          }
+          changed.push('extensions');
         }
         for (const key of ['targetDevice', 'name', 'version']) {
           if (typeof args[key] === 'string' && args[key]) { p[key] = args[key]; changed.push(key); }
@@ -330,11 +344,13 @@ export const SPATIAL_TOOLS: ArsistTool[] = [
     inputSchema: schema({}),
     readOnly: true,
     async run(args, session) {
-      const { project, notices } = await readSpatial(session, args);
-      const problems = validateSpatialProject(project);
+      const { dir, project, notices } = await readSpatial(session, args);
+      // フォルダが分かるので、動きの名前 (Assets/Animations/*.fbx) と、拡張機能・端末が揃っているかも見る (ビルドと同じ)
+      const problems = await validateSpatialProjectAt(dir, project);
+      const missing = await spatialRequirements(project);
       return {
-        ok: !problems.some((p) => p.level === 'error'),
-        errors: compactProblems(problems.filter((p) => p.level === 'error')),
+        ok: !problems.some((p) => p.level === 'error') && missing.length === 0,
+        errors: [...missing.map((m) => `error: extensions: ${m.detail}`), ...compactProblems(problems.filter((p) => p.level === 'error'))],
         warnings: compactProblems(problems.filter((p) => p.level === 'warning')),
         ...(notices.length ? { notices } : {}),
       };

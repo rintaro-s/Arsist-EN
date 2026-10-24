@@ -682,7 +682,8 @@ function RevealSection({ element, onChange }: { element: UIElement; onChange: (r
    DataFlow Inspector
    ════════════════════════════════════════ */
 
-function DataFlowInspector() {
+// 未使用: DataFlowEditor.tsx の冒頭を参照 (実機の DataFlow が止まっている間は画面に出さない)
+export function DataFlowInspector() {
   const t = useT();
   const { project, selectedDataSourceId, updateDataSource, selectedTransformId, updateTransform } = useProjectStore();
   const source = project?.dataFlow.dataSources.find((d) => d.id === selectedDataSourceId);

@@ -116,11 +116,10 @@ const electronAPI = {
             };
         },
     },
-    // アダプター（SDKパッチ）管理
+    // アダプター (端末) の一覧と adapter.json の中身 (読むだけ)
     adapters: {
         list: () => electron_1.ipcRenderer.invoke('adapters:list'),
         get: (adapterId) => electron_1.ipcRenderer.invoke('adapters:get', adapterId),
-        applyPatch: (adapterId, projectPath) => electron_1.ipcRenderer.invoke('adapters:apply-patch', adapterId, projectPath),
     },
     // 拡張機能 (Extensions/<id>/)
     extensions: {

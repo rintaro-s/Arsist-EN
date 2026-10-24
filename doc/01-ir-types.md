@@ -53,7 +53,7 @@ to `Scenes/<id>.json` and `UI/<id>.json`; when only one copy is changed outside 
 |-------|------|---------|
 | `trackingMode` | `'6dof' \| '3dof' \| 'head_locked'` | 6DoF = full spatial, 3DoF = rotation only, head_locked = fixed to camera |
 | `presentationMode` | `'world_anchored' \| 'floating_screen' \| 'head_locked_hud'` | How objects anchor in AR space |
-| `worldScale` | number | Default 1. Carried into the manifest, but currently not read by the Unity build/runtime |
+| `worldScale` | number | **Unused (reserved), keep it at 1.** It is carried into the manifest, but neither the Unity build nor the runtime reads it, and the editor has no control for it. Scaling the scene root would break every place that writes world coordinates in metres (scripts, remote control, live layout, image anchors), so it is deliberately not implemented |
 | `defaultDepth` | number | Default Z placement; also how far the editor draws the spawn-view frustum |
 | `floatingScreen` | object | Width/height/distance/gaze-lock for floating_screen mode |
 | `enableRemoteControl` | boolean | Start WebSocket server on device for runtime control |

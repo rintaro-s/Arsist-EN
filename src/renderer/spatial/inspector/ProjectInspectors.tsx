@@ -31,6 +31,7 @@ export function SettingsInspector({ project }: { project: SpatialProject }) {
         <Select value={project.presentation.reality}
           options={[{ value: 'passthrough', label: t('spatial.settings.reality.passthrough') }, { value: 'virtual-room', label: t('spatial.settings.reality.virtualRoom') }]}
           onChange={(reality) => update((p) => { p.presentation.reality = reality; })} />
+        {project.presentation.reality === 'virtual-room' && <div className="text-[10px] text-arsist-muted leading-snug">{t('spatial.settings.virtualRoomHint')}</div>}
         <div className="flex items-center gap-1.5 text-xs">
           <span className="text-arsist-muted">{t('spatial.settings.assumedEyeHeight')}</span>
           <NumberInput value={project.presentation.assumedEyeHeight ?? 1.5} step={0.05} onChange={(v) => update((p) => { p.presentation.assumedEyeHeight = v; })} />
@@ -45,6 +46,19 @@ export function SettingsInspector({ project }: { project: SpatialProject }) {
           <NumberInput value={project.interaction.gazeDwellSeconds ?? 0} step={0.5} onChange={(v) => update((p) => { p.interaction.gazeDwellSeconds = v; })} />
           <span className="text-arsist-muted">s</span>
         </div>
+      </Section>
+      <Section title={t('spatial.settings.dev')}>
+        <Toggle checked={project.app.logRelay?.enabled !== false} label={t('spatial.settings.logRelay')}
+          onChange={(enabled) => update((p) => { p.app.logRelay = { ...(p.app.logRelay ?? {}), enabled }; })} />
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="text-arsist-muted">{t('spatial.settings.logRelayPort')}</span>
+          <NumberInput value={project.app.logRelay?.port} placeholder="9770" step={1} width="w-20"
+            onChange={(port) => update((p) => {
+              const next = { enabled: p.app.logRelay?.enabled !== false, ...(port ? { port } : {}) };
+              p.app.logRelay = next;
+            }, 'logRelayPort')} />
+        </div>
+        <div className="text-[10px] text-arsist-muted leading-snug">{t('spatial.settings.logRelayHint')}</div>
       </Section>
       <Section title={t('spatial.settings.memory')}>
         <Field label={t('spatial.settings.persist')} hint={t('spatial.settings.persistHint')}>

@@ -9,8 +9,8 @@ Arsist Control - Advanced Controller with Query API & Auto-Generation
     # 1. VRM 能力を自動検出
     ctrl = ArsistControl("192.168.0.24")
     ctrl.connect()
-    ids = ctrl.query("vrm", "getIds")
-    capabilities = ctrl.query("vrm", "getCapabilities", avatar_id="avatar")
+    ids = ctrl.get_ids()                       # {"vrmIds": [...], "sceneIds": [...]}
+    capabilities = ctrl.get_capabilities("avatar")  # expressions / humanoidBones / ...
     
     # 2. VRM 能力に基づいたサンプルコード生成
     sample_code = ctrl.generate_sample_script("avatar", capabilities)
@@ -29,6 +29,29 @@ import uuid
 import os
 from typing import Optional, Any, Dict, List
 import argparse
+
+
+_CAPABILITY_KEYS = ["id", "error", "expressions", "humanoidBones", "hasHumanoid", "position", "rotation", "scale"]
+
+
+def normalize_capabilities(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    getCapabilities の応答を camelCase に揃える。端末 (VRMWrapper.VRMCapabilities) は
+    Expressions / HumanoidBones … と PascalCase で返すので、どちらの綴りでも読めるようにする。
+    元のキーも残す (PascalCase を読んでいた既存のコードを壊さない)。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = dict(raw)
+    for key in _CAPABILITY_KEYS:
+        if key in raw:
+            continue
+        pascal = key[0].upper() + key[1:]
+        if pascal in raw:
+            out[key] = raw[pascal]
+    out.setdefault("expressions", [])
+    out.setdefault("humanoidBones", [])
+    return out
 
 
 class ArsistControl:
@@ -165,13 +188,31 @@ class ArsistControl:
     # Query API Methods
     # ========================================
     
-    def get_ids(self) -> List[str]:
-        """Get registered VRM IDs"""
-        return self.query("query", "getIds")
-    
+    def get_ids(self) -> Dict[str, List[str]]:
+        """Get registered IDs: {"vrmIds": [...], "sceneIds": [...]}"""
+        data = self.query("query", "getIds") or {}
+        if isinstance(data, list):  # 念のため: 一覧だけを返す端末
+            return {"vrmIds": list(data), "sceneIds": []}
+        return {
+            "vrmIds": list(data.get("vrmIds") or data.get("VrmIds") or []),
+            "sceneIds": list(data.get("sceneIds") or data.get("SceneIds") or []),
+        }
+
+    def get_vrm_ids(self) -> List[str]:
+        """Get registered VRM IDs only"""
+        return self.get_ids()["vrmIds"]
+
     def get_capabilities(self, avatar_id: str) -> Dict[str, Any]:
-        """Get VRM capabilities (expressions, bones, etc.)"""
-        return self.query("query", "getCapabilities", avatar_id=avatar_id)
+        """
+        Get VRM capabilities.
+
+        Returns camelCase keys: id, error, expressions, humanoidBones, hasHumanoid,
+        position, rotation, scale. The device serialises its C# class with PascalCase
+        names (Expressions, HumanoidBones, ...); both spellings are accepted and the
+        original keys are kept as well, so older code reading PascalCase still works.
+        """
+        raw = self.query("query", "getCapabilities", avatar_id=avatar_id) or {}
+        return normalize_capabilities(raw)
     
     def get_state(self, object_id: str) -> Dict[str, Any]:
         """Get object/VRM state"""
@@ -244,8 +285,9 @@ class ArsistControl:
         if capabilities is None:
             try:
                 capabilities = self.get_capabilities(avatar_id)
-            except:
+            except Exception:
                 capabilities = {}
+        capabilities = normalize_capabilities(capabilities)
         
         expressions = capabilities.get("expressions", [])
         bones = capabilities.get("humanoidBones", [])
@@ -328,11 +370,16 @@ if __name__ == "__main__":
             # Step 2: Get IDs
             print("[2/6] Getting registered VRMs...")
             ids = self.get_ids()
-            print(f"      ✓ Found {len(ids)} VRMs: {ids}\n")
-            
+            vrm_ids = ids["vrmIds"]
+            print(f"      ✓ Found {len(vrm_ids)} VRMs: {vrm_ids} (scene objects: {len(ids['sceneIds'])})\n")
+            if vrm_ids and avatar_id not in vrm_ids:
+                print(f"      ! '{avatar_id}' is not registered; use --avatar-id with one of {vrm_ids}\n")
+
             # Step 3: Get capabilities
             print(f"[3/6] Querying capabilities for {avatar_id}...")
             caps = self.get_capabilities(avatar_id)
+            if caps.get("error"):
+                print(f"      ! {caps['error']}\n")
             expr_count = len(caps.get("expressions", []))
             bone_count = len(caps.get("humanoidBones", []))
             print(f"      ✓ Expressions: {expr_count}, Bones: {bone_count}\n")
@@ -403,7 +450,8 @@ def main():
     try:
         if args.list_ids:
             ids = ctrl.get_ids()
-            print(f"Registered VRM IDs: {ids}")
+            print(f"Registered VRM IDs: {ids['vrmIds']}")
+            print(f"Registered scene object IDs: {ids['sceneIds']}")
             
         elif args.generate_sample:
             caps = ctrl.get_capabilities(args.avatar_id)

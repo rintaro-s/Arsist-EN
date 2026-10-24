@@ -23,6 +23,8 @@ Source of truth if anything here looks stale: `src/shared/layster/spatial/types.
 
 Tools come from the Arsist MCP server (`arsist`; see `doc/09-mcp-server.md`). Every tool takes an optional
 `projectPath`; after `spatial_create_project` or `arsist_open_project` it can be omitted.
+Without MCP, call the same tools from a shell: `node scripts/arsist.mjs tool spatial_solve '{}' --project <dir> --json`
+(also `arsist validate|solve|lower <dir>`; `doc/21-cli.md`). Each call is a new session, so always pass the folder.
 
 1. **Open or create.** Existing folder: `arsist_open_project` (it reports whether the folder is Virtual or Spatial).
    New:
@@ -111,7 +113,11 @@ writer at a time, and they refuse files from a newer Arsist.
 - Characters are tall (≥ 1 m) so a `near` ring stands them on the floor; give them `"facing": "user"`.
 - Bound things to each other with `near: { "thing": … }` + `avoid`; things are solved in dependency order.
 - `keep: "forever"` only for things the user expects to find again (a desk card, a robot base); `keep: "none"` for
-  labels that should track moving entities.
+  labels that should track moving entities. Add `"grabbable": true` when the user should be able to move it by hand
+  (the released spot becomes its place and, with `forever`, is remembered); listen with `{ "event": "released:<id>" }`.
+- `occlusion` stays `auto` (hidden behind real furniture when the room is scanned); use `"off"` only for things that must
+  stay visible through walls (a guide arrow).
+- Animation names (`animation`, `animate.clip`) must be files `Assets/Animations/<name>.fbx`; `spatial_validate` warns otherwise.
 - Panels: estimate height (≈ `size × 2.2` px + 16 px gap per text/button line at `ppm` 1000 = px per metre); the
   lowering step warns when items overflow.
 
@@ -156,3 +162,9 @@ writer at a time, and they refuse files from a newer Arsist.
   `Assets/Animations` (.fbx — the file name is the animation name; no hash suffix).
 - Minds: endpoint reachable (Mind I/O → Try) or clearly reported as untested; secret names listed for the user to fill.
 - If the project is in `samples/spatial/`: `npm test` (the samples test re-solves every sample).
+- **Check your work visually**: `arsist sim <project dir> --out <dir> --times 0,3` (or
+  `node scripts/sim/preview.mjs …`, after `npm run build:renderer`) writes one first-person PNG per space and time at
+  the device's FOV, plus `result.json` with the placements. Open a few PNGs: panels readable at that distance, nothing
+  covering the user's view, the character not blocking the panel. `--overlays` adds rule colours and solver notes,
+  `--view overview` the Space Lab angle. It is approximate (no minds, select/gaze not run; doc/22); `--engine unity`
+  runs the real runtime when Unity is available.

@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Cross-Platform Development Engine for AR Glasses",
   "main": "dist/main/main/main.js",
+  "bin": {
+    "arsist": "scripts/arsist.mjs"
+  },
   "scripts": {
     "dev": "concurrently --kill-others \"npm run dev:main\" \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
@@ -35,7 +38,8 @@
     "ext:unlink": "node scripts/ext-tools.mjs unlink",
     "ext:links": "node scripts/ext-tools.mjs links",
     "ext:override": "node scripts/ext-tools.mjs override",
-    "ir:new": "node scripts/ir-new.mjs"
+    "ir:new": "node scripts/ir-new.mjs",
+    "arsist": "node scripts/arsist.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

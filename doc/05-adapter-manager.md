@@ -106,12 +106,15 @@ The device's tags are computed in `UnityBuilder.planExtensions` from `adapter.js
 |--------|-----|--------------|
 | `listAdapters()` | `adapters:list` | Every adapter (built-in + extension): the raw `adapter.json` plus `{ folder, source: 'builtin' \| 'extension', extensionId? }` |
 | `getAdapter(adapterId)` | `adapters:get` | The adapter matching `adapterId` as a **targetDevice** (same name matching as the build), or `null`. Read fresh every time. Also used by `extensions:list` for the device's tags |
-| `applyPatch(adapterId, unityProjectPath)` | `adapters:apply-patch` | **Legacy, not used by the renderer.** Expects a `patchFiles[]` list and `buildSettings.requiredPackages` in the old `DeviceAdapter` shape; current `adapter.json` files have neither, so it returns `success: false`. It also looks in `Adapters/<adapterId>/` rather than the resolved folder |
-| `registerAdapter(adapter)` | — | Writes a new built-in adapter folder (`Manifest/`, `Scripts/`, `Packages/`, `Prefabs/`, `adapter.json`). Not called anywhere |
-| `createAdapterTemplate(deviceName, manufacturer)` | — | Skeleton in the old layout (`Manifest/AndroidManifest.xml`, `Scripts/DeviceBuildPatcher.cs`). Not called anywhere; to add a device today, copy an existing folder in `Adapters/` or use `npm run ext:new -- <id> --device <Name>` |
 
-The TypeScript interfaces in `AdapterManager.ts` (`DeviceAdapter`, `AdapterFeatures`, `AdapterBuildSettings`,
-`PatchFileInfo`) describe that old shape, not the current `adapter.json` files.
+`AdapterManager` only **reads**: applying an adapter to a build (patches, manifest, packages) is done by
+`UnityBuilder` and `ArsistBuildPipeline` (above). Folder lookup goes through `adapterDirs.ts` for every caller.
+`DeviceAdapter` in `AdapterManager.ts` types the main keys of the current `adapter.json` (`device`, `capabilities`,
+`tags`, `build`, `manifest`, `patches` …) and lets unknown keys through.
+
+The old `applyPatch` / `registerAdapter` / `createAdapterTemplate` (and the `adapters:apply-patch` IPC) were removed
+in 2026-10: they assumed an older `adapter.json` shape (`patchFiles[]`, `buildSettings.requiredPackages`), looked only
+in `Adapters/<id>/` instead of the resolved folder, and nothing called them. To add a device, see below.
 
 ---
 

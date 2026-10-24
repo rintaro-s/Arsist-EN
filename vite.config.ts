@@ -9,6 +9,13 @@ export default defineConfig({
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
+    rollupOptions: {
+      // 2 つ目の入口: ヘッドレスのプレビュー シミュレータ (scripts/sim/preview.mjs が開く。doc/22-simulation.md)
+      input: {
+        main: path.resolve(__dirname, 'src/renderer/index.html'),
+        sim: path.resolve(__dirname, 'src/renderer/sim/sim.html'),
+      },
+    },
   },
   resolve: {
     alias: {

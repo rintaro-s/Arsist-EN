@@ -38,15 +38,15 @@ const projectDir = positional[0] ? path.resolve(positional[0]) : undefined;
 if (!projectDir) fail('usage: node scripts/layster-build.mjs <spatial project dir> [--device <adapter>] [--out <dir>] [--lower-only] [--dev] [--clean]');
 if (!fs.existsSync(dist('main', 'layster', 'SpatialProjectManager.js'))) fail('dist/main is missing or old: run `npm run build:main` first');
 
-const { readSpatialProject, readSecrets } = require(dist('main', 'layster', 'SpatialProjectManager.js'));
-const { validateSpatialProject } = require(dist('shared', 'layster', 'spatial', 'validate.js'));
+const { readSpatialProject, readSecrets, validateSpatialProjectAt } = require(dist('main', 'layster', 'SpatialProjectManager.js'));
 const { lowerSpatialProject } = require(dist('shared', 'layster', 'spatial', 'lower.js'));
 
 const { project, notices } = await readSpatialProject(projectDir).catch((e) => fail(e.message));
 for (const n of notices) console.log(`[Layster] note: ${n}`);
 const device = option('--device') || process.env.ARSIST_TARGET_DEVICE || project.targetDevice;
 
-const problems = validateSpatialProject(project);
+// フォルダが分かるので、動きの名前 (Assets/Animations/*.fbx) も見る (エディタのビルドと同じ)
+const problems = await validateSpatialProjectAt(projectDir, project);
 for (const p of problems) console.log(`[Layster] ${p.level === 'error' ? 'ERROR' : 'WARNING'}: ${p.path}: ${p.message.en}`);
 if (problems.some((p) => p.level === 'error')) fail('the problems above stop the build');
 

@@ -20,7 +20,9 @@ form. When those change, update the skills too (tool names, fields and defaults 
 The skills call the `arsist` MCP tools (`spatial_*`, `ir_*`, `arsist_*`). Register the server once from the editor
 (toolbar → **Connect AI agents (MCP)** → Add for your agent), or add the JSON from `doc/09-mcp-server.md` by hand.
 `npm run build:main` must have been run so `dist/main` exists. Without MCP the skills still help: both IR files are
-plain JSON that agents may edit directly (the open editor reloads them).
+plain JSON that agents may edit directly (the open editor reloads them), and every tool can be called from a shell with
+the `arsist` CLI — `node scripts/arsist.mjs tool <name> '<json args>' --project <dir> --json` (`arsist tools` lists them;
+`doc/21-cli.md`).
 
 ## Using them with Claude Code
 

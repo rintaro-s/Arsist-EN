@@ -163,7 +163,6 @@ declare global {
       adapters: {
         list: () => Promise<any[]>;
         get: (id: string) => Promise<any>;
-        applyPatch: (id: string, path: string) => Promise<any>;
       };
       extensions?: {
         list: (targetDevice?: string) => Promise<import('./extensions/useExtensions').ExtensionListResult>;

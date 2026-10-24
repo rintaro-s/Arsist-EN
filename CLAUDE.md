@@ -36,6 +36,7 @@ npm run ext:override -- <extension folder> <path under Assets/Arsist>  # start a
 npm run ir:new -- "<説明>" ["<English>"] [--version x.y.z] # scaffold a Layster.Virtual version bump (+ migration + upgrade text)
 node scripts/layster-upgrade.mjs <dir>... [--dry-run]      # upgrade Virtual project.json files outside the editor (needs build:main)
 node scripts/layster-build.mjs <spatial dir> [--device X] [--out D] [--lower-only]   # build / lower a Layster.Spatial project
+npm run arsist -- <info|validate|new|tools|tool|solve|lower|build|devices|ext|logs|mcp|sim|config> … [--json]  # everything without the editor (doc/21-cli.md; needs build:main)
 ```
 
 Unity builds and on-device verification require a full Unity install, the `sdk/` directory, and hardware — usually

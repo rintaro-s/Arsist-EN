@@ -8,6 +8,7 @@ import { BodyInspector } from './BodyInspector';
 import { RuleInspector } from './RuleInspector';
 import { ScriptInspector } from './ScriptInspector';
 import { RecordingInspector, SettingsInspector, SpacesInspector } from './ProjectInspectors';
+import { ExtensionsInspector } from './ExtensionsInspector';
 
 export function Inspector() {
   const t = useT();
@@ -45,6 +46,7 @@ export function Inspector() {
     case 'recording': body = <RecordingInspector project={project} />; break;
     case 'settings': body = <SettingsInspector project={project} />; break;
     case 'spaces': body = <SpacesInspector project={project} />; break;
+    case 'extensions': body = <ExtensionsInspector project={project} />; break;
   }
 
   return (

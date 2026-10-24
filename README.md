@@ -251,6 +251,15 @@ node scripts/layster-build.mjs <フォルダ> --lower-only --out <出力先>    
 node scripts/layster-upgrade.mjs <フォルダ>... [--dry-run]                       # 古い Virtual のプロジェクトを今の版へ
 ```
 
+エディタの機能はまとめて `arsist` コマンドからも使えます (CI やエージェント向け。どれも `--json` 付きで JSON 1 つを返す。`doc/21-cli.md`):
+
+```bash
+npm run arsist -- info <フォルダ>                      # 種類・版・端末・数
+npm run arsist -- validate <フォルダ>                  # ビルド前の検査 (問題があれば終了コード 3)
+npm run arsist -- tool spatial_solve '{}' --project <フォルダ>   # MCP のツールをどれでも 1 つ呼ぶ (一覧は tools)
+npm run arsist -- build <フォルダ> --out <出力先>        # Virtual / Spatial どちらも APK に
+```
+
 ---
 
 ## 設計の方針

@@ -8,7 +8,8 @@
 //   frames   起動して頭が取れたら、そこを spatial の原点にする (SpatialFrames)
 //   user     頭・手・視線 (SpatialUser / SpatialGaze)
 //   world    provider が entity を書く (仮の床 + 拡張機能の provider)。推測は時間で薄れる (Core/WorldState)
-//   things   置き方を解いて置く (ThingPlacer + Core/PlacementSolver)
+//   things   置き方を解いて置く (ThingPlacer + Core/PlacementSolver)。つかんで動かす (SpatialGrab)
+//   room     本物の物の陰に隠す (SpatialOcclusion) / 仮の部屋を描く (SpatialVirtualRoom、reality = virtual-room)
 //   rules    規則 (RuleEngine)
 //   minds    Mind (MindRunner) → 行動 (ActionExecutor) → 体 (BodyLinks、安全の門)
 //   record   記録 (SpatialRecorder)
@@ -49,6 +50,9 @@ namespace Arsist.Runtime.Spatial
         public BodyLinks Bodies { get; private set; }
         public SpatialUi Ui { get; private set; }
         public SpatialRecorder Recorder { get; private set; }
+        public SpatialGrab Grab { get; private set; }
+        public SpatialOcclusion Occlusion { get; private set; }
+        public SpatialVirtualRoom VirtualRoom { get; private set; }
 
         /// <summary>動き出してからの秒</summary>
         public double Now => Time.realtimeSinceStartup - _startTime;
@@ -109,6 +113,9 @@ namespace Arsist.Runtime.Spatial
             Bodies = new BodyLinks(this);
             Recorder = new SpatialRecorder(this);
             Rules = new RuleEngine(this);
+            Grab = new SpatialGrab(this);
+            Occlusion = new SpatialOcclusion(this);
+            VirtualRoom = new SpatialVirtualRoom(this);
             // パネルのボタン: 鳴ったら select も配る
             foreach (var t in Model.Things)
                 foreach (var pair in t.Bindings)
@@ -201,6 +208,9 @@ namespace Arsist.Runtime.Spatial
             }
             if (Settling && Now > ThingPlacer.SettleSeconds) EndSettle("time");
             Placer.Tick();
+            Grab.Tick();
+            Occlusion.Tick();
+            VirtualRoom.Tick();
             Rules.Tick();
             Minds.Tick();
             Bodies.Tick();

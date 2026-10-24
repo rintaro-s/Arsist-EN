@@ -181,9 +181,13 @@ visual:
   { kind: 'marker' }                                        // 見えない目印 (他の物の基準・ロボットの根元)
 ```
 
-物にはほかに `visibleAtStart` (既定 true。false なら `show` で出る)・`occlusion` (`auto` / `off`)・`grabbable`・`tags`・
-`ext` (拡張機能ごとの指定。Virtual の `SceneObject.ext` と同じ) がある。**`occlusion` と `grabbable` はエディタで書けるが、
-ランタイムはまだ読むだけで何もしない。**
+物にはほかに `visibleAtStart` (既定 true。false なら `show` で出る)・`occlusion`・`grabbable`・`tags`・
+`ext` (拡張機能ごとの指定。Virtual の `SceneObject.ext` と同じ。エディタでは物の「拡張機能」の欄) がある。
+
+| 項目 | 意味 (ランタイムは doc/20 §3.2・§4.1) |
+|---|---|
+| `occlusion` | `auto` (既定) = 部屋の形を出す provider (`ISpatialOccluderSource`、見本は `quest-room`) があれば、本物の壁・家具の向こうで隠れる。`off` = 隠れない。provider が無い端末では何も隠れない |
+| `grabbable` | `true` = コントローラーのグリップか、手でつまんでつかみ、動かせる (遠くはレイで)。離した所が新しい置き場所 (`keep: forever` なら覚え直す)。出来事 `grabbed` / `released` (と `grabbed:<id>` / `released:<id>`)。`mode: head` / `hand` の物はつかめない (validate が知らせる) |
 
 置き方は**条件**で書く。座標で書くのは最後の手段。
 
@@ -217,7 +221,7 @@ visual:
 | `avoid` | 離しておく物 (thing の id か言葉)。0.3 m 以上 |
 | `prefer` | 候補の選び方 `closest` (既定) / `farthest` / `largest` / `center` / `inView`。距離の基準は `near` の点 (無ければユーザー) |
 | `fallback` | 解けなかったときに順に試す、別の置き方 |
-| `keep` | `none` (世界が変わるたびに解き直す) / `session` (起動中は動かない、既定) / `forever` (載せた面からの相対位置を端末の store `layster.place.<id>` に覚え、次の起動でその面があれば同じ場所。空間アンカーはまだ使っていない。doc/20 §4) |
+| `keep` | `none` (世界が変わるたびに解き直す) / `session` (起動中は動かない、既定) / `forever` (載せた面からの相対位置を端末の store `layster.place.<id>` に覚え、次の起動でその面があれば同じ場所。面の id が起動をまたいで同じなのは provider の約束 (quest-room は MRUK のアンカーの UUID) なので、別の空間アンカーは使わない。ユーザーがつかんで動かしたら、離した所で覚え直す。doc/20 §4) |
 
 **解き方** (`src/shared/layster/spatial/solver.ts`、ランタイムは同じ計算の C# 版。同じ表で確かめる):
 
@@ -422,8 +426,12 @@ Spatial の IR には端末の名前が出てこない。端末ごとの違い�
 | Mind の推測 | belief | エンジン |
 
 拡張機能は `ArsistExtensionContext.Spatial.AddProvider(...)` で provider を足す (doc/20 §3)。拡張機能を使うには
-`project.spatial.json` の `extensions.<id>` で有効にする (Spatial のエディタにはまだその画面が無い。samples/spatial は
-`quest-room` を有効にしているので、`npm run ext:link -- samples/extensions` してからビルドする。入っていなければビルドが止まる)。
+`project.spatial.json` の `extensions.<id>` で有効にする (形は Virtual と同じ `{ enabled, dataVersion, settings }`)。エディタでは
+左の一覧の「プロジェクト → 拡張機能」で有効にし、設定を書く (入力欄は extension.json から作る。Virtual と同じ部品)。物ごとの指定
+(`ext.<id>`) は物のインスペクタの「拡張機能」。エージェントは `spatial_set_settings` の `extensions`。
+**開くとき・ビルドするときに、有効にした拡張機能と端末 (`targetDevice`) がこのエディタにあるかを確かめる** (Virtual と同じ
+`checkProjectRequirements`)。足りなければ開かずに、読み込む画面 (MissingRequirementsDialog) を出す。samples/spatial は
+`quest-room` を有効にしているので、`npm run ext:link -- samples/extensions` してから開く。
 端末が足りなくても置き方は fallback で必ず解けるので、IR は端末を変えてもそのまま使える (見え方の質が変わるだけ)。
 ビルドの端末は今 Meta Quest と XREAL One を選べるが、作って確かめたのは Quest 向けの APK だけ。
 
@@ -435,7 +443,7 @@ Spatial の IR には端末の名前が出てこない。端末ごとの違い�
 |---|---|---|
 | エディタ | 今までの画面 (`MainLayout`) | 作り直した画面 (`src/renderer/spatial/`): 左 = 物・Mind・体・規則・スクリプト・記録・空間・設定、真ん中 = Space Lab、右 = 置き方を文のように組むインスペクタ、下 = 世界の状態・Mind の入出力 (その場で Mind を試せる)・問題 |
 | main | `ProjectManager` | `src/main/layster/SpatialProjectManager.ts` + IPC `spatial:*` |
-| エージェント | MCP の今の道具 (`ir_*`) | `spatial_*` の 14 個 (同じ MCP サーバー、`src/main/mcp/spatialTools.ts`): `spatial_reference` / `spatial_create_project` / `spatial_get_project` / `spatial_get` / `spatial_set_{thing,mind,body,rule,script}` / `spatial_remove` / `spatial_set_settings` / `spatial_validate` / `spatial_solve` / `spatial_list_spaces`。`arsist_open_project` はフォルダの形を見て、どちらの道具を使うかを返す |
+| エージェント | MCP の今の道具 (`ir_*`) | `spatial_*` の 14 個 (同じ MCP サーバー、`src/main/mcp/spatialTools.ts`): `spatial_reference` / `spatial_create_project` / `spatial_get_project` / `spatial_get` / `spatial_set_{thing,mind,body,rule,script}` / `spatial_remove` / `spatial_set_settings` / `spatial_validate` / `spatial_solve` / `spatial_list_spaces`。`arsist_open_project` はフォルダの形を見て、どちらの道具を使うかを返す。`spatial_validate`・エディタのビルド・`scripts/layster-build.mjs` はフォルダが分かるので、`validateSpatialProject` に加えて動きの名前 (キャラクターの `animation`・`animate` の `clip` / `then`・スクリプトの `vrm.playAnimation`) が `Assets/Animations/*.fbx` にあるかも見る (`checkSpatialAnimations`。warning) |
 | 第3層への書き出し | `UnityBridge` | `src/shared/layster/spatial/lower.ts` — 物を Unity のシーンの物と UI に、残りを `spatial.json` に書き出す。ビルドの機械 (`UnityBuilder`・端末の adapter・拡張機能) は共有 |
 | ランタイム | 今までどおり | `Runtime/Spatial/` — `Core/` (UnityEngine 非依存: 世界の状態・置き方・行動・安全・Mind の要求と返事・記録の形式。`npm run test:perception` で確かめる) と、それを端末で動かす `ArsistSpatialRuntime` |
 
@@ -475,6 +483,7 @@ Virtual と同じ実績のある道を通る。
   "name": "…",
   "edge": "192.168.0.23:8000",          // app.edge (無ければ "")
   "presentation": { … }, "interaction": { … },
+  "virtualRoom": { "background", "floor", "grid", "gridCell", "wall", "furniture", "edge" },   // reality が virtual-room のときだけ (virtualRoom.ts)
   "vocabulary": [ { "word", "synonyms", "has", "vertical", "structural", "broader" } ],   // vocabularyForRuntime()
   "things": [ {
     "id", "name", "kind",                 // kind = visual.kind
@@ -495,7 +504,12 @@ Virtual と同じ実績のある道を通る。
 }
 ```
 
-`presentation.reality: "virtual-room"` は今は背景を暗い単色にするだけ (仮の部屋はまだ描かない)。
+`presentation.reality: "virtual-room"` は背景を暗い単色にし (`arSettings.backgroundMode = solidColor`)、ランタイムが世界の状態から
+**仮の部屋** (床の格子・壁・家具の箱、控えめな色) を描く (doc/20 §3.3)。何をどの色で描くかは
+`src/shared/layster/spatial/virtualRoom.ts` だけで決め、エディタの 3D (Space Lab) も同じ見た目で見せる。
+
+`app.logRelay` (`{ enabled, port? }`、省略 = 有効) は `arSettings.logRelay` になり、実機のログをビルドした PC へ LAN で流す
+(doc/13。Virtual と同じ)。新しいプロジェクトは有効。有効な間は validate が warning を出す (配る APK では切る)。
 
 物の「前」は箱のローカル +Z。`facing: "user"` は +Z をユーザーに向ける。Unity の Canvas は +Z の側から見ると
 読めるので、ランタイムはパネル・札だけ 180° 回して置く。キャラクターは `ArsistCharacter.Forward` (VRM の顔の向き) を +Z とみなす。
@@ -513,8 +527,9 @@ Virtual と同じ実績のある道を通る。
 3. Spatial のエディタ、プロジェクトの作成・読み書き、エージェントの道具 ← 済
 4. ランタイム (世界の状態・置き方・Mind・行動・体・記録) とビルド ← 済 (Quest 向けの APK ができるところまで。
    **実機では一度も動かしていない**。XREAL 向けのビルドは選べるが試していない)
-5. 実機での確認、実機の部屋を空間として取り込む、記録の再生、端末内 (ONNX) の Mind、物の `occlusion` / `grabbable`、
-   `virtual-room` の仮の部屋、Spatial のエディタで拡張機能を有効にする画面、開くときの拡張機能の確認 ← 次
+5. 物の `occlusion` / `grabbable`、`virtual-room` の仮の部屋、Spatial のエディタで拡張機能を有効にする画面、
+   開くときの拡張機能の確認、ログの中継の設定、動きの名前の確認 ← 済 (ビルドまで。実機ではまだ)
+6. 実機での確認、実機の部屋を空間として取り込む、記録の再生、端末内 (ONNX) の Mind ← 次
 
 ### やらないこと
 

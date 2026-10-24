@@ -104,7 +104,6 @@ declare const electronAPI: {
     adapters: {
         list: () => Promise<any>;
         get: (adapterId: string) => Promise<any>;
-        applyPatch: (adapterId: string, projectPath: string) => Promise<any>;
     };
     extensions: {
         list: (targetDevice?: string) => Promise<any>;

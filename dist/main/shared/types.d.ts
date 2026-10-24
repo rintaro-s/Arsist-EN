@@ -84,6 +84,11 @@ export interface InteractionSettings {
 export interface ARSettings {
     trackingMode: TrackingMode;
     presentationMode: PresentationMode;
+    /**
+     * 未使用 (予約)。manifest には載るが、Unity のビルドも実機も読まない。常に 1 のまま置いておく。
+     * シーンの根を拡大縮小すると、スクリプト・リモート操作・ライブ配置・画像アンカーがすべて
+     * 「1 単位 = 1 m」で書いた座標とずれるため、実装していない (doc/01)。
+     */
     worldScale: number;
     defaultDepth: number;
     floatingScreen?: {
@@ -594,7 +599,7 @@ export interface ModelDefinition {
     /** ONNX ファイル (プロジェクト相対、Assets/Models/ 以下) */
     file: string;
     format: 'onnx';
-    /** 何に使うか (IR v3)。これで下のどの項目を読むかが決まる */
+    /** 何に使うか (α3〜)。これで下のどの項目を読むかが決まる */
     use: ModelUse;
     task?: ModelTask;
     input?: ModelInputSpec;
@@ -672,13 +677,13 @@ export interface SceneObject {
     material?: MaterialData;
     children?: SceneObject[];
     /**
-     * 拡張機能ごとの指定 (IR v4〜)。キーは拡張機能の id (Extensions/<id>/extension.json)、
+     * 拡張機能ごとの指定 (α4〜)。キーは拡張機能の id (Extensions/<id>/extension.json)、
      * 中身はその拡張機能の data.object の項目。エンジン本体は中身を解釈せず、そのまま
      * Unity に渡す (実機では ArsistObjectExt から引ける)。src/shared/extensions.ts。
      */
     ext?: Record<string, Record<string, unknown>>;
     /**
-     * キャラクターとしての振る舞い (type === 'vrm'、IR v5〜)。無ければ v4 までと同じ (動かない)。
+     * キャラクターとしての振る舞い (type === 'vrm'、α5〜)。無ければ α4 までと同じ (動かない)。
      * エディタで新しく置いた VRM には CHARACTER_DEFAULTS が入る。
      */
     character?: CharacterSettings;
@@ -758,7 +763,7 @@ export interface UIElement {
     style: UIStyle;
     children: UIElement[];
     /**
-     * 文字を「書いていくように」出す (Text / Button の文字、IR v5〜)。
+     * 文字を「書いていくように」出す (Text / Button の文字、α5〜)。
      * 文字が変わるたびに、先頭から 1 文字ずつ現れる。無ければ一度に出す。
      */
     reveal?: TextReveal;
@@ -888,12 +893,12 @@ export interface ArsistProject {
     /** 画像処理パイプラインの `infer` op が使う学習済みモデル (省略可) */
     models?: ModelDefinition[];
     /**
-     * 有効にした拡張機能と、その設定 (IR v4〜)。キーは拡張機能の id。
+     * 有効にした拡張機能と、その設定 (α4〜)。キーは拡張機能の id。
      * 拡張機能のデータの形は拡張機能ごとに版を持ち (dataVersion)、IR 本体の版とは独立に移行する。
      * src/shared/extensions.ts / doc/17-extensions.md。
      */
     extensions?: Record<string, ProjectExtensionState>;
-    /** 端末に保存する値 (IR v5〜)。無ければ何も保存しない */
+    /** 端末に保存する値 (α5〜)。無ければ何も保存しない */
     storage?: StorageSettings;
 }
 /**

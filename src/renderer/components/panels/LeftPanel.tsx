@@ -381,7 +381,8 @@ function LayoutSection({ label, layouts, currentId, onSelect, onAdd, onRemove, m
    DataFlow List
    ════════════════════════════════════════ */
 
-function DataFlowList() {
+// 未使用: DataFlowEditor.tsx の冒頭を参照 (実機の DataFlow が止まっている間は画面に出さない)
+export function DataFlowList() {
   const t = useT();
   const {
     project, selectedDataSourceId, selectDataSource, removeDataSource,

@@ -42,6 +42,10 @@ namespace Arsist.Runtime.Spatial
         public bool WantVisible = true;
         /// <summary>world に置いた物の、spatial の姿勢 (箱の中心)。head / hand は毎フレーム更新</summary>
         public SpatialPose Pose;
+        /// <summary>ユーザーがつかんでいる (SpatialGrab)。この間は解き直さない・動かさない</summary>
+        public bool Held;
+        /// <summary>ユーザーが動かして置いた。もう自動では解き直さない (keep: none / mode: body も)。place の行動・world.place では動く</summary>
+        public bool UserPlaced;
 
         internal bool AppliedVisible = true;
         internal double NextVisibilityRefresh;
@@ -150,15 +154,16 @@ namespace Arsist.Runtime.Spatial
                 else
                 {
                     foreach (var b in Bindings)
-                        if (b.Def.Place.Keep == "none" && !b.IsAttached) Resolve(b, null, "world changed", animate: true);
+                        if (b.Def.Place.Keep == "none" && !b.IsAttached && !b.Held && !b.UserPlaced) Resolve(b, null, "world changed", animate: true);
                 }
             }
 
             foreach (var b in Bindings)
             {
                 if (b.Root == null) continue;
+                if (b.Held) { RefreshVisibility(b, now); continue; }
                 if (b.Def.Kind == "character") TrackCharacter(b);
-                if (b.Placed && b.Result.Mode == "body") FollowBody(b);
+                if (b.Placed && b.Result.Mode == "body" && !b.UserPlaced) FollowBody(b);
                 if (b.IsAttached) FollowAttached(b);
                 else if (b.Moving) StepMove(b);
                 RefreshVisibility(b, now);
@@ -181,8 +186,8 @@ namespace Arsist.Runtime.Spatial
             var toSolve = new List<ThingDef>();
             foreach (var b in Bindings)
             {
-                // 前の起動の場所に戻した物は、もう解き直さない (待ち時間の間に何度も解くので)
-                if (b.KeptRestored && b.Placed)
+                // 前の起動の場所に戻した物・ユーザーが置いた物・つかんでいる物は、もう解き直さない (待ち時間の間に何度も解くので)
+                if ((b.KeptRestored || b.UserPlaced || b.Held) && b.Placed)
                 {
                     world.SetThing(b.Def.Id, new PlacedThing { Pose = b.Pose, Size = b.Def.Size });
                     continue;
@@ -202,6 +207,13 @@ namespace Arsist.Runtime.Spatial
         public SolveResult Resolve(ThingBinding b, Placement place, string why, bool animate)
         {
             if (b == null) return null;
+            if (b.Held)
+            {
+                Debug.Log($"[Layster] {b.Def.Id} is held by the user; not re-placed ({why})");
+                return b.Result;
+            }
+            // 明示して置き直す (place の行動・world.place) なら、ユーザーが置いた場所より優先する
+            b.UserPlaced = false;
             var world = CurrentWorld(b.Def.Id);
             var result = _solver.Solve(b.Def.Id, b.Def.Size, place ?? b.Def.Place, world);
             Apply(b, result, why, animate);
@@ -211,9 +223,48 @@ namespace Arsist.Runtime.Spatial
         /// <summary>姿勢を直接決める (place の行動の at、ユーザーがつかんで動かした後など)。</summary>
         public void PlaceAt(ThingBinding b, SpatialPose pose, string why, bool animate)
         {
-            if (b == null) return;
+            if (b == null || b.Held) return;
+            b.UserPlaced = false;
             var result = new SolveResult { Thing = b.Def.Id, Mode = "world", Frame = "world", Pose = pose, Rule = 0 };
             Apply(b, result, why, animate);
+        }
+
+        // ========================================
+        // つかむ (SpatialGrab)
+        // ========================================
+
+        /// <summary>つかんでいる間、毎フレーム。姿勢をそのまま Unity に置く (動かしている途中のアニメーションは止める)。</summary>
+        public void HoldAt(ThingBinding b, SpatialPose pose)
+        {
+            if (b == null) return;
+            b.Pose = pose;
+            b.Moving = false;
+            var target = b.Target;
+            if (target == null) return;
+            UnityPose(b, pose, out var position, out var rotation);
+            target.transform.SetPositionAndRotation(position, rotation);
+        }
+
+        /// <summary>
+        /// 離した。そこを新しい置き場所にする (載っている面 = host)。keep: forever なら、その面からの相対位置を覚え直す
+        /// (スキャンした面に載っていなければ、覚えた場所を消す: 次の起動では置き方どおりに解く)。
+        /// </summary>
+        public void Released(ThingBinding b, SpatialPose pose, string host)
+        {
+            if (b == null) return;
+            b.Held = false;
+            b.UserPlaced = true;
+            var result = new SolveResult { Thing = b.Def.Id, Mode = "world", Frame = "world", Pose = pose, Rule = b.Result?.Rule ?? 0, Host = host };
+            result.Notes.Add("moved by the user");
+            Apply(b, result, "released", animate: false);
+            if (b.Def.Place.Keep != "forever") return;
+            b.KeepSaved = false;
+            SaveKept(b);
+            if (!b.KeepSaved)
+            {
+                ArsistDataStore.Instance.RemoveValue(KeepPrefix + b.Def.Id);
+                Debug.Log($"[Layster] {b.Def.Id}: not kept for the next launch (it does not stand on a scanned surface)");
+            }
         }
 
         private void Apply(ThingBinding b, SolveResult result, string why, bool animate)

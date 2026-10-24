@@ -76,6 +76,12 @@ export interface UnityBuildConfig {
    * 通常は false（差分ビルド）でよい。キャッシュ由来の不整合を疑うときの逃げ道。
    */
   cleanBuild?: boolean;
+
+  /**
+   * シミュレーター (doc/22-simulation.md、scripts/sim/unity.mjs)。作業用プロジェクトの準備は同じで、最後に APK の代わりに
+   * Linux のプレイヤー (playerPath) を作る。ヘッドセットが無いので端末の SDK は入れない (SDK を要る拡張機能も入らない)。
+   */
+  simulation?: { playerPath: string };
 }
 
 /** 差分同期時に「不要になったファイル」をどこまで消すか。 */
@@ -545,7 +551,8 @@ export class UnityBuilder extends EventEmitter {
 
       // Phase 3.5: 必須SDKをUnityプロジェクトへ組み込み
       this.emitProgress('sdk', 40, '必須SDKを確認/組み込み中...');
-      await this.integrateRequiredSdks(unityProjectPath, config.targetDevice);
+      if (!config.simulation) await this.integrateRequiredSdks(unityProjectPath, config.targetDevice);
+      else await this.syncSimulationDefines(unityProjectPath);
 
       // Phase 3.52: 拡張機能の C# と Android の宣言を入れる (SDK を入れた後: 拡張機能が SDK を直接使うため)
       this.emitProgress('extensions', 42, '拡張機能を組み込み中...');
@@ -1367,6 +1374,46 @@ export class UnityBuilder extends EventEmitter {
     if (!wanted && has) symbols.splice(symbols.indexOf(define), 1);
     if (has === wanted) return assetText;
     lines[androidLine] = `    Android: ${symbols.join(';')}`;
+    return lines.join('\n');
+  }
+
+  /**
+   * シミュレーター: Linux のプレイヤーの define を Android と同じにする (端末の SDK の define は除く)。
+   * Unity が起きたときのコンパイルに効くよう、起動前に ProjectSettings.asset を直す (syncInferenceDefine と同じ理由)。
+   */
+  private async syncSimulationDefines(workingDir: string): Promise<void> {
+    const settingsPath = path.join(workingDir, 'ProjectSettings', 'ProjectSettings.asset');
+    if (!await fs.pathExists(settingsPath)) return;
+    const before = await fs.readFile(settingsPath, 'utf8');
+    const after = UnityBuilder.simulationDefines(before);
+    if (after !== before) {
+      await fs.writeFile(settingsPath, after, 'utf8');
+      this.emit('log', '[Arsist] simulation: Standalone scripting defines synced from Android');
+    }
+  }
+
+  /** scriptingDefineSymbols の Standalone の行を、Android の行から端末の SDK の define を抜いたものにする (純粋な文字列処理)。 */
+  static simulationDefines(assetText: string): string {
+    const deviceOnly = new Set(['ARSIST_XREAL', 'ARSIST_META_QUEST', 'XR_HANDS']);
+    const lines = assetText.split('\n');
+    const at = lines.findIndex((l) => /^\s*scriptingDefineSymbols:/.test(l));
+    if (at < 0 || /scriptingDefineSymbols:\s*\{\}\s*$/.test(lines[at])) return assetText;
+    let android = '';
+    let standaloneLine = -1;
+    let end = at + 1;
+    for (; end < lines.length; end++) {
+      if (!/^\s{4}\S/.test(lines[end])) break;
+      if (/^\s{4}Android:/.test(lines[end])) android = lines[end].replace(/^\s{4}Android:\s*/, '').trim();
+      if (/^\s{4}Standalone:/.test(lines[end])) standaloneLine = end;
+    }
+    const symbols = android.split(';').map((x) => x.trim()).filter((x) => x && !deviceOnly.has(x));
+    const line = `    Standalone: ${symbols.join(';')}`;
+    if (standaloneLine >= 0) {
+      if (lines[standaloneLine] === line) return assetText;
+      lines[standaloneLine] = line;
+    } else {
+      lines.splice(end, 0, line);
+    }
     return lines.join('\n');
   }
 
@@ -2793,7 +2840,7 @@ export class UnityBuilder extends EventEmitter {
       this.emit('log', '[Arsist] WARNING: Android SDK not detected. Set ANDROID_HOME or install Android Studio.');
     }
 
-    if (config.buildTarget === 'Android') {
+    if (config.buildTarget === 'Android' && !config.simulation) {
       const gradle = await this.detectGradle();
       if (gradle) {
         this.emit('log', `[Arsist] Gradle detected: ${gradle}`);
@@ -2843,8 +2890,10 @@ export class UnityBuilder extends EventEmitter {
         ...(options?.noGraphics === false ? [] : ['-nographics']),
         '-quit',
         '-projectPath', this.normalizeOsPath(unityProjectPath),
-        '-executeMethod', 'Arsist.Builder.ArsistBuildPipeline.BuildFromCLI',
-        '-buildTarget', config.buildTarget,
+        ...(config.simulation
+          ? ['-executeMethod', 'Arsist.Builder.Simulation.ArsistSimBuild.BuildFromCLI', '-buildTarget', 'Linux64',
+            '-arsist-sim-player', this.normalizeOsPath(config.simulation.playerPath)]
+          : ['-executeMethod', 'Arsist.Builder.ArsistBuildPipeline.BuildFromCLI', '-buildTarget', config.buildTarget]),
         '-outputPath', this.normalizeOsPath(config.outputPath),
         '-targetDevice', config.targetDevice,
         '-developmentBuild', config.developmentBuild ? 'true' : 'false',
@@ -3036,6 +3085,11 @@ export class UnityBuilder extends EventEmitter {
     config: UnityBuildConfig,
     options?: { sinceEpochMs?: number },
   ): Promise<string | null> {
+    if (config.simulation) {
+      const player = config.simulation.playerPath;
+      const stat = await fs.stat(player).catch(() => null);
+      return stat && stat.mtimeMs >= (options?.sinceEpochMs ?? 0) - 2000 ? player : null;
+    }
     const projectName = (config.manifestData as any)?.projectName as string | undefined;
     const possibleOutputs = [
       path.join(config.outputPath, `${path.basename(config.projectPath)}.apk`),
@@ -3231,7 +3285,8 @@ export class UnityBuilder extends EventEmitter {
         this.emit('log', `[Arsist] WARNING: could not read ${path.join(adapterDir, 'adapter.json')}: ${(e as Error).message}`);
       }
     }
-    const sdkTags = await this.detectSdkTags(config.targetDevice);
+    // シミュレーターには端末の SDK が入らない (UniVRM のタグだけ残る)
+    const sdkTags = await this.detectSdkTags(config.simulation ? '' : config.targetDevice);
     const deviceTags = uniqueTags([...deviceTagsFromAdapter, ...sdkTags]);
 
     // 機能の判定には UI の中身とスクリプトが要る (manifest にはレイアウトの名前しか無い)

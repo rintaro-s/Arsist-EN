@@ -10,10 +10,11 @@ import { create } from 'zustand';
 import type { SpaceFixture, SpatialProject } from '../../shared/layster/spatial/types';
 import { BUILTIN_SPACES, DEFAULT_SPACE_IDS } from '../../shared/layster/spatial/spaces';
 import { spatialApi } from './api';
+import { useProjectStore } from '../stores/projectStore';
 
 export type SpatialSelection =
   | { kind: 'thing' | 'mind' | 'body' | 'rule' | 'script'; id: string }
-  | { kind: 'recording' | 'settings' | 'spaces' }
+  | { kind: 'recording' | 'settings' | 'spaces' | 'extensions' }
   | null;
 
 export type BottomTab = 'world' | 'mind' | 'problems';
@@ -156,6 +157,11 @@ export const useSpatialStore = create<SpatialState>((set, get) => ({
     const api = spatialApi();
     if (!path || !api) return;
     const result = await api.load(path);
+    if (result.error === 'requirementsMissing') {
+      // 外 (エージェント) で、このエディタに無い拡張機能が有効にされた。開き直す画面を出す (今の中身はそのまま)
+      useProjectStore.setState({ missingRequirements: { path, missing: result.missing ?? [] } });
+      return;
+    }
     if (!result.success || !result.project) {
       set({ status: { type: 'error', key: 'spatial.status.loadFailed', params: { error: result.error ?? '' } } });
       return;

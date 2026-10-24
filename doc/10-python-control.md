@@ -73,8 +73,15 @@ Response shape:
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_ids()` | `Dict` (annotated `List[str]`) | `query/getIds` → `{ vrmIds: [...], sceneIds: [...] }` |
-| `get_capabilities(avatar_id)` | `Dict` | `query/getCapabilities` → the device's `VRMCapabilities` (`Id`, `Expressions`, `HumanoidBones`, `HasHumanoid`, `Position`, `Rotation`, `Scale`) |
+| `get_ids()` | `Dict[str, List[str]]` | `query/getIds` → `{ "vrmIds": [...], "sceneIds": [...] }` (both keys always present) |
+| `get_vrm_ids()` | `List[str]` | just `get_ids()["vrmIds"]` |
+| `get_capabilities(avatar_id)` | `Dict` | `query/getCapabilities` → the device's `VRMCapabilities`, normalised by `normalize_capabilities` to camelCase keys `id`, `error`, `expressions`, `humanoidBones`, `hasHumanoid`, `position`, `rotation`, `scale` |
+
+The device serialises `VRMCapabilities` with Json.NET's default names, i.e. **PascalCase** (`Expressions`,
+`HumanoidBones`, …; `ArsistWebSocketServer` uses `JToken.FromObject`). The device side is left as is so existing
+clients keep working; `Control.py` adds the camelCase keys next to the original ones, so code reading either
+spelling works. `run_demo` lists `vrmIds` and warns when `--avatar-id` is not one of them or the device reports an
+`error` (unregistered VRM).
 | `get_state(object_id)` | `Dict` | `query/getState` — current state of an object |
 | `ping()` | `Dict` | `query/ping` → `{ pong: true, timestamp }` |
 
@@ -149,8 +156,8 @@ The generated script:
 
 ---
 
-Note: the generated script imports `ArsistControl` from `python.arsist_controller`, which defines
-`ArsistRemoteController` instead — fix the import line before running it.
+The generated script does `from Control import ArsistControl`, so run it from `python/` (or put `python/` on
+`PYTHONPATH`). It accepts capabilities in either key spelling (`normalize_capabilities`).
 
 ---
 
@@ -180,7 +187,7 @@ python Control.py --device 192.168.0.24 --port 8765 --password mysecret --verbos
 | `--device` | `$ARSIST_DEVICE_IP` or `localhost` | Device IP address |
 | `--port` | `$ARSIST_DEVICE_PORT` or `8765` | WebSocket port |
 | `--demo` | — | Run adaptive demo |
-| `--list-ids` | — | Print registered VRM IDs |
+| `--list-ids` | — | Print registered VRM IDs and scene object IDs |
 | `--avatar-id` | `avatar` | Target avatar for demo/sample |
 | `--generate-sample` | — | Print auto-generated sample script |
 | `--password` | `$ARSIST_DEVICE_PASSWORD` or empty (warns, connects without auth) | Auth password |

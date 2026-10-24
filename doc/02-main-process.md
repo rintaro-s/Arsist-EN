@@ -28,12 +28,16 @@ The editor only registers Arsist in agents' settings and self-tests the launch c
 | `projectManager` | `ProjectManager \| null` | Created on the first `project:create` / `project:load` |
 | `unityBuilder` | `UnityBuilder \| null` | Created on demand; re-created when the Unity path changes |
 | `adapterManager` | `AdapterManager \| null` | Created on the first adapter query |
-| `currentProjectPathForAssets` | `string \| null` | Root of the open **Virtual** project: `arsist-file://` origin check, default project for `model:*` / `vision:preview`, project path given to the AI IPC |
+| `currentProjectPathForAssets` | `string \| null` | Root of the open project, **Virtual or Spatial**: `arsist-file://` origin check, default project for `model:*` / `vision:preview`, project path given to the AI IPC |
 | `projectWatcher` | `ProjectWatcher` | Watches the open Virtual project (`project.json`, `Scenes/`, `UI/`) |
 | `store` | `electron-store` | Persistent app settings (see below) |
 | `quitting` | `boolean` | Set once shutdown has started |
 
-The open **Spatial** project's folder is kept separately in `spatialIpc.ts` (`currentSpatialProjectDir()`).
+The open **Spatial** project's folder is also kept in `spatialIpc.ts` (`currentSpatialProjectDir()`). The two sides
+switch together: opening/creating a Virtual project calls `openedVirtualProject` (→ `forgetSpatialProject()` stops the
+Spatial watcher and clears its folder, then the Virtual `projectWatcher` starts); opening/creating a Spatial project
+calls the `onOpened` hook passed to `registerSpatialIpc` (→ `openedSpatialProject`: the Virtual `projectWatcher` is
+closed and `currentProjectPathForAssets` points at the Spatial folder).
 
 ---
 
@@ -44,7 +48,7 @@ Defaults declared in `main.ts`:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `unityPath` | `''` | Absolute path to the Unity editor binary |
-| `unityVersion` | `'2022.3.20f1'` | Minimum version `unity:validate` accepts (actual ≥ this passes); the template project itself is pinned in `ProjectVersion.txt` (Unity 6) |
+| `unityVersion` | `'6000.0.40f1'` | Minimum version `unity:validate` accepts (actual ≥ this passes); same as the template's `ProjectVersion.txt` and README. Stores created before 2026-10 may still hold `'2022.3.20f1'` |
 | `recentProjects` | `[]` | Last 5 opened project folders (Virtual and Spatial) |
 | `theme` | `'dark'` | UI colour theme |
 | `layoutSettings` | `{leftPanelWidth:280, rightPanelWidth:320, bottomPanelHeight:200}` | Panel sizes |
@@ -151,7 +155,6 @@ except `detect` / `create` / `load` works on the currently open Spatial project.
 |---------|------|---------|
 | `adapters:list` | — | adapter.json contents + `{ folder, source, extensionId? }`, built-in and extension adapters |
 | `adapters:get` | `adapterId` (= targetDevice) | one adapter or `null` |
-| `adapters:apply-patch` | `adapterId, projectPath` | `{ success, appliedPatches, error? }` — legacy, unused by the renderer (`doc/05`) |
 
 ### Extensions
 
@@ -261,7 +264,7 @@ window.electronAPI
 ├── vision.{preview}
 ├── device.{list, install, onInstallLog}
 ├── unity.{setPath, getPath, detectGradle, build, cancelBuild, validate, detectPaths, onBuildProgress, onBuildLog}
-├── adapters.{list, get, applyPatch}
+├── adapters.{list, get}
 ├── extensions.{list, openUserDir, import, install, uninstall, linkFolder, readme, openDir, unlinkFolder, export}
 ├── fs.{readFile, writeFile, selectDirectory, selectFile, exists}
 ├── sdk.{getDir, setDir, xrealStatus, questStatus, bundledDeps}

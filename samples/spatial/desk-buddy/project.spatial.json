@@ -13,6 +13,7 @@
     {
       "id": "card",
       "name": "問題カード",
+      "grabbable": true,
       "visual": {
         "kind": "panel", "size": [0.38, 0.36], "background": "#F4EFE6F0", "padding": 20,
         "items": [

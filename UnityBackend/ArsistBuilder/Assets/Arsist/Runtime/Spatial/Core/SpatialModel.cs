@@ -518,6 +518,8 @@ namespace Arsist.Runtime.Spatial.Core
         public string Edge = "";
         public string Reality = "passthrough";
         public double AssumedEyeHeight = 1.5;
+        /// <summary>reality が virtual-room のときの仮の部屋の色 (src/shared/layster/spatial/virtualRoom.ts)。無ければ null</summary>
+        public Dictionary<string, object> VirtualRoom;
         public bool Controllers = true;
         public bool Hands = true;
         public Vocabulary Vocabulary = new Vocabulary();
@@ -560,6 +562,7 @@ namespace Arsist.Runtime.Spatial.Core
             var presentation = J.Obj(root, "presentation");
             model.Reality = J.Str(presentation, "reality", "passthrough");
             model.AssumedEyeHeight = J.Num(presentation, "assumedEyeHeight", 1.5);
+            model.VirtualRoom = J.Obj(root, "virtualRoom");
             var interaction = J.Obj(root, "interaction");
             model.Controllers = J.Bool(interaction, "controllers", true);
             model.Hands = J.Bool(interaction, "hands", true);

@@ -135,6 +135,30 @@ describe('lowerSpatialProject', () => {
   });
 });
 
+describe('project settings that reach the build', () => {
+  it('passes the log relay setting to arSettings (on by default, off when turned off)', () => {
+    const on = lowerSpatialProject(project([newThing('panel', 'p')]));
+    expect((on.manifestData.arSettings as { logRelay?: unknown }).logRelay).toEqual({ enabled: true });
+    const p = project([newThing('panel', 'p')]);
+    p.app.logRelay = { enabled: false, port: 9800 };
+    const off = lowerSpatialProject(p);
+    expect((off.manifestData.arSettings as { logRelay?: unknown }).logRelay).toEqual({ enabled: false, port: 9800 });
+    // 古いプロジェクト (logRelay が無い) は何も書かない = UnityBuilder の既定 (有効)
+    const old = project([newThing('panel', 'p')]);
+    delete old.app.logRelay;
+    expect((lowerSpatialProject(old).manifestData.arSettings as { logRelay?: unknown }).logRelay).toBeUndefined();
+  });
+
+  it('sends the virtual-room style only when reality is virtual-room', () => {
+    const p = project([newThing('panel', 'p')]);
+    expect(lowerSpatialProject(p).spatialData.virtualRoom).toBeUndefined();
+    p.presentation = { reality: 'virtual-room' };
+    const out = lowerSpatialProject(p);
+    expect(out.spatialData.virtualRoom?.gridCell).toBe(0.5);
+    expect((out.manifestData.arSettings as { backgroundMode?: string }).backgroundMode).toBe('solidColor');
+  });
+});
+
 describe('panel helpers', () => {
   it('estimates wrapped lines for Latin and Japanese', () => {
     expect(estimateLines('abc', 32, 1000)).toBe(1);

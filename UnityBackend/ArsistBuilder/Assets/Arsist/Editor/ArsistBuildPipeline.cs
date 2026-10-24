@@ -38,6 +38,12 @@ namespace Arsist.Builder
         private static Material _defaultTmpMaterial;
 
         /// <summary>
+        /// シミュレーター (Editor/Simulation/ArsistSimBuild、doc/22-simulation.md) のとき、APK の代わりに作る Linux の
+        /// プレイヤーの場所。null なら普通のビルド。シーンの作り方は同じで、違うのは端末向けの検証と最後の BuildPlayer だけ。
+        /// </summary>
+        internal static string SimulationPlayerPath;
+
+        /// <summary>
         /// CLI経由でビルドを実行（Arsistエンジンから呼び出される）
         /// </summary>
         public static void BuildFromCLI()
@@ -107,7 +113,8 @@ namespace Arsist.Builder
 
                 // Phase 3.2: ビルド前検証（ここで落とすことで“成功したけど動かない”を避ける）
                 Debug.Log("[Arsist] Phase 3.2: Validating build readiness...");
-                ValidateBuildReadiness(_targetDevice);
+                // シミュレーターには端末の SDK が無いので、端末向けの検証はしない
+                if (SimulationPlayerPath == null) ValidateBuildReadiness(_targetDevice);
 
                 // Phase 3.3: glTFast に必要なシェーダーを確実にビルドに含める
                 Debug.Log("[Arsist] Phase 3.3: Ensuring required shaders...");
@@ -130,7 +137,8 @@ namespace Arsist.Builder
 
                 // Phase 4: ビルド実行
                 Debug.Log("[Arsist] Phase 4: Building APK...");
-                ExecuteBuild(_manifest);
+                if (SimulationPlayerPath != null) Arsist.Builder.Simulation.ArsistSimBuild.BuildPlayer(SimulationPlayerPath);
+                else ExecuteBuild(_manifest);
 
                 Debug.Log("[Arsist] Build completed successfully!");
                 EditorApplication.Exit(0);

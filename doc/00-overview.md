@@ -141,7 +141,7 @@ Arsist-EN/
 | Tab | What you edit |
 |-----|---------------|
 | `scene` | 3D scene (react-three-fiber): objects, transforms, materials, VRM characters, image anchors. Hidden for `head_locked_hud` projects |
-| `ui` | 2D UI layouts (HUD and canvas surfaces); DataFlow sources/transforms live in its left panel (the old `dataflow` view now opens here) |
+| `ui` | 2D UI layouts (HUD and canvas surfaces). The old `dataflow` view opens here; DataFlow has no screen while the device side does not run it (doc/08), agents edit it with the `ir_*` tools |
 | `script` | JavaScript scripts (run by Jint on the device), API drawer from `src/shared/scriptApi.ts`, "Saved on the device" keys |
 | `vision` | Image pipeline editor — **hidden by default** (Settings → Models → "Show the Vision tab") |
 | `models` | ONNX models (image / text / tensor), Hugging Face import, "Try" panel |
@@ -208,3 +208,5 @@ adapter) → `sdk` (XREAL / Quest packages) → `extensions` → `sdk-vrm` → `
 | [18-characters-voice-memory](18-characters-voice-memory.md) | VRM characters, animations, voice / audio, camera stills, on-device storage |
 | [19-layster](19-layster.md) | Layster: names and versions, Virtual vs Spatial, the Spatial IR spec and lowering |
 | [20-spatial-runtime](20-spatial-runtime.md) | Layster.Spatial on the device: world state, solver, Mind / Body protocols, recording |
+| [21-cli](21-cli.md) | The `arsist` CLI: every feature (info, validate, new, MCP tools, solve, lower, build, ext, logs, sim) without the editor; `--json` + exit codes |
+| [22-simulation](22-simulation.md) | Simulators: the fast, approximate preview (editor 3D components in hidden Electron, `scripts/sim/preview.mjs`) and the Unity simulator that runs the real runtime as a Linux player under xvfb (`scripts/sim/unity.mjs`) |

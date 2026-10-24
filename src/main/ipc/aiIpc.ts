@@ -17,7 +17,7 @@ export interface AiIpcContext {
   getMainWindow(): BrowserWindow | null;
   /** electron-store (使うのは get / set だけ) */
   store: { get(key: string): unknown; set(key: string, value: unknown): void };
-  /** エディタで開いているプロジェクト */
+  /** エディタで開いているプロジェクト (Virtual でも Spatial でも。main.ts の currentProjectPathForAssets) */
   getProjectPath(): string | null;
   isDev: boolean;
 }

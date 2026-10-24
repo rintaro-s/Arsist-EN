@@ -5,7 +5,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   BrainCircuit, Bot, ChevronDown, ChevronRight, CircleDot, Disc3, FileCode, Gauge, Image as ImageIcon, LayoutPanelTop,
-  Map as MapIcon, PersonStanding, Plus, Settings2, Shapes, Tag, Workflow,
+  Map as MapIcon, PersonStanding, Plus, Puzzle, Settings2, Shapes, Tag, Workflow,
 } from 'lucide-react';
 import type { SpatialProject, Thing } from '../../shared/layster/spatial/types';
 import { newBody, newMind, newRule, newScript, newThing, type ThingTemplate } from '../../shared/layster/spatial/defaults';
@@ -165,6 +165,9 @@ export function Outline() {
           selected={isSel({ kind: 'recording' })} errors={errors.get('recording')} onClick={() => setSelection({ kind: 'recording' })} />
         <Item icon={<MapIcon size={13} />} label={t('spatial.outline.spaces')} sub={t('spatial.outline.spacesCount', { n: project.spaces.use.length })}
           selected={isSel({ kind: 'spaces' })} onClick={() => setSelection({ kind: 'spaces' })} />
+        <Item icon={<Puzzle size={13} />} label={t('spatial.outline.extensions')}
+          sub={t('spatial.outline.extensionsCount', { n: Object.values(project.extensions ?? {}).filter((x) => x?.enabled).length })}
+          selected={isSel({ kind: 'extensions' })} onClick={() => setSelection({ kind: 'extensions' })} />
         <Item icon={<Settings2 size={13} />} label={t('spatial.outline.settings')} selected={isSel({ kind: 'settings' })}
           errors={errors.get('app') ?? errors.get('layster')} onClick={() => setSelection({ kind: 'settings' })} />
       </Group>

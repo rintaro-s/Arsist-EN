@@ -1,49 +1,39 @@
 /** アダプターがどこから来たか */
 export interface AdapterOrigin {
+    /** フォルダ名 = targetDevice */
     folder: string;
     source: 'builtin' | 'extension';
     extensionId?: string;
 }
+/**
+ * adapter.json の主な項目 (doc/05)。読むのはエディタの表示とタグ (src/shared/adapterTags.ts) だけなので、
+ * 知らない項目もそのまま通す。
+ */
 export interface DeviceAdapter {
     id: string;
     name: string;
-    manufacturer: string;
-    description: string;
-    sdkVersion: string;
-    unityVersion: string;
-    features: AdapterFeatures;
-    buildSettings: AdapterBuildSettings;
-    patchFiles: PatchFileInfo[];
-}
-export interface AdapterFeatures {
-    tracking6DoF: boolean;
-    tracking3DoF: boolean;
-    handTracking: boolean;
-    planeDetection: boolean;
-    imageTracking: boolean;
-    passthrough: boolean;
-    spatialAudio: boolean;
-}
-export interface AdapterBuildSettings {
-    minSdkVersion: number;
-    targetSdkVersion: number;
-    targetArchitecture: 'ARM64' | 'ARMv7' | 'x86_64';
-    graphicsAPI: 'OpenGLES3' | 'Vulkan';
-    orientation: 'Landscape' | 'Portrait' | 'Auto';
-    xrLoaderName: string;
-    requiredPackages: string[];
-}
-export interface PatchFileInfo {
-    type: 'manifest' | 'script' | 'package' | 'prefab' | 'config';
-    sourcePath: string;
-    destinationPath: string;
-    description: string;
+    version?: string;
+    description?: string;
+    tags?: string[];
+    device?: {
+        manufacturer?: string;
+        models?: string[];
+        displayName?: string;
+        category?: string;
+    };
+    display?: Record<string, unknown>;
+    capabilities?: Record<string, boolean>;
+    input?: Record<string, unknown>;
+    sdk?: Record<string, unknown>;
+    build?: Record<string, unknown>;
+    manifest?: Record<string, unknown>;
+    patches?: unknown[];
+    [key: string]: unknown;
 }
 export declare class AdapterManager {
-    private adaptersDir;
-    private adaptersCache;
+    private readonly adaptersDir;
     constructor();
-    private static resolveAdaptersDir;
+    private read;
     /**
      * 利用可能なすべてのアダプター (エンジン同梱 + 拡張機能が足した端末)。
      * adapter.json の中身に、どこから来たか (folder / source / extensionId) を添えて返す。
@@ -54,32 +44,5 @@ export declare class AdapterManager {
      * 拡張機能の端末は入れ替わることがあるので、覚えておかずに毎回探す。
      */
     getAdapter(adapterId: string): Promise<(DeviceAdapter & AdapterOrigin) | null>;
-    /**
-     * 新しいアダプターを登録
-     */
-    registerAdapter(adapter: DeviceAdapter): Promise<{
-        success: boolean;
-        error?: string;
-    }>;
-    /**
-     * アダプターのパッチをUnityプロジェクトに適用
-     */
-    applyPatch(adapterId: string, unityProjectPath: string): Promise<{
-        success: boolean;
-        appliedPatches: string[];
-        error?: string;
-    }>;
-    /**
-     * アダプターテンプレートを生成（新規デバイス対応時用）
-     */
-    createAdapterTemplate(deviceName: string, manufacturer: string): Promise<{
-        success: boolean;
-        path?: string;
-        error?: string;
-    }>;
-    private loadAdapter;
-    private updateProjectSettings;
-    private updatePackageManifest;
-    private createTemplateFiles;
 }
 //# sourceMappingURL=AdapterManager.d.ts.map

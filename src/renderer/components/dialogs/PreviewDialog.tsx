@@ -19,7 +19,7 @@ type PreviewMode = 'user' | 'orbit';
  * Lightweight UIElementRenderer (preview-only)
  * Independent lightweight version from UIEditor.tsx ElementRenderer
  * ================================================================ */
-function SimpleUIRenderer({ element }: { element: UIElement }) {
+export function SimpleUIRenderer({ element }: { element: UIElement }) {
   const t = useT();
   let storeCtx: { data: Record<string, unknown> } | null = null;
   try {
@@ -33,6 +33,8 @@ function SimpleUIRenderer({ element }: { element: UIElement }) {
   const resolveContent = (el: UIElement): string => {
     if (el.bind?.key) {
       const raw = data[el.bind.key];
+      // 値がまだ無いときは、書かれている文字 (実機でも値が来るまではそれが出る) → 無ければ —
+      if (raw == null && el.content) return el.content;
       const val = raw != null ? String(raw) : '—';
       return el.bind.format ? el.bind.format.replace('{value}', val) : val;
     }
@@ -227,11 +229,12 @@ function PreviewContent({
   useEffect(() => {
     if (!autoUpdateData) return;
     const interval = setInterval(() => {
+      const deviceStatus = (data.deviceStatus ?? {}) as { brightness?: number } & Record<string, unknown>;
       setData({
         ...data,
         deviceStatus: {
-          ...data.deviceStatus,
-          brightness: Math.max(30, Math.min(100, (data.deviceStatus?.brightness || 75) + (Math.random() - 0.5) * 10)),
+          ...deviceStatus,
+          brightness: Math.max(30, Math.min(100, (deviceStatus.brightness || 75) + (Math.random() - 0.5) * 10)),
         },
         systemClock: new Date().toLocaleTimeString(),
         timestamp: Date.now(),

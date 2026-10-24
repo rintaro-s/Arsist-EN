@@ -110,6 +110,9 @@ if (p.hit) scene.setPosition('Sister', p.x, p.y, p.z);
 - `Runtime/RoomScriptApi.cs` — スクリプトの `room`
 - `Runtime/Resources/ArsistQuestRoomOccluder.shader` — `occlusion` で使う「深度だけ書く」シェーダー。部屋の箱と同じ形を
   他の物より先に描き、その奥の仮想の物を隠す (パススルーの上なので、その形自体は見えない)
+- `Runtime/QuestRoomSpatialProvider.cs` — Layster.Spatial のプロジェクトだけ: 部屋を世界の状態の entity にし
+  (doc/20 §3)、アンカーごとの箱を `ISpatialOccluderSource` として出す。エンジンがそれを深度だけの箱にするので、
+  Spatial の物の `occlusion: "auto"` は、この拡張機能の `occlusion` 設定を入れなくても効く (doc/20 §3.2)
 
 MRUK は OVRCameraRig が無いと、部屋をワールド原点基準で置く。Arsist の XR Origin は原点にあるので
 一致するはず。起動時のログ `tracking origin …, head at …` と、ずれていれば警告が出る。

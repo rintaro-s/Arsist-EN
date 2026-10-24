@@ -15,6 +15,8 @@ Reference files:
 Templates (standard library only, Python ≥ 3.8, no pip): `python/layster/mind_server.py` (HTTP, `layster.mind/1`)
 and `python/layster/body_bridge.py` (WebSocket, `layster.body/1`, simulated arm). Contracts:
 `src/shared/layster/spatial/{types,observe,mindProtocol}.ts`; runtime behaviour: `doc/20-spatial-runtime.md`.
+To check the project side from a shell (no editor, no MCP): `node scripts/arsist.mjs validate <dir>` and
+`node scripts/arsist.mjs tool spatial_get '{"kind":"mind","id":"<id>"}' --project <dir>` (`doc/21-cli.md`).
 
 ## First decide: do you need a server at all?
 

@@ -22,12 +22,16 @@ doc/19 の Layster.Spatial を、端末の上で動かす部分。IR (`project.s
 | `SafetyGate.cs` | 体への命令の安全の門 |
 | `EpisodeFormat.cs` | 記録の形式 `layster.episode/1` |
 | Unity 側 | |
-| `ArsistSpatialRuntime.cs` | 本体。ビルドが `[LaysterSpatial]` に 1 つ置く。毎フレーム frames → user → world → things → rules → minds → bodies → record |
+| `ArsistSpatialRuntime.cs` | 本体。ビルドが `[LaysterSpatial]` に 1 つ置く。毎フレーム frames → user → world → things → grab → occlusion / virtual room → rules → minds → bodies → record |
 | `ArsistSpatialHooks.cs` | エンジンの他の場所からの入口 (`world` のスクリプト名、保存するキー)。Spatial かどうかは `Resources/ArsistSpatial.json` の有無 |
 | `SpatialFrames.cs` | spatial ↔ Unity の座標の変換 (ここだけ) |
 | `SpatialUser.cs` / `SpatialGaze.cs` | 頭・手 (XR Hands の手のひら → XR の入力デバイス)・何を見ているか |
 | `SpatialProviders.cs` | provider の口と登録簿、仮の床 |
 | `ThingPlacer.cs` | 物を置く・隠す・付いて行かせる・覚える |
+| `SpatialGrab.cs` | `grabbable` の物をつかんで動かす (§4.1) |
+| `SpatialOcclusion.cs` | `occlusion`: provider が出した部屋の形を、深度だけ書く箱にする (§3.2) |
+| `SpatialVirtualRoom.cs` | `reality: virtual-room` の仮の部屋 (§3.3) |
+| `Resources/ArsistSpatialOccluder.shader` / `ArsistSpatialRoom.shader` | 深度だけ書く箱 / 仮の部屋の面 (単色 + 格子)。Resources に置くのでビルドに必ず入る |
 | `RuleEngine.cs` / `SpatialEvents.cs` | 規則と出来事 |
 | `MindRunner.cs` / `SpatialCamera.cs` | Mind の呼び出し (UnityWebRequest) と、添えるカメラの画 |
 | `ActionExecutor.cs` | 行動の実行 |
@@ -105,14 +109,44 @@ sealed class MyProvider : ISpatialProvider
 後の軸が奥行き (+Z、yaw の向き)。面は奥行き 0 の箱で、法線の軸を最後に (MRUK の面は `forward` が法線で、壁は部屋の内側)。
 `quest-room` の provider (`QuestRoomSpatialProvider`) が見本で、id は `mruk-<UUID の先頭 8 文字>` (起動をまたいで同じ)。
 `quest-room` はエンジンの一部ではなく `samples/extensions/` の見本なので、使うにはフォルダを登録し
-(`npm run ext:link -- samples/extensions`)、`project.spatial.json` の `extensions["quest-room"].enabled` を true にする
-(samples/spatial はそうしてある。Spatial のエディタにはまだ拡張機能を有効にする画面が無い)。
-`ISpatialAnchorStore` (任意) を持つ provider は端末の空間アンカーで `keep: forever` を覚えられる (今はまだ使っていない。
-下の「載せた面からの相対位置」で覚える)。
+(`npm run ext:link -- samples/extensions`)、エディタの「プロジェクト → 拡張機能」で有効にする
+(`extensions["quest-room"].enabled`。samples/spatial はそうしてある)。
+
+`keep: forever` は「載せた面 (entity) からの相対位置」で覚える (§4)。面の id が起動をまたいで同じであることが provider の
+約束で、quest-room の id は MRUK のアンカーの UUID から作るので、それ自体が端末の空間アンカーに乗っている。
+だから別の空間アンカーの口 (以前の `ISpatialAnchorStore`) は持たない (使われていなかったので消した)。
 
 組み込みの provider は**仮の床**だけ (出どころ `assumed`、確かさ 0.3 (XR から床の高さが分かっていれば 0.45)、足元 8 m 四方。
 ユーザーが 2 m 動いたら付いて行き、確かさ 0.5 以上の床が来たら消える)。
 だから部屋のスキャンが無い端末でも、置き方は fallback を通って必ず解ける。
+
+### 3.2 本物の物の陰に隠す (`occlusion`)
+
+部屋の形を知っている provider は `ISpatialOccluderSource` も持てる:
+
+```csharp
+sealed class MyProvider : ISpatialProvider, ISpatialOccluderSource
+{
+    public int OccluderVersion { get; private set; }               // 形が変わったら増やす
+    public void CollectOccluders(List<SpatialOccluder> into)        // Unity の箱。Parent があればその子 (アンカーと一緒に動く)
+        => into.Add(new SpatialOccluder { Parent = anchor, Center = c, Rotation = Quaternion.identity, Size = s });
+}
+```
+
+`SpatialOcclusion` は箱を「深度だけ書く」(色は書かない) 箱にする (`ArsistSpatialOccluder.shader`、Queue Geometry-10。
+quest-room の occlusion と同じ作り)。`occlusion: "auto"` (既定) の物は箱より後に描かれるので、本物の壁・家具の向こうでは深度で負けて
+隠れる。`"off"` の物は不透明な部分 (renderQueue < 2500) を Queue 1985 へ移して箱より先に描くので隠れない (半透明の部分と、
+パネル・札の Canvas は Transparent の列なので、まだ隠れうる)。箱を出す provider が無い・`auto` の物が無い・`virtual-room` の
+ときは何もしない。面 (壁) の厚みは裏 (部屋の外) に持たせる。表がちょうど面なので、壁に貼った物は欠けない。
+見本は quest-room の provider (アンカーごとの箱。面は裏に 5 cm。見えない壁は除く)。当たり判定は付けない (層は Ignore Raycast)。
+
+### 3.3 仮の部屋 (`presentation.reality: "virtual-room"`)
+
+現実を見せない設定では、`lower.ts` が背景を暗い単色にし (`backgroundMode: solidColor`)、`SpatialVirtualRoom` が世界の状態から
+簡単な部屋を描く: 床は平らな面 + 格子 (箱の中心から 0.5 m ごと。仮の床も描く)、壁は裏に 2 cm の厚み、家具は箱 (上の面ほど明るい)。
+天井と、薄れる出どころ (検出・Mind の推測) は描かない。何をどの色で描くかは `src/shared/layster/spatial/virtualRoom.ts` だけで決め、
+`lower.ts` が `spatial.json` の `virtualRoom` に色を書く。エディタの Space Lab も同じ規則・同じ色で描く (`lab/VirtualRoom.tsx`)。
+面は不透明で深度を書くので、仮の家具の向こうの物は普通に隠れる。世界が変わったら (0.5 秒に 1 回まで) 変わった entity だけ作り直す。
 
 ## 4. 置く時刻と、覚える場所
 
@@ -122,12 +156,32 @@ sealed class MyProvider : ISpatialProvider
 | 待ち時間 (provider の `Ready` から 1 秒後、最長 8 秒) | 世界が変わるたびにすべて (0.5 秒に 1 回まで) |
 | `keep: none` | 待ち時間の後も、世界が変わるたびに (1 秒に 1 回まで) |
 | `keep: session` | 待ち時間の後は動かない |
-| `keep: forever` | 待ち時間の後、載せた面 (薄れない出どころの entity) からの相対位置を store の `layster.place.<id>` に残す。次の起動でその面があればそこに戻す |
+| `keep: forever` | 待ち時間の後、載せた面 (薄れない出どころの entity) からの相対位置を store の `layster.place.<id>` に残す。次の起動でその面があればそこに戻す。つかんで動かしたら、離した所で覚え直す (§4.1) |
 | `mode: body` | ユーザーが 1.2 m 動くか 60° 向きを変えたら解き直し、0.6 秒かけて移る |
 
 置いた・置き直した (規則が変わった) ときに `placed`、本来の置き方でなかったら `fallback` の出来事。ログは
 `[Layster] placed quiz (start): rule 0 on desk world [...]`。`layster.` で始まる store のキーは自動で端末に残る
 (PC のアドレス `layster.edge` もここ)。
+
+### 4.1 つかんで動かす (`grabbable`)
+
+`SpatialGrab` は端末に依らない: 位置は XR の入力デバイス (`InputDevices`、追跡空間 → カメラの親で world に直す) と、
+XR Hands (`XR_HANDS` のビルドだけ) から読む。`interaction.controllers` / `hands` で切れる。
+
+| | つかむ | 当たり |
+|---|---|---|
+| コントローラー | グリップ (`gripButton`、無ければ `grip` > 0.55)。トリガーは UI を押す方なので使わない | 手が物の箱 (+6 cm) の中 → そのまま。無ければ前へのレイ (5 m) が当たった物 |
+| 手 | 親指と人差し指の先が 2.5 cm 以内 (離すのは 3.5 cm) | つまんだ点が箱の中 → そのまま。無ければ人差し指の向きのレイ。パネルは、レイが押せる UI (ボタンなど) に当たっていればつかまない |
+
+当たりはコライダーではなく、置いた姿勢と箱の大きさ (`size`) で決める (薄い物は 3 cm の厚みとみなす)。持っている間は、
+つかんだときの「手 (位置と水平の向き) から見た物の中心と向き」を保って付いて来る。物は重力に沿ったまま (傾けない)、床より下には沈めない。
+その間は解き直さない (`place` の行動も無視してログに出す)。離したら `ThingPlacer.Released`: そこが新しい置き場所で、載っている面
+(底が上面の -5〜+15 cm、中心が上面の範囲。無ければ表から 15 cm 以内の壁) を host にする。`keep: forever` なら覚え直し、
+スキャンした面に載っていなければ覚えた場所を消す。動かした物は、それ以後 `keep: none` / `mode: body` でも自動では解き直さない
+(`place` の行動・`world.place` では動く)。
+
+出来事: `grabbed` / `released` (主語 = thing、data = `{ thing, hand: left|right, by: controller|hand, at, yaw, host? }`) と、
+物ごとの `grabbed:<id>` / `released:<id>` (規則の `{ "event": "released:card" }` で 1 つの物だけを待てる)。
 
 ## 5. Layster Body Protocol (`layster.body/1`)
 
@@ -218,8 +272,9 @@ store `layster.recording.active` / `layster.recording.dir`。
 - `python/layster/` の 2 つ: 標準ライブラリのクライアントで要求と返事、WebSocket の hello → command → state → result を確かめた
 - Quest 向けのビルド (C# のエラー 0、APK ができる) と、同じ作業用プロジェクトでの Virtual のビルド。XREAL One 向けは
   ビルドの画面で選べるが、まだ作っていない
-- まだ無いもの: 物の `occlusion` / `grabbable` (`SpatialModel` が読むだけ)、`virtual-room` の仮の部屋、`ISpatialAnchorStore` を
-  使った `keep: forever`、記録の再生、端末の中で動く Mind
+- `occlusion` / `grabbable` / `virtual-room` は Quest 向けのビルドで C# のエラーが無いことまで。実機ではまだ (§3.2・§3.3・§4.1)
+- まだ無いもの: 記録の再生、端末の中で動く Mind
 - **実機では一度も動かしていない**。特に確かめたいのは: 床の高さ (Device の追跡で境界の点が取れるか)、MRUK の箱の向き
   (机の yaw・大きさの軸)、パネルの 180° と VRM の顔の向き、手の位置 (XR Hands の手のひら)、ClientWebSocket が IL2CPP で
-  つながるか、確認のパネルが押せるか
+  つながるか、確認のパネルが押せるか、グリップ・つまみでつかめるか (手の関節の座標が追跡空間か)、隠す箱の深度が両目に効くか、
+  `occlusion: "off"` の物が本当に手前に出るか

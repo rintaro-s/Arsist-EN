@@ -12,6 +12,9 @@
 //   id      'mruk-' + アンカーの UUID の先頭 8 文字。起動をまたいで同じなので、keep: forever の基準に使える
 //   床      床のアンカーの高さを、spatial の床の高さとして知らせる (確かさ 0.9)
 //   出どころ 'scan'、確かさ 0.95 (床 0.9)
+//   隠す形  ISpatialOccluderSource として、アンカーごとの箱を出す (面は裏に 5 cm の厚み。QuestRoomService の
+//           occlusion と同じ形)。エンジン (SpatialOcclusion) が深度だけ書く箱にし、occlusion: "auto" の物がその向こうで隠れる。
+//           箱はアンカーの子なので、アンカーが動けば一緒に動く
 // ==============================================
 
 using System.Collections.Generic;
@@ -21,8 +24,14 @@ using UnityEngine;
 
 namespace Arsist.Extensions.QuestRoom
 {
-    internal sealed class QuestRoomSpatialProvider : ISpatialProvider
+    internal sealed class QuestRoomSpatialProvider : ISpatialProvider, ISpatialOccluderSource
     {
+        private const float PlaneThickness = 0.05f;
+        private readonly List<SpatialOccluder> _occluders = new List<SpatialOccluder>();
+        public int OccluderVersion { get; private set; }
+
+        public void CollectOccluders(List<SpatialOccluder> into) => into.AddRange(_occluders);
+
         private readonly System.Func<QuestRoomService> _service;
         private MRUKRoom _room;
         private int _anchorCount = -1;
@@ -67,6 +76,7 @@ namespace Arsist.Extensions.QuestRoom
         private void Rebuild(SpatialProviderContext context, MRUKRoom room)
         {
             var keep = new HashSet<string>();
+            _occluders.Clear();
             int index = 0;
             int written = 0;
             foreach (var anchor in room.Anchors)
@@ -75,7 +85,8 @@ namespace Arsist.Extensions.QuestRoom
                 if (anchor == null) continue;
                 var name = RoomGeometry.NameOf(anchor.Label);
                 if (name == "mesh") continue;
-                if (name == "invisibleWall") name = "wall";
+                bool invisible = name == "invisibleWall";
+                if (invisible) name = "wall";
                 var t = anchor.transform;
                 Vector3 center;
                 Vector3 size;
@@ -84,12 +95,22 @@ namespace Arsist.Extensions.QuestRoom
                     var b = anchor.VolumeBounds.Value;
                     center = t.TransformPoint(b.center);
                     size = Vector3.Scale(b.size, t.lossyScale);
+                    if (!invisible) _occluders.Add(new SpatialOccluder { Parent = t, Center = b.center, Rotation = Quaternion.identity, Size = b.size });
                 }
                 else if (anchor.PlaneRect.HasValue)
                 {
                     var r = anchor.PlaneRect.Value;
                     center = t.TransformPoint(new Vector3(r.center.x, r.center.y, 0));
                     size = Vector3.Scale(new Vector3(r.width, r.height, 0), t.lossyScale);
+                    // 表は面そのもの、厚みは裏 (部屋の外) へ。見えない壁 (開けた部屋の境界) は何も隠さない
+                    if (!invisible)
+                    {
+                        _occluders.Add(new SpatialOccluder
+                        {
+                            Parent = t, Center = new Vector3(r.center.x, r.center.y, -PlaneThickness / 2f),
+                            Rotation = Quaternion.identity, Size = new Vector3(r.width, r.height, PlaneThickness),
+                        });
+                    }
                 }
                 else continue;
 
@@ -106,7 +127,8 @@ namespace Arsist.Extensions.QuestRoom
             foreach (var old in _written) if (!keep.Contains(old)) context.Remove(old);
             _written.Clear();
             _written.UnionWith(keep);
-            context.Log($"quest-room provider: {written} entities from room '{room.name}'");
+            OccluderVersion++;
+            context.Log($"quest-room provider: {written} entities, {_occluders.Count} occluder boxes from room '{room.name}'");
         }
     }
 }

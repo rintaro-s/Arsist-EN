@@ -206,9 +206,15 @@ export interface Thing {
   place: Placement;
   /** 起動したときに出すか (既定 true)。false なら show の行動で出る */
   visibleAtStart?: boolean;
-  /** 本物の物に隠されるか (既定 'auto' = 端末ができるなら) */
+  /**
+   * 本物の物 (壁・家具) の向こうにあるとき隠れるか。'auto' (既定) = 部屋の形を出す provider があれば隠れる
+   * (ISpatialOccluderSource、doc/20 §3)。'off' = いつも見える
+   */
   occlusion?: 'auto' | 'off';
-  /** 手やコントローラーでつかんで動かせる (既定 false) */
+  /**
+   * 手やコントローラーでつかんで動かせる (既定 false)。コントローラーはグリップ、手はつまむ (遠くはレイで)。
+   * 離したら置き場所が変わり、出来事 grabbed / released が鳴る。keep: 'forever' なら次の起動もそこ。world に置く物だけ
+   */
   grabbable?: boolean;
   tags?: string[];
   /** 拡張機能ごとの指定 (Virtual の SceneObject.ext と同じ考え方) */
@@ -446,6 +452,11 @@ export interface SpatialApp {
   targetSdkVersion: number;
   /** PC (edge) の既定のアドレス ('192.168.0.23:8000')。端末では変えられる (layster.edge) */
   edge?: string;
+  /**
+   * 実機のログを LAN でビルドした PC へ流す (doc/13-device-logs.md)。省略時は有効 (開発中に設定させない)。
+   * 配布する APK では切る (ログが平文で LAN に流れる)。port 既定 9770
+   */
+  logRelay?: { enabled: boolean; port?: number };
 }
 
 export interface SpatialPresentation {

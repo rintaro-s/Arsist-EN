@@ -14,6 +14,8 @@ Reference: [reference/ir.md](reference/ir.md) — `project.json` layout, scene o
 direct-edit rules, with validated examples. Live references from the MCP server: `arsist_script_reference` (every
 script global incl. installed extensions + IR essentials). Docs: `doc/09-mcp-server.md`, `doc/18-characters-voice-memory.md`,
 `doc/17-extensions.md`; types: `src/shared/types.ts`; script API source: `src/shared/scriptApi.ts`.
+Without MCP, call the same tools from a shell: `node scripts/arsist.mjs tool ir_validate_project '{}' --project <dir> --json`
+(`arsist tools` lists them, `arsist validate|info|build <dir>`; `doc/21-cli.md`).
 
 ## Coordinates (the classic trap)
 
@@ -102,7 +104,12 @@ do not carry numbers across.)
    `extension.json`. An extension only runs on devices whose tags satisfy its `requires`.
 9. **Validate**: `ir_validate_project` — missing extensions/device, features the device cannot do, canvases without a
    layout, script syntax errors, duplicate assetIds, unknown animation names, and what the loader filled in.
-10. **Build** in the editor (Build). Unity, `sdk/` and a device are usually not available to an agent — report what
+10. **Look at it**: `arsist sim <project dir> --out <dir> [--device XREAL_One]` (or `node scripts/sim/preview.mjs …`
+    after `npm run build:renderer`) renders the start view at the device's FOV — scene objects, world canvases with
+    their UI, the `uhd` HUD as the device sizes it — to PNG + `result.json`. Open the PNG: is the UI inside the view,
+    readable, not behind a model? It is approximate (static, no data sources or scripts; doc/22); `--engine unity`
+    runs the real runtime when Unity is available.
+11. **Build** in the editor (Build). Unity, `sdk/` and a device are usually not available to an agent — report what
     was not built/tested instead of guessing.
 
 ## Rules

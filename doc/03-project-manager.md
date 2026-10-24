@@ -46,8 +46,6 @@ Creates `<options.path>/<options.name>/` (with `Assets/{Textures,Models,Fonts,Au
   path: string          // parent directory; project goes inside path/name/
   template: ProjectTemplate
   targetDevice: string  // adapter folder name, e.g. 'Meta_Quest'
-  trackingMode?: string       // accepted but currently unused
-  presentationMode?: string   // accepted but currently unused
 }
 ```
 
@@ -133,14 +131,19 @@ builds go through `generateBuildManifest` + `UnityBuilder` (`doc/04`, `doc/06`).
 }
 ```
 
+The same files the build's transfer step writes into `Assets/ArsistGenerated/`
+(`UnityBuilder.transferProjectData`), built the same way:
+
 | Output | When |
 |--------|------|
-| `manifest.json` | `format === 'json'` |
-| `manifest.yaml` | `format === 'yaml'` |
-| `scenes.json`, `ui_layouts.json`, `dataflow.json`, `scripts.json` (enabled scripts) | always |
+| `manifest.json` — `generateBuildManifest(project)` from `src/bridge/UnityBridge.ts` | `format` `'unity'` or `'json'` |
+| `manifest.yaml` — the same object as YAML | `format === 'yaml'` |
+| `scenes.json`, `ui_layouts.json`, `scripts.json` (enabled scripts + `storage.persist`, the `scriptBundle` of `generateUnityManifest`) | always |
+| `dataflow.json` | when the project has `dataFlow` |
 | `Assets/` copy | `includeAssets` |
 
-`format: 'unity'` writes no manifest at all.
+Values that only exist at build time (`logRelay`, `deviceTags`, `features`, `extensions`, `replacements`) are not
+in the exported manifest.
 
 ### Other accessors
 
@@ -149,13 +152,6 @@ builds go through `generateBuildManifest` + `UnityBuilder` (`doc/04`, `doc/06`).
 ---
 
 ## Internal Helpers
-
-### `generateUnityManifest()` (private)
-
-The manifest used only by `exportProject`: `projectId`, `projectName`, `version`, `irVersion`, `layster`,
-`appType`, `targetDevice`, `arSettings`, `designSystem`, `dataFlow`, `build` (build settings without
-`remoteInput`), `buildSettings`, `remoteInput`, `scripting.enabled`, `models`, `exportedAt`. The build uses the
-richer `generateBuildManifest` in `src/bridge/UnityBridge.ts` instead.
 
 ### `createInitialScene(template)` / `createInitialUI(template)`
 

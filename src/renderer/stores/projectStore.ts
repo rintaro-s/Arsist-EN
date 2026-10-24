@@ -208,8 +208,6 @@ interface CreateProjectOptions {
   path: string;
   template: string;
   targetDevice: string;
-  trackingMode?: string;
-  presentationMode?: string;
 }
 
 // ========================================

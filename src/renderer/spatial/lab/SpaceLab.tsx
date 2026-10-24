@@ -15,6 +15,8 @@ import { ThingMeshes, ruleColor } from './ThingMeshes';
 import { UserRig } from './UserRig';
 import { BodyWorkspaces } from './BodyWorkspaces';
 import { SpaceStrip } from './SpaceStrip';
+import { VirtualRoom } from './VirtualRoom';
+import { VIRTUAL_ROOM_STYLE } from '../../../shared/layster/spatial/virtualRoom';
 import { describeRule } from '../describe';
 
 export function SpaceLab() {
@@ -35,7 +37,9 @@ export function SpaceLab() {
   const highlightThing = selectedThing ?? (selectedBody ? project.bodies.find((b) => b.id === selectedBody)?.base.thing ?? null : null);
   const result = solve?.results.find((r) => r.thing === selectedThing);
   const hostEntity = result?.host ? solve?.world.entities.find((e) => e.id === result.host) : undefined;
-  const bg = theme === 'light' ? '#e9ecef' : '#1b1d21';
+  // 現実を見せない設定では、端末と同じ仮の部屋 (暗い背景・床の格子・壁・家具の箱) で見せる
+  const virtualRoom = project.presentation?.reality === 'virtual-room';
+  const bg = virtualRoom ? VIRTUAL_ROOM_STYLE.background : theme === 'light' ? '#e9ecef' : '#1b1d21';
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -50,12 +54,15 @@ export function SpaceLab() {
             <ambientLight intensity={0.7} />
             <directionalLight position={[3, 6, 2]} intensity={0.8} />
             <Suspense fallback={null}>
-              <Grid
-                args={[20, 20]} cellSize={0.25} sectionSize={1} position={[0, -0.001, 0]}
-                cellColor={theme === 'light' ? '#c5cad1' : '#2e3238'} sectionColor={theme === 'light' ? '#a3aab4' : '#3d434b'}
-                fadeDistance={14} infiniteGrid
-              />
+              {virtualRoom ? <VirtualRoom entities={solve.world.entities} /> : (
+                <Grid
+                  args={[20, 20]} cellSize={0.25} sectionSize={1} position={[0, -0.001, 0]}
+                  cellColor={theme === 'light' ? '#c5cad1' : '#2e3238'} sectionColor={theme === 'light' ? '#a3aab4' : '#3d434b'}
+                  fadeDistance={14} infiniteGrid
+                />
+              )}
               <EntityBoxes
+                ghost={virtualRoom}
                 entities={solve.world.entities}
                 selected={selectedEntity ?? result?.host ?? null}
                 onPick={(id) => { setSelectedEntity(id); setBottomTab('world'); }}

@@ -6,6 +6,7 @@
  */
 
 import { compareLayster, formatLayster, LAYSTER_CURRENT } from '../version';
+import { animationNamesInScripts } from '../../characterChecks';
 import { ACTION_KINDS, AFFORDANCES } from './types';
 import type { Action, Condition, Mind, PanelItem, Placement, SpatialProject, Target, Thing, When } from './types';
 
@@ -106,6 +107,10 @@ export function validateSpatialProject(project: SpatialProject): SpatialProblem[
     if (!v) { err(`${at}.visual`, 'Missing visual.', '見た目がありません。'); continue; }
     if ((v.kind === 'model' || v.kind === 'character') && !v.file) err(`${at}.visual.file`, `Pick a ${v.kind === 'model' ? 'model (.glb/.gltf)' : 'VRM'} file.`, `${v.kind === 'model' ? 'モデル (.glb / .gltf)' : 'VRM'} のファイルを選んでください。`);
     if (v.kind === 'panel') checkPanelItems(`${at}.visual.items`, v.items, new Set());
+    const mode = t.place?.mode ?? 'world';
+    if (t.grabbable && (mode === 'head' || mode === 'hand')) {
+      warn(`${at}.grabbable`, `A thing attached to the ${mode} cannot be grabbed (grabbable is ignored).`, `${mode === 'head' ? '頭' : '手'}に付く物はつかめません (grabbable は使われません)。`);
+    }
   }
 
   const checkAction = (path: string, a: Action, allowedFromMind?: Mind) => {
@@ -181,6 +186,14 @@ export function validateSpatialProject(project: SpatialProject): SpatialProblem[
     if (!project.recording.consent?.text?.trim()) err('recording.consent', 'Recording needs a consent text shown to the user.', '記録には、ユーザーに見せる同意の文が要ります。');
     if (project.recording.streams?.includes('camera') && !project.recording.camera) warn('recording.camera', 'Camera recording without camera settings uses 320 px every second.', 'camera の設定が無いので、320 px・1 秒ごとで記録します。');
   }
+  // 実機のログの LAN 中継 (省略 = 有効)。開発には要るが、配布する APK では切る
+  const relay = project.app?.logRelay;
+  if (relay?.port !== undefined && !(Number.isInteger(relay.port) && relay.port > 0 && relay.port < 65536)) {
+    err('app.logRelay.port', 'The log relay port must be 1–65535.', 'ログの中継のポートは 1〜65535 にします。');
+  }
+  if (relay?.enabled !== false) {
+    warn('app.logRelay', 'Device logs are sent over the LAN to the PC that built the app (plain text). Turn this off before you share the APK.', '実機のログが、ビルドした PC へ LAN で (暗号化せずに) 送られます。APK を配る前に切ってください。');
+  }
   if (!project.app?.packageName || !/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(project.app.packageName)) {
     err('app.packageName', 'The package name must look like com.example.app.', 'パッケージ名は com.example.app の形にします。');
   }
@@ -195,4 +208,50 @@ export function filterMindActions(mind: Mind, actions: Action[]): { kept: Action
   const dropped: Action[] = [];
   for (const a of actions ?? []) (a && allowed.has(a.do) ? kept : dropped).push(a);
   return { kept, dropped };
+}
+
+// ========================================
+// 動きの名前 (Assets/Animations/<名前>.fbx)
+// ========================================
+
+/** ArsistCharacter.StandName: FBX ではなく「力を抜いた立ち姿に戻る」 */
+const STAND = 'stand';
+
+/**
+ * キャラクターの動きの名前が、プロジェクトの Assets/Animations/*.fbx にあるか (Virtual の characterChecks.ts と同じ考え)。
+ * 名前を間違えても実機では「動かない」だけで何も言わないので、ここで言う。
+ * フォルダを読める側 (main・エージェントの道具・ビルド) が、見つかった名前を渡して呼ぶ。
+ */
+export function checkSpatialAnimations(project: SpatialProject, available: readonly string[]): SpatialProblem[] {
+  const out: SpatialProblem[] = [];
+  const known = new Set(available);
+  const have = available.length ? available.join(', ') : 'none';
+  const haveJa = available.length ? available.join('、') : 'なし';
+  const check = (path: string, name: string | undefined) => {
+    if (!name || name === STAND || known.has(name)) return;
+    out.push({
+      level: 'warning',
+      path,
+      message: {
+        en: `Animation "${name}" is not in Assets/Animations (have: ${have}). Import a humanoid FBX named ${name}.fbx.`,
+        ja: `動き「${name}」が Assets/Animations にありません (あるもの: ${haveJa})。${name}.fbx という名前の人型の FBX を取り込んでください。`,
+      },
+    });
+  };
+  for (const t of project.things ?? []) {
+    if (t.visual?.kind === 'character') check(`things[${t.id}].visual.animation`, t.visual.animation);
+  }
+  const visit = (path: string, actions: Action[] | undefined) => {
+    (actions ?? []).forEach((a, i) => {
+      if (a?.do !== 'animate') return;
+      check(`${path}[${i}].clip`, a.clip);
+      check(`${path}[${i}].then`, a.then);
+    });
+  };
+  for (const r of project.rules ?? []) visit(`rules[${r.id}].do`, r.do);
+  for (const s of project.scripts ?? []) {
+    if (!s.enabled) continue;
+    for (const name of animationNamesInScripts(s.code ?? '')) check(`scripts[${s.id}]`, name);
+  }
+  return out;
 }

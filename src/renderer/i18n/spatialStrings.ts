@@ -466,6 +466,22 @@ export const SPATIAL_STRINGS: Record<string, Entry> = {
   'spatial.settings.memory': { en: 'Kept on the device', ja: '端末に残す値' },
   'spatial.settings.persist': { en: 'Store keys', ja: 'store のキー' },
   'spatial.settings.persistHint': { en: '"memory." keeps every key that starts with it.', ja: '"memory." は、それで始まるキーをすべて残します。' },
+  'spatial.settings.dev': { en: 'Development', ja: '開発' },
+  'spatial.settings.logRelay': { en: 'Send device logs to this PC (npm run logs)', ja: '実機のログをこの PC へ送る (npm run logs)' },
+  'spatial.settings.logRelayHint': { en: 'Logs go over the LAN as plain text to the PC that built the app. Turn it off before you share the APK.', ja: 'ログはビルドした PC へ LAN で (暗号化せずに) 送られます。APK を配る前に切ってください。' },
+  'spatial.settings.logRelayPort': { en: 'Port', ja: 'ポート' },
+  'spatial.settings.virtualRoomHint': { en: 'The device does not show the real room; it draws a simple stand-in (floor grid, walls and furniture from the room scan). The 3D view shows it the same way.', ja: '端末は現実を見せず、部屋のスキャンから簡単な仮の部屋 (床の格子・壁・家具の箱) を描きます。3D の表示も同じ見た目になります。' },
+
+  // ── 拡張機能 ──
+  'spatial.outline.extensions': { en: 'Extensions', ja: '拡張機能' },
+  'spatial.outline.extensionsCount': { en: '{n} on', ja: '{n} 個を使用' },
+  'spatial.ext.about': { en: 'Extensions add devices, room scanning, input and script APIs. A room-scanning extension (e.g. quest-room) fills the world state, so placements, occlusion and the virtual room use the real room.', ja: '拡張機能は端末・部屋のスキャン・入力・スクリプトの API を足します。部屋を読む拡張機能 (quest-room など) は世界の状態を埋めるので、置き方・隠れ方・仮の部屋が本物の部屋を使います。' },
+  'spatial.ext.none': { en: 'No extensions are installed. Import one (.arsist or a folder), or register samples/extensions with npm run ext:link.', ja: '拡張機能が入っていません。.arsist かフォルダを読み込むか、npm run ext:link で samples/extensions を登録してください。' },
+  'spatial.ext.loading': { en: 'Reading the extensions…', ja: '拡張機能を読んでいます…' },
+  'spatial.ext.leftOut': { en: 'Not built for {device}: {reason}', ja: '{device} のビルドには入りません: {reason}' },
+  'spatial.ext.settings': { en: 'Settings', ja: '設定' },
+  'spatial.ext.perThing': { en: 'Per-thing options: select a thing → Extensions.', ja: '物ごとの指定: 物を選んで「拡張機能」から。' },
+  'spatial.ext.version': { en: 'v{version}', ja: 'v{version}' },
 
   // ── 試す空間 ──
   'spatial.spaces.about': { en: 'Your app is solved in every checked space at once. Built-in spaces cover typical rooms and devices that know nothing about the room. Copy one to make your own (spaces/<id>.json).', ja: 'チェックした空間すべてで同時に置き方を解きます。組み込みの空間は、よくある部屋と、部屋が分からない端末の場合です。コピーすると自分の空間 (spaces/<id>.json) になります。' },

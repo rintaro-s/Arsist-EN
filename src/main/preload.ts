@@ -136,12 +136,10 @@ const electronAPI = {
     },
   },
 
-  // アダプター（SDKパッチ）管理
+  // アダプター (端末) の一覧と adapter.json の中身 (読むだけ)
   adapters: {
     list: () => ipcRenderer.invoke('adapters:list'),
     get: (adapterId: string) => ipcRenderer.invoke('adapters:get', adapterId),
-    applyPatch: (adapterId: string, projectPath: string) => 
-      ipcRenderer.invoke('adapters:apply-patch', adapterId, projectPath),
   },
 
   // 拡張機能 (Extensions/<id>/)

@@ -139,6 +139,11 @@ export interface InteractionSettings {
 export interface ARSettings {
   trackingMode: TrackingMode;
   presentationMode: PresentationMode;
+  /**
+   * 未使用 (予約)。manifest には載るが、Unity のビルドも実機も読まない。常に 1 のまま置いておく。
+   * シーンの根を拡大縮小すると、スクリプト・リモート操作・ライブ配置・画像アンカーがすべて
+   * 「1 単位 = 1 m」で書いた座標とずれるため、実装していない (doc/01)。
+   */
   worldScale: number;
   defaultDepth: number;
   floatingScreen?: {

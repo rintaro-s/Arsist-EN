@@ -36,7 +36,7 @@ unique per list. `?` = optional.
 | `createdAt` / `updatedAt` | ISO string | now | |
 | `targetDevice` | string | `"Meta_Quest"` (tool default) | `Adapters/` folder name (`Meta_Quest`, `XREAL_One`, `Android_Phone`, …). The IR content stays device-independent |
 | `app` | SpatialApp | see below | |
-| `presentation` | `{ reality: "passthrough" \| "virtual-room", assumedEyeHeight?: number }` | `{ reality: "passthrough", assumedEyeHeight: 1.5 }` | `assumedEyeHeight` = head-to-floor guess when the device does not know the floor |
+| `presentation` | `{ reality: "passthrough" \| "virtual-room", assumedEyeHeight?: number }` | `{ reality: "passthrough", assumedEyeHeight: 1.5 }` | `assumedEyeHeight` = head-to-floor guess when the device does not know the floor. `virtual-room` hides the real world and draws a simple stand-in room (floor grid, walls, furniture boxes from the world state); the editor's 3D view shows the same |
 | `interaction` | `{ controllers: boolean, hands: boolean, gazeDwellSeconds?: number }` | `{ controllers: true, hands: true, gazeDwellSeconds: 0 }` | `0` = no dwell-to-press |
 | `things` | Thing[] | one panel `hello` | |
 | `minds` | Mind[] | `[]` | |
@@ -47,12 +47,14 @@ unique per list. `?` = optional.
 | `recording` | Recording | disabled, see [Recording](#recording) | |
 | `spaces` | `{ use: string[] }` | `["studio", "desk-front", "living", "tiny", "no-scan"]` | Test rooms for the editor and `spatial_solve` |
 | `models` | ModelDefinition[] | `[]` | Same ONNX model definitions as Layster.Virtual (doc/15, doc/16) |
-| `extensions` | `Record<id, { enabled, dataVersion, settings }>` | `{}` | e.g. `"quest-room": { "enabled": true, "dataVersion": 1, "settings": {} }` fills the world with the Quest room scan |
+| `extensions` | `Record<id, { enabled, dataVersion, settings }>` | `{}` | e.g. `"quest-room": { "enabled": true, "dataVersion": 1, "settings": {} }` fills the world with the Quest room scan (and supplies occluders). Set with `spatial_set_settings { extensions }`. A project that enables an extension this editor lacks does not open (same rule as Layster.Virtual) |
 
 **SpatialApp**: `packageName` (must match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$`, new projects get `com.layster.<slug>`),
 `versionCode` (1), `minSdkVersion` (32 for Quest/Meta targets, else 29), `targetSdkVersion` (34),
 `edge?` — default PC address `"host:port"` that `{edge}` in mind/body URLs points to (the device can override it with
-`world.setEdge`, stored as `layster.edge`).
+`world.setEdge`, stored as `layster.edge`). `logRelay?` — `{ enabled, port? }`: stream device logs over the LAN to the PC
+that built the app (`npm run logs`, port 9770). On when omitted (new projects write `{ enabled: true }`); a warning while on —
+turn it off before sharing the APK.
 
 ## Frames, Offset, Target
 
@@ -119,8 +121,8 @@ in 20 s; below 0.15 the entity is removed (`lost`).
 | `visual` | ThingVisual | | Required |
 | `place` | Placement | | Required |
 | `visibleAtStart?` | boolean | `true` | `false` → appears on a `show` action |
-| `occlusion?` | `"auto"` \| `"off"` | `"auto"` | Hidden by real objects when the device can |
-| `grabbable?` | boolean | `false` | Hands/controllers can move it |
+| `occlusion?` | `"auto"` \| `"off"` | `"auto"` | `auto`: hidden behind real walls/furniture when a provider supplies the room's shape (quest-room). `off`: always drawn |
+| `grabbable?` | boolean | `false` | Controller grip or hand pinch grabs and moves it (far away via the ray). Releasing makes that the new spot (`keep: forever` remembers it). Events `grabbed` / `released` and `grabbed:<id>` / `released:<id>` (data `{ thing, hand, by, at, yaw, host? }`). World-mode things only |
 | `tags?` | string[] | | |
 | `ext?` | `Record<extensionId, object>` | | Per-thing extension options |
 
@@ -172,7 +174,7 @@ user). A thing never disappears.
 | `prefer?` | `closest` \| `farthest` \| `largest` \| `center` \| `inView` | `closest` | Score among valid spots (distance to the `near` target, else to the user). Ties keep candidate order (deterministic) |
 | `around?` | Vec2 | `[0.3, 1.0]` | Ring radii for `near` (10 cm steps, 15° steps starting toward the user) |
 | `fallback?` | Placement[] | | Tried in order. A fallback does not inherit `mode`/`keep`; `facing` defaults to `user`. Fallbacks inside fallbacks are ignored |
-| `keep?` | `none` \| `session` \| `forever` | `session` | `none` re-solves whenever the world changes; `forever` remembers the spot relative to its host across launches (world mode only) |
+| `keep?` | `none` \| `session` \| `forever` | `session` | `none` re-solves whenever the world changes; `forever` remembers the spot relative to its host (a scanned surface with an id stable across launches) and is re-remembered when the user moves a grabbable thing (world mode only) |
 
 Always checked: not behind a room wall, not colliding with furniture or already placed things (things are solved in
 dependency order), standing things (bottom < 5 cm) must be on a known floor (when the space has one); things on walls need 10 cm free in front.
@@ -278,7 +280,8 @@ within `stopIfHandWithin` of the target → `handTooClose` (and a `stop` if movi
 `{ start: true }` · `{ every: ms }` (≥ 100) · `{ select: "<thing>.<item>" }` (a panel button) ·
 `{ gaze: thingId, seconds? }` · `{ near: thingId | "user", to: Target, within: m }` · `{ seen: EntityQuery }` ·
 `{ lost: EntityQuery }` · `{ event: name }` · `{ mind: mindId }` (a reply arrived) · `{ placed: thingId }` ·
-`{ fallback: thingId }` (placed by a fallback or the default spot).
+`{ fallback: thingId }` (placed by a fallback or the default spot). Grabbing fires the events `grabbed` / `released`
+and `grabbed:<thing>` / `released:<thing>` — use `{ event: "released:card" }` for one thing.
 
 **Condition**: `{ store: key, eq?, ne?, gt?, lt?, exists? }` · `{ has: EntityQuery }` (the world has one) ·
 `{ not: Condition }`.
@@ -326,10 +329,13 @@ itself; unknown affordance; ranges not `[min, max]`; model/character without `fi
 `id` or duplicate item ids; unknown action kinds; `command` naming an unknown body/command; mind endpoint missing or
 not http(s); `interval` without `everyMs ≥ 200`; `event` run without `event`; `every < 100`; body link not ws(s);
 workspace size ≤ 0; duplicate command names; rosbridge command without `ros`; recording enabled without consent text;
-bad `app.packageName`.
+bad `app.packageName`; `app.logRelay.port` outside 1–65535.
 
 Warnings: head/hand mode without `at`; world placement without `on`/`near`/`at`; `keep: forever` outside world mode;
 nested fallbacks; openai-chat without `model`; camera > 1280 px or sent to a cloud mind; `stopIfHandWithin` < 0.1;
-rule with no actions; camera stream without camera settings; no things.
+rule with no actions; camera stream without camera settings; no things; log relay on; `grabbable` on a head/hand thing.
+With the project folder known (`spatial_validate`, builds) also: animation names (character `animation`, `animate`
+`clip` / `then`, `vrm.playAnimation` in scripts) missing from `Assets/Animations/*.fbx`, and extensions/device this
+editor lacks (errors).
 
 The build (`lower.ts`) additionally fails when a mind's `auth.secret` has no value, and warns when panel items overflow.

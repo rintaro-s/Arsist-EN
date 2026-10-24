@@ -21,6 +21,7 @@ import type {
 import { thingSize } from './solver';
 import type { Mind, PanelItem, SpatialProject, Thing, Vec3 } from './types';
 import { vocabularyForRuntime } from './vocabulary';
+import { VIRTUAL_ROOM_STYLE, type VirtualRoomStyle } from './virtualRoom';
 
 export const SPATIAL_RUNTIME_FORMAT = 'layster.spatial.runtime/1';
 
@@ -70,6 +71,8 @@ export interface SpatialRuntimeData {
   name: string;
   edge: string;
   presentation: SpatialProject['presentation'];
+  /** reality が 'virtual-room' のときの仮の部屋の見た目 (virtualRoom.ts。エディタの 3D と同じ) */
+  virtualRoom?: VirtualRoomStyle;
   interaction: SpatialProject['interaction'];
   vocabulary: ReturnType<typeof vocabularyForRuntime>;
   things: SpatialRuntimeThing[];
@@ -363,7 +366,14 @@ function arSettingsFor(project: SpatialProject): ARSettings {
     remoteControlPassword: '',
     // 現実を見せない設定のときは暗い単色 (仮の部屋はランタイムが描く)
     backgroundMode: project.presentation?.reality === 'virtual-room' ? 'solidColor' : 'passthrough',
-    backgroundColor: '#101014',
+    backgroundColor: VIRTUAL_ROOM_STYLE.background,
+    // 省略なら有効 (UnityBuilder.resolveLogRelay の既定と同じ)。切ったときだけ書く
+    ...(project.app?.logRelay ? {
+      logRelay: {
+        enabled: project.app.logRelay.enabled !== false,
+        ...(project.app.logRelay.port ? { port: project.app.logRelay.port } : {}),
+      },
+    } : {}),
     interaction: {
       controllerRay: project.interaction?.controllers !== false,
       handTracking: project.interaction?.hands === true,
@@ -445,6 +455,7 @@ export function lowerSpatialProject(project: SpatialProject, options: LowerOptio
     name: project.name,
     edge: project.app.edge ?? '',
     presentation: project.presentation,
+    ...(project.presentation?.reality === 'virtual-room' ? { virtualRoom: { ...VIRTUAL_ROOM_STYLE } } : {}),
     interaction: project.interaction,
     vocabulary: vocabularyForRuntime(),
     things: lowered.map((l) => l.runtime),

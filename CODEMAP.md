@@ -53,20 +53,19 @@ Build system: **npm + Vite + tsc + electron-builder** (no CMake/Cargo). Unity pr
 | [project/migrations.ts](src/main/project/migrations.ts) | IR version migrations (`CURRENT_IR_VERSION` in `src/shared/irVersion.ts`); idempotent, tested |
 | `model/` | ONNX inspection without dependencies (`protobuf.ts` + `OnnxInspector.ts`), import into `Assets/Models/`, sample model builder |
 | [unity/UnityBuilder.ts](src/main/unity/UnityBuilder.ts) | **phased headless Unity build** (Virtual and Spatial); license retry; toolchain/SDK detection (largest file) |
-| [adapters/AdapterManager.ts](src/main/adapters/AdapterManager.ts) | Discover/apply device adapter folders |
+| [adapters/AdapterManager.ts](src/main/adapters/AdapterManager.ts) | Read device adapter folders (`adapter.json`, built-in + extensions; lookup via `adapterDirs.ts`) |
 | `platform/` *(added in portability work)* | Centralized OS-dependent detection (Unity/JDK/Android SDK/license/config paths) |
 
 ### Renderer — `src/renderer/`
-Editor views switched by `uiStore.currentView`: `scene` / `ui` / `dataflow` / `script` / `vision`.
+Editor views switched by `uiStore.currentView`: `scene` / `ui` / `script` / `vision` / `models` / `extensions` (`dataflow` is redirected to `ui`; the DataFlow editor parts are kept unmounted, doc/08).
 - `stores/` — Zustand state: `projectStore.ts` (IR), `uiStore.ts` (editor UI), `dataStoreContext.ts` (runtime DataStore).
-- `components/viewport/` — `SceneViewport` (r3f 3D), `UIEditor`/`UICanvas` (2D), `DataFlowEditor`, `ScriptEditor`/`CodeEditor` (Monaco), `VRMViewer`.
+- `components/viewport/` — `SceneViewport` (r3f 3D), `UIEditor` (2D), `DataFlowEditor` (unmounted), `ScriptEditor` (Monaco), `VRMViewer`.
 - `components/panels/` — Left (hierarchy), Right (inspector), Bottom.
 - `components/vision/` — the image-pipeline editor (its tab is hidden unless Settings turns it on; existing
   projects keep building either way): start screen, storyboard (horizontal cards with each step's result picture, kind-coloured wires, drag, bypass), stage (overlay/raw/compare, legend, pixel readout, eyedropper for colour/threshold, drag-to-set viewing rect), timeline (video / photo sequences / device frames), add-step picker (every candidate tried on the current picture via `--probe`), step inspector, outputs (world / anchor / store / image), device import, ONNX model panel; `viewport/VisionEditor.tsx` just re-exports it. Editor-only state in `vision/visionStore.ts`; materials in `vision/testMedia.ts`; drafting/auto-wiring in `vision/draft.ts`; icons in `vision/opIcons.tsx`.
 - `components/character/` — VRM **Character** inspector section (starting animation, blink, breathe, look at the user, FBX import) and the 3D-view preview (`animationRetarget.ts`: humanoid FBX → VRM normalized bones, like three-vrm's Mixamo example); `panels/StorageSection.tsx` — "Saved on the device" (`project.storage.persist`) in the Script tab's right panel; `viewport/RevealText.tsx` — the "write it out" text preview. The Script tab's API drawer is generated from `src/shared/scriptApi.ts`.
 - `components/ai/` — **AssistantPanel** (built-in AI chat), **ExternalChangeBanner**; `ai/packageActions.tsx` — `.arsist` export/import flow.
 - `components/dialogs/` — Build, Settings, NewProject, Preview, MCP (agent registration), **SetupWizard** (SDK/Unity path setup), Error, **IrUpgradeDialog** (old project format).
-- `utils/uiCodeSync.ts` — IR ↔ HTML serialization.
 
 ### Unity runtime engine — `UnityBackend/ArsistBuilder/Assets/Arsist/`
 Interprets the IR at runtime, by domain: `Runtime/Scripting/` (Jint JS host + wrappers; `ScriptRuntimeHost` = timers and main-thread queue, `AudioWrapper`, `CameraWrapper` (stills cropped around a world point), `StorageWrapper`, `JsBridge` = JS⇄CLR values via JSON), `Runtime/Data/ArsistPersistentStore.cs` (store keys kept on the device), `Runtime/Audio/` (WAV/base64 decoding, lip sync), `Runtime/VRM/ArsistCharacter.cs` (animator controller, blink, breathing, look at the user, walkTo), `Runtime/UI/ArsistTextReveal.cs`, `Runtime/Scene/`,
@@ -346,6 +345,9 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   `src/main/mcp/spatialTools.ts`, build = `lower.ts` → `runUnityBuild` (+ `spatial.json` via `UnityBuildConfig.spatialData`,
   extra features via `manifest.requiresFeatures`), runtime `Runtime/Spatial/` + Mind/Body protocols + episodes in
   `doc/20-spatial-runtime.md`, demo servers `python/layster/`, samples `samples/spatial/`.
+- **Drive Arsist from a shell / CI / an agent without MCP** → `scripts/arsist.mjs` (`npm run arsist -- …`, bin `arsist`; args
+  `scripts/lib/cli-args.mjs`, tests `scripts/arsist.test.ts`), `doc/21-cli.md`. It only calls `dist/main` (MCP tools via
+  `callArsistTool`, `SpatialProjectManager`, `UnityBuilder`); add features there, not in the CLI.
 - **Agent skills for writing Layster / building apps** → `skills/` (`layster-spatial`, `layster-virtual`, `layster-mind-server`; Agent Skills format, see `skills/README.md`). Update them when tool names, IR fields or defaults change.
 - **Change the IR's shape** → `npm run ir:new -- "<説明>"`, then write declarative ops in the new
   `defineMigration` (`src/shared/irOps.ts`). An extension's own data changes via its `data.version` /
