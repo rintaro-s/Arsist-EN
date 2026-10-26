@@ -85,6 +85,20 @@ do not carry numbers across.)
    { "tool": "ir_add_canvas_object", "args": { "layoutId": "Quiz", "name": "Quiz panel", "widthMeters": 0.8, "heightMeters": 0.5, "pixelsPerUnit": 1200, "position": { "x": 0, "y": -0.1, "z": 1.5 } } }
    ```
 
+   Cameras (β 1.1.0, `doc/23-cameras-media.md`): `ir_add_camera` films the scene (not the real room; forward = local +Z,
+   default 2 m ahead facing the user); an Image shows it with `source`, or shows a PC screen from `products/ScreenCast`:
+
+   ```json
+   { "tool": "ir_add_camera", "args": { "name": "Front cam", "assetId": "Cam", "settings": { "resolution": [1920, 1080] } } }
+   ```
+
+   ```json
+   { "tool": "ir_add_ui_element", "args": { "layoutId": "Quiz", "type": "Image", "bindingId": "slides", "source": { "kind": "stream", "url": "http://{store:pc.address}/stream/slides" } } }
+   ```
+
+   `{ "kind": "camera", "camera": "Cam", "mirror": true }` makes a mirror. A VRM moved by the user's own head and hands:
+   `ir_update_object` `{ objectId, character: { embody: { hands: "auto" } } }` (only one VRM; hidden from the user, seen by cameras).
+
    Match the layout's `resolution` to the panel (`ir_update_ui_layout` `{ layoutId, resolution: { width: widthMeters × pixelsPerUnit, height: … } }`).
    Show store values with `bind: { key }` instead of setting text in a loop. Elements: Panel, Text, Button, Image,
    Slider, Input, Gauge, Graph, Keyboard; nest with `parentElementId`; `layout` FlexRow | FlexColumn | Absolute.

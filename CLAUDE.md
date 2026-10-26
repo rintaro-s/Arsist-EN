@@ -160,6 +160,11 @@ Runtime automatically. Keep that op table in sync with `ArsistBuildPipeline.Unit
   (`Extensions/vrm10`, replaces `vrm-loader`), and while it is on the build leaves the engine's UniVRM 0.x out. `project.storage.persist` lists store keys kept on the device
   ("memory." = prefix, else exact key; `isPersistedKey` in types.ts and the runtime must agree).
 
+- **Cameras, image sources, embodied VRM (Layster.Virtual β 1.1.0, irVersion 7)** — `doc/23-cameras-media.md`. `type: 'camera'` +
+  `camera`, an Image's `source` (`camera` / MJPEG `stream` with `{store:key}`), `character.embody`. Helpers and checks live in
+  `src/shared/media.ts`; defaults are filled for Unity by `unityScenesData` / `unityUiData` (UnityBridge) on every build path.
+  Camera forward = local +Z; previews hide `userData.arsistEditorOnly` / `arsistHeadLocked` / (unless `showSelf`) `arsistEmbodied`.
+
 - **Agents may edit the IR files directly** and the open editor reloads them (~0.45 s). Scenes / UI layouts exist in
   `project.json` *and* `Scenes/` / `UI/`; `src/main/project/sceneCopies.ts` picks the copy that changed and writes it
   into the other one, and `src/shared/irRepair.ts` fills in missing fields instead of crashing the view. Never make a

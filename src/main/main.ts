@@ -21,6 +21,7 @@ import { ProjectWatcher } from './project/projectWatcher';
 import { closeSpatialWatcher, forgetSpatialProject, registerSpatialIpc } from './layster/spatialIpc';
 import { importAnimation, listAnimations } from './project/animationAssets';
 import { readVrmSpec } from './project/vrmInfo';
+import { unityScenesData, unityUiData } from '../bridge/UnityBridge';
 import { adapterTags } from '../shared/adapterTags';
 import {
   isUnsupportedTextureExtension,
@@ -988,6 +989,9 @@ async function runUnityBuild(buildConfig: any) {
 
   return await unityBuilder.build({
     ...buildConfig,
+    // カメラ・embody・source の既定を埋める (UnityBridge.unityScenesData。何度通しても同じ)
+    ...(Array.isArray(buildConfig?.scenesData) ? { scenesData: unityScenesData(buildConfig.scenesData) } : {}),
+    ...(Array.isArray(buildConfig?.uiData) ? { uiData: unityUiData(buildConfig.uiData) } : {}),
     unityVersion: buildConfig?.unityVersion || unityVersion,
   });
 }

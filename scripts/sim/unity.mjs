@@ -124,7 +124,7 @@ if (isSpatial) {
     spatialData: lowered.spatialData,
   };
 } else {
-  const { generateBuildManifest } = require(dist('bridge', 'UnityBridge.js'));
+  const { generateBuildManifest, unityScenesData, unityUiData } = require(dist('bridge', 'UnityBridge.js'));
   const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
   const project = readJson(path.join(projectDir, 'project.json'));
   // scripts/run-unity-build.js と同じ: 参照だけのシーン / UI は Scenes/ と UI/ から読む
@@ -144,8 +144,8 @@ if (isSpatial) {
       uiCode: project.uiCode,
       scripting: { enabled: scripts.some((sc) => sc.enabled) },
     },
-    scenesData: project.scenes || [],
-    uiData: project.uiLayouts || [],
+    scenesData: unityScenesData(project.scenes || []),
+    uiData: unityUiData(project.uiLayouts || []),
     scriptsData: {
       version: '1.0',
       scripts: scripts.filter((sc) => sc.enabled).map((sc) => ({ id: sc.id, name: sc.name, trigger: sc.trigger, code: sc.code, enabled: sc.enabled })),

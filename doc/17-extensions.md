@@ -59,9 +59,16 @@ IR は Layster と呼び、Layster.Virtual (`project.json`) と Layster.Spatial 
 Extensions/<id>/
   extension.json     何で・どこで動き・どんな設定とデータを持つか (src/shared/extensions.ts の ExtensionManifest)
   Runtime/*.cs       実機で動く C#。ArsistRuntimeExtension を継承した入口を 1 つ
+  Runtime/**/*.java  (任意) Android の Java。隣に .java.meta (PluginImporter で Android だけ) を置く
   Editor/*.cs        ビルド時に動く C# (任意)。ArsistBuildExtension を継承
   README.md
 ```
+
+`Runtime/` と `Editor/` は中身ごと (`.java` や `.meta` も) `Assets/ArsistExtensions/<id>/` に写される。なので Android の
+Java は `Runtime/Android/Foo.java` + `Foo.java.meta` (`platformData` で Android: enabled 1、Editor / Any: 0) を置けば、
+Unity がそのまま Android のプラグインとしてコンパイルする (例: `quest-input` の録画、`Runtime/Android/ArsistRecorder.java`)。
+C# からは `AndroidJavaClass` / `AndroidJNI` で呼ぶ。**呼ぶのはメインスレッドから** (別スレッドは `AttachCurrentThread` が要る。CLAUDE.md)。
+Maven の依存が要るもの (ML Kit や ONNX Runtime のような) は、今はこの口では足せない。
 
 雛形: `npm run ext:new -- <id> [--requires cap:hand-tracking] [--name "表示名"]`。
 そのままビルドが通り、スクリプトから `<名前>.hello('x')` が呼べる見本になっている。

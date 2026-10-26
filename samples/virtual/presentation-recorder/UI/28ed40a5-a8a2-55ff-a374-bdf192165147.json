@@ -1,0 +1,38 @@
+{
+  "id": "28ed40a5-a8a2-55ff-a374-bdf192165147",
+  "name": "Notes",
+  "scope": "canvas",
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "root": {
+    "id": "8f71a3bf-d9c3-548b-a998-35f73c478a4f",
+    "type": "Panel",
+    "layout": "Absolute",
+    "style": {
+      "width": "100%",
+      "height": "100%",
+      "backgroundColor": "#000000"
+    },
+    "children": [
+      {
+        "id": "af2bb5ce-154d-5a41-935d-b92a013a93e4",
+        "type": "Image",
+        "style": {
+          "position": "absolute",
+          "left": 0,
+          "top": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "children": [],
+        "bindingId": "notesImg",
+        "source": {
+          "kind": "stream",
+          "url": "http://{store:pc.address}/stream/notes"
+        }
+      }
+    ]
+  }
+}

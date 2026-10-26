@@ -362,8 +362,8 @@ class ProjectManager {
             else {
                 await fs.writeJSON(path.join(exportDir, 'manifest.json'), manifest, { spaces: 2 });
             }
-            await fs.writeJSON(path.join(exportDir, 'scenes.json'), project.scenes, { spaces: 2 });
-            await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), project.uiLayouts, { spaces: 2 });
+            await fs.writeJSON(path.join(exportDir, 'scenes.json'), (0, UnityBridge_1.unityScenesData)(project.scenes), { spaces: 2 });
+            await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), (0, UnityBridge_1.unityUiData)(project.uiLayouts), { spaces: 2 });
             if (project.dataFlow) {
                 await fs.writeJSON(path.join(exportDir, 'dataflow.json'), project.dataFlow, { spaces: 2 });
             }

@@ -58,6 +58,7 @@ const projectWatcher_1 = require("./project/projectWatcher");
 const spatialIpc_1 = require("./layster/spatialIpc");
 const animationAssets_1 = require("./project/animationAssets");
 const vrmInfo_1 = require("./project/vrmInfo");
+const UnityBridge_1 = require("../bridge/UnityBridge");
 const adapterTags_1 = require("../shared/adapterTags");
 const assets_1 = require("../shared/assets");
 const childProcesses_1 = require("./platform/childProcesses");
@@ -975,6 +976,9 @@ async function runUnityBuild(buildConfig) {
     unityBuilder.setExtensionUserDir((0, catalogService_1.getUserExtensionsDir)());
     return await unityBuilder.build({
         ...buildConfig,
+        // カメラ・embody・source の既定を埋める (UnityBridge.unityScenesData。何度通しても同じ)
+        ...(Array.isArray(buildConfig?.scenesData) ? { scenesData: (0, UnityBridge_1.unityScenesData)(buildConfig.scenesData) } : {}),
+        ...(Array.isArray(buildConfig?.uiData) ? { uiData: (0, UnityBridge_1.unityUiData)(buildConfig.uiData) } : {}),
         unityVersion: buildConfig?.unityVersion || unityVersion,
     });
 }

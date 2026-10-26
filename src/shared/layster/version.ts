@@ -44,6 +44,7 @@ export const VIRTUAL_FORMATS: Record<number, { stage: LaysterStage; version: str
   4: { stage: 'alpha', version: '4' },
   5: { stage: 'alpha', version: '5' },
   6: { stage: 'beta', version: '1.0.0' },
+  7: { stage: 'beta', version: '1.1.0' },
   // @virtual-formats-end (npm run ir:new はこの行の上に足す)
 };
 

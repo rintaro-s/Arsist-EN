@@ -164,19 +164,19 @@ Debugging: `ARSIST_DEBUG_WATCH=1` prints when each change is seen and when the e
 
 ---
 
-## Tools (57)
+## Tools (58)
 
-43 general / Layster.Virtual tools + 14 Layster.Spatial tools. `projectPath` is optional everywhere once a project is
+44 general / Layster.Virtual tools + 14 Layster.Spatial tools. `projectPath` is optional everywhere once a project is
 open (`ARSIST_PROJECT_PATH` / `arsist_open_project`). The server logs the count on start (`[arsist-mcp] ready: N tools`).
 
 | Group | Tools |
 |---|---|
 | Session | `arsist_open_project`, `arsist_list_recent_projects`, `arsist_script_reference` |
-| Project | `ir_get_project`, `ir_validate_project`, `ir_list_devices`, `ir_set_target_device`, `ir_update_ar_settings` |
-| Scene | `ir_list_scene_objects`, `ir_get_scene_object`, `ir_add_primitive`, `ir_import_model_asset` (.glb/.gltf/.vrm), `ir_place_model` (a VRM gets the default `character`), `ir_update_object_transform`, `ir_update_object` (also a VRM's `character`, a canvas panel's size / pixel density / layout), `ir_remove_scene_object`, `ir_add_canvas_object` |
+| Project | `ir_get_project`, `ir_validate_project` (also: images showing a missing camera, stream urls, camera resolutions, more than one embodied VRM), `ir_list_devices`, `ir_set_target_device`, `ir_update_ar_settings` |
+| Scene | `ir_list_scene_objects`, `ir_get_scene_object`, `ir_add_primitive`, `ir_import_model_asset` (.glb/.gltf/.vrm), `ir_place_model` (a VRM gets the default `character`), `ir_update_object_transform`, `ir_update_object` (also a VRM's `character` incl. `embody`, a canvas panel's size / pixel density / layout, a camera's `camera` settings — validated, `null` embody turns it off), `ir_remove_scene_object`, `ir_add_canvas_object`, `ir_add_camera` (a virtual camera: name, assetId, position, rotation, settings; default 2 m ahead facing the user — doc/23) |
 | Characters | `ir_import_animation` (humanoid FBX → `Assets/Animations/<name>.fbx`, the name is what scripts and `character.animation` use), `ir_list_animations` |
 | Saving | `ir_set_storage` (`project.storage.persist`: store keys kept on the device) |
-| UI | `ir_list_ui_layouts`, `ir_get_ui_layout`, `ir_add_ui_layout`, `ir_update_ui_layout` (name, resolution), `ir_remove_ui_layout`, `ir_add_ui_element`, `ir_update_ui_element`, `ir_remove_ui_element` (elements by id or `bindingId`; `reveal { speed }` writes text out letter by letter) |
+| UI | `ir_list_ui_layouts`, `ir_get_ui_layout`, `ir_add_ui_layout`, `ir_update_ui_layout` (name, resolution), `ir_remove_ui_layout`, `ir_add_ui_element`, `ir_update_ui_element`, `ir_remove_ui_element` (elements by id or `bindingId`; `reveal { speed }` writes text out letter by letter; an Image's `source` = `{ kind: "camera", camera, mirror? }` (must name an existing camera) or `{ kind: "stream", url, mirror? }`, `null` = back to its picture) |
 | DataFlow | `ir_add_datasource`, `ir_update_datasource`, `ir_remove_datasource`, `ir_add_transform`, `ir_update_transform`, `ir_remove_transform` |
 | Scripts | `ir_list_scripts`, `ir_get_script`, `ir_check_script`, `ir_add_script`, `ir_update_script`, `ir_remove_script` — the trigger is validated and code with a syntax error is refused (with the line) |
 | Extensions | `ir_list_extensions`, `ir_set_extension`, `ir_set_object_extension` — values are checked against the extension's `extension.json` fields |

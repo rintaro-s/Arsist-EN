@@ -15,6 +15,8 @@ import { PerceptionTargetInspector, PerceptionTaskInspector, ObjectAnchorSection
 import { ObjectExtensionsSection, ProjectExtensionsSection } from './ExtensionsSection';
 import { CharacterSection } from '../character/CharacterSection';
 import { VrmFormatNotice } from '../character/VrmFormatNotice';
+import { CameraSection } from '../camera/CameraSection';
+import { MediaSourceSection } from '../camera/MediaSourceSection';
 import { useT } from '../../i18n';
 
 export function RightPanel() {
@@ -259,6 +261,9 @@ function ObjectInspector() {
           );
         })()}
 
+        {/* Virtual camera (camera, β1.1.0 — doc/23) */}
+        {obj.type === 'camera' && <CameraSection object={obj} />}
+
         {/* Character (VRM: animation, blink, breathing, looking at the user — IR v5) */}
         {obj.type === 'vrm' && <VrmFormatNotice object={obj} />}
         {obj.type === 'vrm' && <CharacterSection object={obj} />}
@@ -454,6 +459,11 @@ function UIInspector() {
           <Field label={t('rightPanel.text')}>
             <input className="input text-xs" value={element.content || ''} onChange={(e) => update({ content: e.target.value })} />
           </Field>
+        )}
+
+        {/* What an Image shows: its picture, a camera or a stream (element.source, β1.1.0 — doc/23) */}
+        {element.type === 'Image' && (
+          <MediaSourceSection element={element} onChange={(source) => update({ source })} />
         )}
 
         {/* Write it out (element.reveal, IR v5) */}

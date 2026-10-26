@@ -50,6 +50,7 @@ namespace Arsist.Runtime.Scripting
         private AudioWrapper _audioWrapper;
         private CameraWrapper _cameraWrapper;
         private StorageWrapper _storageWrapper;
+        private CamerasWrapper _camerasWrapper;
 
         /// <summary>
         /// 非同期ロード結果を保持するフィールド
@@ -104,6 +105,7 @@ namespace Arsist.Runtime.Scripting
             _audioWrapper = new AudioWrapper(_js);
             _cameraWrapper = new CameraWrapper(_js, _viewerWrapper);
             _storageWrapper = new StorageWrapper(_js);
+            _camerasWrapper = new CamerasWrapper(_js);
 
             // タイマー・後で呼ぶ仕事 (scene.moveTo など)・端末に保存する値は、この GameObject で回す
             ScriptRuntimeHost.Ensure(gameObject, _js);
@@ -122,6 +124,7 @@ namespace Arsist.Runtime.Scripting
             _engine.SetValue("audio", _audioWrapper);
             _engine.SetValue("camera", _cameraWrapper);
             _engine.SetValue("storage", _storageWrapper);
+            _engine.SetValue("cameras", _camerasWrapper);
             _engine.SetValue("__arsistTimers", new TimersWrapper());
             _engine.SetValue("log", new Action<object>(msg =>
                 Debug.Log($"[ArsistJS] {msg}")));

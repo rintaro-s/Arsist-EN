@@ -6,6 +6,7 @@
 //   - 変化を出来事にする (InputEvents → スクリプトの on() と "quest-input:*" イベント)
 //   - 今の値を store に入れる (UI の bind にそのまま使える。変わったときだけ書く)
 //   - つかめる物を動かす (GrabSystem)
+//   - 仮想カメラの画を録画する (Recorder)。マイクの音量はエンジンにも渡す (キャラクターの口パク)
 // どの入力も、使えないとき (コントローラーを置いた・手が見えない・許可が無い) は
 // 理由をログに 1 度だけ出し、値は「無い」を返す (落ちない)。
 // ==============================================
@@ -31,6 +32,7 @@ namespace Arsist.Extensions.QuestInput
         internal MicCapture Mic { get; private set; }
         internal KeyboardInput Keyboard { get; } = new KeyboardInput();
         internal GrabSystem Grab { get; private set; }
+        internal Recorder Recorder { get; private set; }
         internal ArsistExtensionContext Context => _ctx;
 
         /// <summary>controllers / hands / none</summary>
@@ -78,6 +80,8 @@ namespace Arsist.Extensions.QuestInput
                 Publish($"input.{hand}.holding", change > 0 ? id : "");
             };
 
+            Recorder = new Recorder(context, Mic, Publish);
+
             SubscribeHeadset();
             _handsSince = Time.unscaledTime;
             if (context.GetBool("micAutoStart", false)) Mic.Start();
@@ -89,6 +93,7 @@ namespace Arsist.Extensions.QuestInput
 
         private void OnDestroy()
         {
+            Recorder?.Dispose();
             UnsubscribeHeadset();
             Mic?.Stop();
             Keyboard.Close(false);
@@ -106,8 +111,17 @@ namespace Arsist.Extensions.QuestInput
             UpdateMode();
             Grab.Update(Controllers, Hands, Time.deltaTime > 0 ? Time.deltaTime : dt);
             Mic.Update(dt);
+            // 声の大きさをエンジンへ (character.embody の口パク)。止まっていれば渡さない (エンジン側で 0.5 秒後に 0)
+            if (Mic.Active) _ctx.SetVoiceLevel(Mic.Level);
+            Recorder.Update();
             UpdateKeyboard();
             UpdateHeadsetValues(cam);
+        }
+
+        /// <summary>ヘッドセットを外した・ホームに戻ったとき。録画中なら止めて保存する。</summary>
+        private void OnApplicationPause(bool paused)
+        {
+            Recorder?.OnApplicationPause(paused);
         }
 
         // ---- コントローラー ----

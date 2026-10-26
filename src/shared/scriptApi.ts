@@ -89,6 +89,8 @@ export const ENGINE_SCRIPT_API: ScriptApiSection[] = [
       { sig: 'ui.setVisibility(bindingId, bool) / ui.setColor(bindingId, "#RRGGBB") / ui.setAlpha(bindingId, 0..1)', en: 'Show/hide, colour, transparency', ja: '表示・色・透明度' },
       { sig: 'ui.on(name, fn) / ui.off(name)', en: 'Receive a script event inside this script: a Button\'s bindingId ("start"), an Input/Keyboard\'s "<bindingId>:submit", an extension\'s "<id>:<what>". One script can handle every button; event-trigger scripts still run too', ja: 'スクリプトのイベントをこのスクリプトの中で受ける: ボタンの bindingId ("start")・入力やキーボードの "<bindingId>:submit"・拡張機能の "<id>:<何>"。ボタンごとにスクリプトを分けなくてよい (trigger が event のスクリプトも今までどおり動く)' },
       { sig: 'ui.triggerEvent(name)', en: 'Fire a script event', ja: 'スクリプトのイベントを鳴らす' },
+      { sig: 'ui.setSource(bindingId, source)', en: 'Change what an Image shows: { kind: "camera", camera: "<camera assetId>", mirror } (a virtual camera, live; mirror flips it like a mirror), { kind: "stream", url: "http://{store:pc.address}/stream/slides", mirror } (an MJPEG stream such as a PC screen from products/ScreenCast; {store:key} is that store value and it reconnects when the value changes), or null for its own picture again', ja: '画像に映すものを変える: { kind: "camera", camera: "<カメラの assetId>", mirror } (仮想カメラの映像。mirror で鏡のように左右反転)、{ kind: "stream", url: "http://{store:pc.address}/stream/slides", mirror } (PC の画面など MJPEG の配信。products/ScreenCast。{store:キー} はストアの値で、変わるとつなぎ直す)、null で元の画像に戻す' },
+      { sig: 'ui.streamStatus(bindingId)', en: 'State of a stream image: "waiting" (url has an empty {store:…}) / "connecting" / "live" / "error: …". Also in the store as media.<bindingId>.status (and media.<bindingId>.fps), so a Text can show it with bind', ja: '配信の画像の状態: "waiting" (url の {store:…} が空) / "connecting" / "live" / "error: …"。ストアの media.<bindingId>.status (と media.<bindingId>.fps) にも入るので、Text の bind で出せる' },
     ],
   },
   {
@@ -137,6 +139,8 @@ export const ENGINE_SCRIPT_API: ScriptApiSection[] = [
       { sig: 'vrm.setHandTarget(id, "left"|"right", x, y, z) / vrm.clearHandTarget(id, side)', en: 'Reach (point) with a hand towards a point (arm IK)', ja: '手をその点へ伸ばす (指差し。腕の IK)' },
       { sig: 'vrm.bonePosition(id, bone)', en: '{ x, y, z } of a humanoid bone (Head, LeftHand, Chest …) — e.g. to check whether the user\'s hand touches the head', ja: '人型のボーン (Head, LeftHand, Chest …) の位置。手で頭に触れたかの判定などに' },
       { sig: 'vrm.setBoneRotation(id, bone, p, y, r)', en: 'Rotate a bone directly', ja: 'ボーンを直接回す' },
+      { sig: 'vrm.embody(id, bool)', en: 'Move this VRM as your own body (on) or let it go back to being a character (off): its head follows your head, its hands your controllers or tracked hands, its mouth your voice; you do not see it yourself but cameras do (character.embody in the inspector)', ja: 'この VRM を自分の体として動かす (on) / キャラクターに戻す (off)。頭は自分の頭、手はコントローラーか手、口は声で動く。自分の目には写らず、カメラには写る (インスペクタの character.embody)' },
+      { sig: 'vrm.calibrate(id)', en: 'Measure your height again (stand straight, look ahead) and resize the embodied VRM to it', ja: '背を測り直して (まっすぐ立って前を見る)、自分の体の VRM の大きさを合わせる' },
     ],
   },
   {
@@ -158,6 +162,19 @@ export const ENGINE_SCRIPT_API: ScriptApiSection[] = [
       { sig: 'camera.available()', en: 'Whether this device can give camera pictures', ja: 'この端末でカメラの画が取れるか' },
       { sig: 'camera.capture([{ maxWidth, quality, around: { x, y, z, size } }], fn(r))', en: 'Take a still: r = { ok, image (base64 JPEG), mime, width, height, pose, region, error } (error "noCamera" / "timeout" — e.g. permission refused). around: only the part of the picture showing a square of size metres around that world point (e.g. the desk) — to send just that region to a vision API', ja: '静止画を撮る: r = { ok, image (base64 JPEG), mime, width, height, pose, region, error } (error は "noCamera" / "timeout" (許可されなかった等))。around: そのワールドの点のまわり size m 四方が写っている部分だけ (例: 机)。その部分だけを画像 API に送るときに' },
       { sig: 'camera.project(x, y, z)', en: 'Where a world point appears in the camera picture: { x, y (0..1 from the top-left), inView, ready } — ready is false until the first picture has been taken', ja: 'ワールドの点がカメラの画のどこに写るか: { x, y (左上から 0..1), inView, ready }。最初の 1 枚を撮るまでは ready が false' },
+    ],
+  },
+  {
+    name: 'cameras',
+    color: '#ce9178',
+    en: 'Virtual cameras placed in the scene (camera objects, by assetId). They film the scene — not the real room — for Image sources and recording. Coordinates are the editor\'s (Virtual: metres, +Z ahead, +X the user\'s left), angles in degrees',
+    ja: 'シーンに置いた仮想カメラ (カメラの物を assetId で)。現実の部屋ではなくシーンを撮る (画像の source・録画用)。座標はエディタと同じ (Virtual: メートル、+Z が前、+X がユーザーの左)、角度は度',
+    entries: [
+      { sig: 'cameras.list()', en: 'Ids of the cameras in this app (an array)', ja: 'このアプリのカメラの id の配列' },
+      { sig: 'cameras.setPose(id, x, y, z, rx, ry, rz) / cameras.getPose(id)', en: 'Move / turn a camera in the runtime world (same axes as scene.setPosition: x = right); getPose returns { x, y, z, rx, ry, rz, fov } or null', ja: 'カメラを動かす・向ける。座標は実行中の世界 (scene.setPosition と同じ、x = 右)。getPose は { x, y, z, rx, ry, rz, fov }。無ければ null' },
+      { sig: 'cameras.lookAt(id, x, y, z)', en: 'Point the camera at a point', ja: 'カメラをその点に向ける' },
+      { sig: 'cameras.setFov(id, degrees)', en: 'Vertical field of view (zoom)', ja: '縦の画角 (ズーム)' },
+      { sig: 'cameras.snapshot(id, fn(r))', en: 'The current picture as a JPEG: r = { ok, mime, width, height, data (base64) } — e.g. to send to a vision API', ja: '今の画を JPEG で: r = { ok, mime, width, height, data (base64) }。画像 API に送るときなどに' },
     ],
   },
   {

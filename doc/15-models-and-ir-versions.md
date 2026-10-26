@@ -186,9 +186,10 @@ IR (第2層) の名前は **Layster** で、今までの `project.json` の形�
 |---|---|
 | 1〜5 | **α1〜α5** (今までの版) |
 | 6 | **Layster.Virtual β 1.0.0** (形は α5 と同じ。先頭に `layster` の見出しが入る) |
+| 7 | **Layster.Virtual β 1.1.0** (カメラ `type: 'camera'` + `camera`、UI の画像の `source`、VRM の `character.embody`。項目を足しただけで移行の ops は空。doc/23) |
 
 `project.json` は版の数 `irVersion` (`src/shared/irVersion.ts` の `CURRENT_IR_VERSION`、無ければ 1) と、
-β からは見出し `"layster": { "profile": "virtual", "stage": "beta", "version": "1.0.0" }` を持つ。
+β からは見出し `"layster": { "profile": "virtual", "stage": "beta", "version": "1.1.0" }` (今の版) を持つ。
 **版の判定は数で行い、見出しは人とエージェントのため**。数と名前の対応は `src/shared/layster/version.ts` の
 `VIRTUAL_FORMATS` だけが持ち、画面・ログ・エージェント向けの文は `describeVirtualIrVersion` / `formatLayster` を通す
 (「IR v5」とは書かず「Layster.Virtual α5」)。数を残しているのは、α のエディタが β のファイルを
@@ -222,7 +223,7 @@ Unity と同じ振る舞い:
 4. `migrations.test.ts` に「古い形 → 新しい形」を足す
 
 版の履歴: α2 で `irVersion` と `models`、α3 でモデルの `use` (画像 / 文章 / テンソル) と `text` (doc/16)、
-α4 で拡張機能、α5 でキャラクターと保存、β 1.0.0 で `layster` の見出し。
+α4 で拡張機能、α5 でキャラクターと保存、β 1.0.0 で `layster` の見出し、β 1.1.0 でカメラ・画像に映すもの・自分の体 (doc/23)。
 
 Unity 側のマニフェストにも `irVersion` と `layster` を入れている。実機のログから「どの版のエディタで作った APK か」が追える。
 

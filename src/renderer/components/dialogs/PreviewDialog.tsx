@@ -1,4 +1,6 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect, useContext } from 'react';
+import { MediaPlaceholder, MediaViewContext } from '../camera/MediaPlaceholder';
+import { findCameraObject } from '../../../shared/media';
 import { createPortal } from 'react-dom';
 import { X, Eye, Monitor, Compass, Zap } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
@@ -29,6 +31,8 @@ export function SimpleUIRenderer({ element }: { element: UIElement }) {
     // outside provider
   }
   const data = storeCtx?.data || {};
+  const media = useContext(MediaViewContext);
+  const project = useProjectStore((s) => s.project);
 
   const resolveContent = (el: UIElement): string => {
     if (el.bind?.key) {
@@ -78,6 +82,18 @@ export function SimpleUIRenderer({ element }: { element: UIElement }) {
     return (
       <div style={{ ...styleObj, cursor: 'pointer', userSelect: 'none' }}>
         {resolveContent(element) || t('preview.button')}
+      </div>
+    );
+  }
+
+  if (element.type === 'Image' && element.source) {
+    const src = element.source;
+    const label = src.kind === 'camera'
+      ? t('media.cameraPlaceholder', { name: media?.cameraName?.(src.camera) ?? (project ? findCameraObject(project, src.camera)?.name : undefined) ?? src.camera })
+      : t('media.streamPlaceholder', { url: src.url });
+    return (
+      <div style={styleObj}>
+        <MediaPlaceholder source={src} label={label} shot={src.kind === 'camera' ? media?.shot?.(src.camera) : undefined} />
       </div>
     );
   }

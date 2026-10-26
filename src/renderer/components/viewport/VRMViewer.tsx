@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { isEmbodied } from '../../../shared/media';
 import type { VRM } from '@pixiv/three-vrm';
 import { SceneTransformControls } from './SceneTransformControls';
 import { useProjectStore } from '../../stores/projectStore';
@@ -89,7 +90,8 @@ export const VRMViewer = memo(function VRMViewer({ object, isSelected, transform
     <>
       <group
         ref={setGroup}
-        userData={{ arsistObjectId: object.id }}
+        // arsistEmbodied: 自分の体の VRM。カメラの画 (showSelf: false) からは外す (CameraPreview)
+        userData={{ arsistObjectId: object.id, arsistEmbodied: isEmbodied(object) }}
         position={[object.transform.position.x, object.transform.position.y, object.transform.position.z]}
         rotation={[
           THREE.MathUtils.degToRad(object.transform.rotation.x),

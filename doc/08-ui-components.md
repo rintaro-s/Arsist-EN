@@ -51,6 +51,7 @@ A full-screen [React Three Fiber](https://docs.pmnd.rs/react-three-fiber) `<Canv
 |---------|---------------|
 | `vrm` | `VRMViewer` |
 | `model` | `ModelObject` (GLB/GLTF via `GltfScene`) |
+| `camera` | `CameraObject` (`components/camera/CameraGizmo.tsx`: body + lens + view cone from `fov`/`resolution`, forward = local +Z; the gizmo moves/rotates, never scales) |
 | Anything else | `SceneObjectMesh` (primitive / canvas) |
 
 `SceneObjectMesh` creates THREE.js geometry from `primitiveType`:
@@ -71,6 +72,16 @@ anchor's group so the gizmo edits the offset.
 - `GizmoHelper` (bottom-right) — orientation cube showing camera direction.
 - Lines use `StableLine`, never drei's `<Line>` (see CLAUDE.md).
 
+### Camera view (β1.1.0, doc/23)
+
+While a camera object is selected, `CameraPreview` draws what it sees into a small window at the bottom left of the
+same WebGL canvas (`useFrame` priority 2, after drei's GizmoHelper/Hud has drawn the normal view; scissor + viewport, no
+read-back). It hides what the device's camera does not film (`components/camera/cameraView.ts` `hideForCameraView`):
+`userData.arsistEditorOnly` (grid, axes, spawn marker, AR guides, camera gizmos), `TransformControls`, head-locked UI
+(`arsistHeadLocked`), and — when `showSelf` is off — the embodied VRM (`userData.arsistEmbodied`, set by `VRMViewer`).
+Anchored cameras get no preview (their placement is provisional). "Add camera" is in the toolbar and the + menu
+(`newCameraObject`: 2 m ahead, facing the user, assetId `Camera`, `Camera2`, …).
+
 ### AR Mode Guides
 
 - `floating_screen` → grey wireframe plane (1.6 × 0.9) at `(0,0,2)`
@@ -88,6 +99,9 @@ Key behaviours:
 - Selected element shows resize handles and a blue outline.
 - Dragging moves the element (updates `style.left` / `style.top` for Absolute layouts).
 - Property changes bubble up through `updateUIElement`.
+- An Image with `source` (β1.1.0) draws `MediaPlaceholder` (`components/camera/`): a dark checker with "● Camera: <name>"
+  or "▶ Stream: <url>" (⇋ when mirrored). The same placeholder is used by the preview dialog's `SimpleUIRenderer`, where
+  the preview simulator can also pass the camera's actual view (`MediaViewContext`).
 
 ---
 
@@ -152,8 +166,9 @@ Flat list:
 2. **Transform** — position/rotation/scale (X/Y/Z inputs)
 3. **Material** — color picker, metallic/roughness (when the object has a material)
 4. **Canvas Settings** — layoutId selector, widthMeters/heightMeters/pixelsPerUnit (only for `type === 'canvas'`)
-5. **VRM** — `VrmFormatNotice`, `CharacterSection` (animation, blink, breathe, lookAtUser), `VRMCapabilitiesPanel` (expressions/bones) (only for `type === 'vrm'`)
-6. `ObjectAnchorSection` (attach to an image anchor) and `ObjectExtensionsSection` (`SceneObject.ext.<id>`)
+5. **VRM** — `VrmFormatNotice`, `CharacterSection` (animation, blink, breathe, lookAtUser, and "Move as my body" = `character.embody`: hands, lip sync, hide from self, match height; warns when another VRM is embodied too), `VRMCapabilitiesPanel` (expressions/bones) (only for `type === 'vrm'`)
+6. **Camera** — `CameraSection` (`components/camera/`): fov, resolution presets 1920×1080 / 1280×720 / 1080×1920 or custom, fps, background colour, showSelf, showGizmo, how many images show it (only for `type === 'camera'`)
+7. `ObjectAnchorSection` (attach to an image anchor) and `ObjectExtensionsSection` (`SceneObject.ext.<id>`)
 
 ### `UIInspector`
 
@@ -165,6 +180,8 @@ Shows for the currently selected `UIElement`:
 - Element-type tips (Slider, Gauge, Graph)
 - For `Keyboard`: the row layout lives in `content`, the typed text goes to `bind.key`, and pressing ⏎
   fires `<bindingId>:submit` (same contract as `Input`, which opens the device keyboard instead)
+- `MediaSourceSection` (Image only, β1.1.0): Picture / Camera (pick a camera object, mirror) / Stream (MJPEG url with
+  `{store:key}`, mirror) → `element.source`
 - `RevealSection` (text reveal animation)
 - Layout selector (Panel only)
 - Width/Height inputs

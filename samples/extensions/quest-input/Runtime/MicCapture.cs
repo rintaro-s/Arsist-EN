@@ -8,6 +8,7 @@
 //   - 音量 (0..1) と、話し始め / 話し終わり (VoiceActivity) を出す
 //   - 話し終わったら、その発話 (少し前から) を WAV (既定 16 kHz) で渡す
 //     → スクリプトから音声認識 API に送ったり、モデルに渡したりできる
+//   - 生のサンプルを RawSamples で流す (録画の音)
 //
 // 端末上の音声認識は入れていない (Quest には Android 標準の音声認識サービスが無い)。
 // 計算は MicMath (UnityEngine 非依存、検証済み)。
@@ -56,6 +57,12 @@ namespace Arsist.Extensions.QuestInput
 
         /// <summary>話し始め (+1) / 話し終わり (-1、発話の WAV 付き)。</summary>
         public event Action<int, Dictionary<string, object>> VoiceChanged;
+
+        /// <summary>
+        /// 読んだばかりの生のサンプル (モノラル、-1..1、SampleRate Hz)。録画 (Recorder) が AAC にする。
+        /// 配列は使い回すので、受け取った中ですぐ使い切ること (samples の先頭 count 個が今回の分)。
+        /// </summary>
+        public event Action<float[], int> RawSamples;
 
         public int OutputRate = 16000;
 
@@ -184,6 +191,7 @@ namespace Arsist.Extensions.QuestInput
             // 複数チャンネルなら平均してモノラルに
             var mono = channels == 1 ? buffer : ToMono(buffer, frames, channels);
             _ring.Append(mono, 0, frames);
+            RawSamples?.Invoke(mono, frames);
 
             var rms = MicMath.Rms(mono, 0, frames);
             Level = MicMath.Level(rms);

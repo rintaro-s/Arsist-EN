@@ -466,6 +466,7 @@ internal static class Program
         _failures += QuestInputChecks.Run();
         _failures += ScriptRuntimeChecks.Run();
         _failures += SpatialChecks.Run();
+        _failures += MjpegChecks.Run();
 
         Console.WriteLine(_failures == 0 ? "\nALL CHECKS PASSED" : $"\n{_failures} CHECK(S) FAILED");
         return _failures == 0 ? 0 : 1;

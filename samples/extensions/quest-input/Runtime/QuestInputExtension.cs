@@ -4,6 +4,7 @@
 //
 // Quest の入力 (Touch コントローラー・ハンドトラッキング・システム / 物理キーボード・マイク・
 // ヘッドセットの状態) を、スクリプト (controller / hands / mic / keyboard / headset)、
+// 仮想カメラの録画 (recorder、Android の MediaCodec で MP4)、
 // store (input.* / mic.* / keyboard.* / headset.*)、スクリプトイベント (quest-input:*) と、
 // コードを書かない「つかめる物」として使えるようにする。
 //
@@ -35,6 +36,7 @@ namespace Arsist.Extensions.QuestInput
             script.Set("mic", new MicApi(script, () => Service));
             script.Set("keyboard", new KeyboardApi(script, () => Service));
             script.Set("headset", new HeadsetApi(script, () => Service));
+            script.Set("recorder", new RecorderApi(script, () => Service));
         }
 
         public override void OnStart(ArsistExtensionContext context)

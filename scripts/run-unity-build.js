@@ -6,7 +6,7 @@ const { UnityBuilder } = require(path.join('..', 'dist', 'main', 'main', 'unity'
 // マニフェストは自前で組まず、エディタのビルド画面と同じ generateBuildManifest を使う。
 // ここに写しを置くと必ず本体から取り残される (ターゲット0個+タスクありのプロジェクトを
 // 丸ごと落とす古いゲートや、models が抜けた写しが実際にあった)。
-const { generateBuildManifest } = require(path.join('..', 'dist', 'main', 'bridge', 'UnityBridge'));
+const { generateBuildManifest, unityScenesData, unityUiData } = require(path.join('..', 'dist', 'main', 'bridge', 'UnityBridge'));
 const { getConfigStorePath } = require(path.join(__dirname, 'lib', 'config-path'));
 
 function readJson(p) {
@@ -111,8 +111,8 @@ function pickFirstExisting(paths) {
     developmentBuild: process.env.ARSIST_DEVELOPMENT_BUILD === 'true',
     manualLicenseFile: manualLicenseFile || undefined,
     manifestData,
-    scenesData: project.scenes || [],
-    uiData: project.uiLayouts || [],
+    scenesData: unityScenesData(project.scenes || []),
+    uiData: unityUiData(project.uiLayouts || []),
     scriptsData,
     logicCode: '',
     buildTimeoutMinutes: 60,

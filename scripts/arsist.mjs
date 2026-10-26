@@ -498,7 +498,7 @@ command('build', {
       for (const w of v.warnings) log(`[arsist] WARNING: ${w}`);
       if (!v.ok && !options['skip-validate']) return { ok: false, stage: 'validate', path: kind.dir, errors: v.errors, warnings: v.warnings };
       const { readProjectFiles } = dist('main/project/projectIO');
-      const { generateBuildManifest } = dist('bridge/UnityBridge');
+      const { generateBuildManifest, unityScenesData, unityUiData } = dist('bridge/UnityBridge');
       const project = await readProjectFiles(kind.dir);
       const targetDevice = device || project.targetDevice || 'XREAL_One';
       const scripts = project.scripts ?? [];
@@ -506,8 +506,8 @@ command('build', {
       plan = {
         targetDevice,
         manifestData: generateBuildManifest(project, { targetDevice }),
-        scenesData: project.scenes ?? [],
-        uiData: project.uiLayouts ?? [],
+        scenesData: unityScenesData(project.scenes ?? []),
+        uiData: unityUiData(project.uiLayouts ?? []),
         scriptsData: {
           version: '1.0',
           scripts: scripts.filter((s) => s.enabled).map((s) => ({ id: s.id, trigger: s.trigger, code: s.code, enabled: s.enabled })),

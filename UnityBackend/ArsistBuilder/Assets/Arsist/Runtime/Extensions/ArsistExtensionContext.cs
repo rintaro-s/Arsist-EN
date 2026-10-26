@@ -130,6 +130,14 @@ namespace Arsist.Runtime.Extensions
         /// </summary>
         public Arsist.Runtime.Spatial.SpatialAccess Spatial => Arsist.Runtime.Spatial.SpatialAccess.Instance;
 
+        // ---- 仮想カメラと声 (Layster.Virtual β1.1.0〜、doc/23) ----
+
+        /// <summary>シーンに置いた仮想カメラ。Require して Rendered で画を受け取る (録画など)。</summary>
+        public Arsist.Runtime.Media.ArsistCameras Cameras => Arsist.Runtime.Media.ArsistCameras.Instance;
+
+        /// <summary>声の大きさ (0..1) を渡す。マイクを持つ拡張機能が毎フレーム呼ぶ。キャラクターの口パクが使う。</summary>
+        public void SetVoiceLevel(float level01) => Arsist.Runtime.Media.ArsistVoice.SetLevel(level01, Id);
+
         // ---- ログ (npm run logs にも流れる) ----
 
         public void Log(string message) => Debug.Log($"[Arsist:{Id}] {message}");

@@ -6,14 +6,16 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SimpleUIRenderer } from '../components/dialogs/PreviewDialog';
 import type { UILayoutData } from '../../shared/types';
+import { MediaViewContext, type MediaView } from '../components/camera/MediaPlaceholder';
 
 const MAX_SIDE = 2048;
 const FONT = "system-ui, 'Noto Sans CJK JP', 'Noto Sans JP', sans-serif";
 
-export async function rasterizeLayout(layout: UILayoutData): Promise<HTMLCanvasElement> {
+/** media: 画像の source の見え方 (カメラの名前とカメラから見た画。doc/23) */
+export async function rasterizeLayout(layout: UILayoutData, media: MediaView | null = null): Promise<HTMLCanvasElement> {
   const width = Math.max(1, Math.round(layout.resolution?.width || 1024));
   const height = Math.max(1, Math.round(layout.resolution?.height || 1024));
-  const markup = renderToStaticMarkup(createElement(SimpleUIRenderer, { element: layout.root }));
+  const markup = renderToStaticMarkup(createElement(MediaViewContext.Provider, { value: media }, createElement(SimpleUIRenderer, { element: layout.root })));
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
     `<foreignObject x="0" y="0" width="100%" height="100%">` +

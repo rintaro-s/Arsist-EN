@@ -2,7 +2,7 @@
  * Arsist Engine - Bridge Layer
  * エディタデータをUnityが解釈可能な形式に変換
  */
-import type { ArsistProject, ModelDefinition } from '../shared/types';
+import type { ArsistProject, ModelDefinition, SceneData, UILayoutData } from '../shared/types';
 /**
  * APK に入れるモデル。モデルはプロジェクトの資産 (IR v3) で、画像認識の `infer` op だけでなく
  * スクリプトの model.* からも名前で呼ばれる。スクリプトの参照は文字列なので静的には追えない。
@@ -15,8 +15,18 @@ export declare function shippedModels(project: ArsistProject): ModelDefinition[]
  */
 export declare function referencedModels(project: ArsistProject): ModelDefinition[];
 /**
- * プロジェクト全体をUnityマニフェストに変換
+ * Unity に渡すシーン (scenes.json / manifest.scenes)。IR のままの形で、名前も IR と同じ。
+ * 既定のある項目 (β1.1.0〜) は埋めて渡す: Unity 側が既定を持たなくてよいように。
+ *   - type 'camera' の物の camera → CAMERA_DEFAULTS で埋める (無くても作る)
+ *   - VRM の character.embody → EMBODY_DEFAULTS で埋める (embody が無ければ足さない = 今までどおり)
+ * 何度通しても同じ結果になる (ビルドの入口が複数あり、どこで通しても困らないように)。元の IR は書き換えない。
  */
+export declare function unityScenesData(scenes: SceneData[] | undefined | null): SceneData[];
+/**
+ * Unity に渡す UI (ui_layouts.json)。Image の source は mirror を埋める (無ければ false)。
+ * 元の IR は書き換えない。何度通しても同じ。
+ */
+export declare function unityUiData(layouts: UILayoutData[] | undefined | null): UILayoutData[];
 /**
  * ビルドに渡すマニフェスト。
  *

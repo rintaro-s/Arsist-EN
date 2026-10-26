@@ -154,6 +154,37 @@ namespace Arsist.Runtime.Scripting
             ArsistScriptEvent.Fire(eventName);
         }
 
+        // ─────────────────────────────────────
+        // ui.setSource(id, { kind: "camera", camera, mirror } | { kind: "stream", url, mirror } | null)
+        // ui.streamStatus(id) → "none" / "waiting" / "connecting" / "live" / "error: …"
+        // 画像の要素に映すもの (doc/23-cameras-media.md)。null で元の画像に戻る。
+        // ─────────────────────────────────────
+        [UnityEngine.Scripting.Preserve]
+        public void setSource(string elementId, JsValue source = null)
+        {
+            var go = UiBindingLookup.Find(elementId);
+            if (go == null) { Warn(elementId, "setSource"); return; }
+            var media = Arsist.Runtime.Media.ArsistMediaImage.Ensure(go);
+            if (string.IsNullOrEmpty(media.bindingId)) media.bindingId = elementId;
+            var d = _js != null ? _js.FromJs(source) as Dictionary<string, object> : null;
+            if (d == null) { media.Clear(); return; }
+            var kind = JsBridge.Text(d, "kind", "");
+            if (kind != "camera" && kind != "stream")
+            {
+                Debug.LogWarning($"[ArsistJS] ui.setSource('{elementId}'): kind must be \"camera\" or \"stream\" (got \"{kind}\")");
+                return;
+            }
+            media.Set(kind, JsBridge.Text(d, "camera", ""), JsBridge.Text(d, "url", ""), JsBridge.Flag(d, "mirror", false));
+        }
+
+        [UnityEngine.Scripting.Preserve]
+        public string streamStatus(string elementId)
+        {
+            var go = UiBindingLookup.Find(elementId);
+            var media = go != null ? go.GetComponent<Arsist.Runtime.Media.ArsistMediaImage>() : null;
+            return media != null ? media.Status : "none";
+        }
+
         private static void Warn(string id, string op) =>
             Debug.LogWarning($"[Arsist] ui.{op}: bindingId '{id}' not found. Check that UI element is active in scene.");
     }

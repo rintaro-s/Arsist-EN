@@ -10,8 +10,9 @@ import {
   Layout, Plus,
   FolderOpen, ChevronDown, ChevronRight,
   Database, Activity, Trash2, User, Image as ImageIcon, Pin, ScanText,
-  ScanEye,
+  ScanEye, Video,
 } from 'lucide-react';
+import { newCameraObject } from '../camera/cameraView';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { UIElement } from '../../../shared/types';
@@ -177,6 +178,7 @@ function SceneHierarchy() {
               <MenuItem icon={<Circle size={14} />} label={t('leftPanel.sphere')} onClick={() => add('primitive', 'sphere')} />
               <MenuItem icon={<Square size={14} />} label={t('leftPanel.plane')} onClick={() => add('primitive', 'plane')} />
               <MenuItem icon={<Cylinder size={14} />} label={t('leftPanel.cylinder')} onClick={() => add('primitive', 'cylinder')} />
+              <MenuItem icon={<Video size={14} />} label={t('camera.add')} onClick={() => { setMenuOpen(false); addObject(newCameraObject(t('camera.defaultName'), scene?.objects ?? [])); }} />
               <div className="context-menu-separator" />
               <MenuItem icon={<Layout size={14} />} label={t('leftPanel.canvasUiSurface')} onClick={addCanvas} />
               <MenuItem icon={<ImageIcon size={14} />} label={t('perception.addTarget')} onClick={addImageAnchor} />
@@ -238,7 +240,7 @@ function SceneHierarchy() {
           const icon =
             obj.type === 'canvas' ? <Layout size={13} className="text-arsist-accent" /> :
             obj.type === 'light' ? <Box size={13} className="text-yellow-400" /> :
-            obj.type === 'camera' ? <Box size={13} className="text-blue-400" /> :
+            obj.type === 'camera' ? <Video size={13} className="text-blue-400" /> :
             obj.type === 'vrm' ? <User size={13} className="text-purple-400" /> :
             obj.type === 'model' ? <Box size={13} className="text-arsist-primary" /> :
             <Box size={13} className="text-arsist-muted" />;

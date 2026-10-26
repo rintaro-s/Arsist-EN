@@ -64,6 +64,12 @@ What is drawn:
   0.001) at `floatingScreen.distance × 0.5` (min 0.3 m, default 1 m), always on top — the same geometry `GenerateCanvasUI`
   builds, so on a 50° display (XREAL) only the middle of the HUD is visible. UI is the preview dialog's `SimpleUIRenderer` rasterized through SVG `foreignObject`; bound text shows its
   written content (no data sources run). Passthrough is the checkerboard; images in UI are placeholders.
+  β1.1.0 (doc/23): camera objects are drawn as their body + view cone when `showGizmo`; an Image whose `source` is a
+  camera shows that camera's view — taken **once**, after every VRM / UI board has loaded (`CameraShots` →
+  `shootCamera`, long side ≤ 640 px; it hides gizmos, the head-locked HUD and, unless `showSelf`, the embodied VRM), then
+  the UI boards are rasterized again; a `stream` source is a "Stream: <url>" placeholder. An embodied VRM
+  (`character.embody`) stands under the user's head facing +Z (eyes ≈ 1.5 m below the origin, no arm/hand tracking) and is
+  hidden from this first-person image when `hideFromSelf`, but appears in camera views.
 
 Isolation: Electron runs with a temporary `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and `--user-data-dir` (never the
 real `arsist-engine` config), an offscreen window (nothing appears on screen; a hidden normal window was ~25× slower because

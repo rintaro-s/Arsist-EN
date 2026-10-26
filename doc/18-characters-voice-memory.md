@@ -67,6 +67,12 @@ FBX は取り込み直さない (ビルドの使い回しを壊さない)。人�
 (補うと、古いアプリのキャラクターがいきなり瞬きを始める)。エディタやエージェントが新しく置いた VRM には
 `CHARACTER_DEFAULTS` (まばたき・呼吸・近くで見られたら見返す) が入る。
 
+**自分の体として動かす (`character.embody`、β 1.1.0〜)**: `{ "embody": { "enabled": true, "hands": "auto", "lipSync": true,
+"hideFromSelf": true, "matchHeight": true } }` を足すと、その VRM は頭 (XR のカメラ) と手 (コントローラー / XR Hands) で動く
+(`Runtime/Media/ArsistEmbodiment.cs`、実行順 9995)。動いている間は上の動き・歩く・こちらを見るは止まる (まばたきはそのまま)。
+口は声の大きさ (`ArsistVoice`、マイクを持つ拡張機能が入れる) で "aa" が開く。`hideFromSelf` なら自分の目には写らず、
+仮想カメラ (`type: "camera"`) には写る。スクリプトは `vrm.embody(id, on)` / `vrm.calibrate(id)`。詳しくは doc/23 §2。
+
 実機では読み込み後に `ArsistCharacter` (実行順 9990: Animator の後、視線・腕の IK (10000) の前) が付く。
 キャラクターの正面は、VRM 0.x / 1.0 で根元の向きが 180° 違うので、両脚の付け根から求めている。
 

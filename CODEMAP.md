@@ -45,7 +45,7 @@ Build system: **npm + Vite + tsc + electron-builder** (no CMake/Cargo). Unity pr
 |------|----------------|
 | [main.ts](src/main/main.ts) | App lifecycle, IPC handlers, menu, project watcher, Unity path detection, OS tuning |
 | [ipc/aiIpc.ts](src/main/ipc/aiIpc.ts) | IPC for MCP agent registration, the built-in assistant, and `.arsist` project export/import |
-| `mcp/` | `tools.ts` (43 `ir_*`/`arsist_*` tools + the 14 `spatial_*` tools from `spatialTools.ts`, shared by MCP and the assistant), `server.ts` (stdio server), `agentTargets.ts` (one-click registration into Claude Code / Codex / Qwen Code / …), `launch.ts` (launch spec + self-test), `scriptReference.ts` |
+| `mcp/` | `tools.ts` (44 `ir_*`/`arsist_*` tools + the 14 `spatial_*` tools from `spatialTools.ts`, shared by MCP and the assistant), `server.ts` (stdio server), `agentTargets.ts` (one-click registration into Claude Code / Codex / Qwen Code / …), `launch.ts` (launch spec + self-test), `scriptReference.ts` |
 | [agent/assistant.ts](src/main/agent/assistant.ts) | Built-in agent: OpenAI-compatible chat completions + function calling, snapshot/undo in `Backups/agent/` |
 | `project/projectIO.ts`, `projectWatcher.ts`, `projectPackage.ts` | Atomic writes + per-project write queue for out-of-editor edits; reload on external change; `.arsist` project export/import (bundles extensions) |
 | [preload.ts](src/main/preload.ts) | contextBridge IPC surface exposed to renderer |
@@ -356,7 +356,12 @@ component; missing `XREALSessionManager` stability logic; unset stereo mode). Th
   build log (`Device tags`, `Features used`, `WARNING: … lacks …`, `extension '…' is enabled but left out`);
   `UnityBuilder.planExtensions`.
 - **IR schema / a new project field** → [src/shared/types.ts](src/shared/types.ts) (then bridge + Unity consumer).
-- **IR → Unity JSON mapping** → [src/bridge/UnityBridge.ts](src/bridge/UnityBridge.ts).
+- **IR → Unity JSON mapping** → [src/bridge/UnityBridge.ts](src/bridge/UnityBridge.ts) (`unityScenesData` / `unityUiData` fill
+  the β1.1.0 defaults — camera, embody, source.mirror — for every build entry: BuildDialog, `main.ts runUnityBuild`, export, CLI scripts).
+- **Cameras, image sources (camera / MJPEG stream), embodied VRM (β1.1.0)** → `doc/23-cameras-media.md`; contract helpers +
+  validation `src/shared/media.ts` (`mediaIssues` in `ir_validate_project`), MCP `ir_add_camera` / `camera` / `source` / `embody`
+  in `tools.ts`, editor `src/renderer/components/camera/` (gizmo + viewport preview, inspector sections, UI placeholder),
+  preview sim `src/renderer/sim/VirtualSim.tsx` (camera shots into images), runtime `Runtime/Media/`.
 - **Editor UI / panels / viewports** → `src/renderer/components/`; state in `src/renderer/stores/`.
 - **In-app JS scripting (Jint)** → `UnityBackend/.../Runtime/Scripting/`.
 - **Runtime remote control (Python/WebSocket)** → [python/](python/) + `UnityBackend/.../Runtime/Network/ArsistWebSocketServer.cs`.

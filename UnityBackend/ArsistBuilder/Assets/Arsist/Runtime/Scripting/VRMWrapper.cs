@@ -508,6 +508,28 @@ namespace Arsist.Runtime.Scripting
                 Debug.LogWarning($"[VRMWrapper] setLookAtUser('{id}', '{mode}'): expected off / always / nearby.");
         }
 
+        /// <summary>自分の体として動かす / やめる (character.embody と同じ。doc/23-cameras-media.md)。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public void embody(string id, bool on)
+        {
+            var vrmObj = GetVRM(id);
+            if (vrmObj == null) return;
+            var e = Arsist.Runtime.Media.ArsistEmbodiment.Ensure(vrmObj);
+            e.SetActive(on);
+            if (on && !e.Active) Debug.LogWarning($"[VRMWrapper] embody('{id}'): this VRM has no humanoid Animator; it cannot be driven.");
+        }
+
+        /// <summary>背を測り直す (今の目の高さに合わせる)。embody の間だけ。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public void calibrate(string id)
+        {
+            var vrmObj = GetVRM(id);
+            if (vrmObj == null) return;
+            var e = vrmObj.GetComponent<Arsist.Runtime.Media.ArsistEmbodiment>();
+            if (e == null || !e.Active) { Debug.LogWarning($"[VRMWrapper] calibrate('{id}'): not embodied (call vrm.embody(id, true) first)."); return; }
+            e.Calibrate();
+        }
+
         private ArsistCharacter Character(string id)
         {
             var vrmObj = GetVRM(id);

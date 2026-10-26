@@ -39,7 +39,8 @@ import { readVrmSpec } from '../project/vrmInfo';
 import { enginePart, enginePartLabel, planReplacements } from '../../shared/engineParts';
 import { SPATIAL_TOOLS } from './spatialTools';
 import { detectProjectKind } from '../layster/projectKind';
-import { CHARACTER_DEFAULTS } from '../../shared/types';
+import { CAMERA_DEFAULTS, CHARACTER_DEFAULTS, EMBODY_DEFAULTS } from '../../shared/types';
+import { checkCameraSettings, checkEmbodySettings, checkMediaSource, mediaIssues } from '../../shared/media';
 
 type Args = Record<string, any>;
 
@@ -141,6 +142,15 @@ function transformFrom(args: Args, base?: Args): Args {
   if (args.rotation) t.rotation = { ...t.rotation, ...args.rotation };
   if (args.scale) t.scale = { ...t.scale, ...args.scale };
   return t;
+}
+
+/** UI の Image の source を確かめて、余計な項目の無い形にする (doc/23) */
+function sourceFrom(raw: Args, elementType: string, project: Args): Args {
+  if (elementType !== 'Image') throw new Error(`source applies to Image elements only (this is ${elementType})`);
+  const err = checkMediaSource(raw, project as any);
+  if (err) throw new Error(err);
+  const mirror = raw.mirror === true ? { mirror: true } : {};
+  return raw.kind === 'camera' ? { kind: 'camera', camera: raw.camera.trim(), ...mirror } : { kind: 'stream', url: raw.url.trim(), ...mirror };
 }
 
 /** JavaScript として読めるか (Jint に渡す前の構文チェック)。 */
@@ -288,7 +298,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
   },
   {
     name: 'ir_validate_project',
-    description: 'Check the project before building: missing extensions or device, features the target device cannot do, canvases without a layout, script syntax errors, duplicate assetIds, animation names that do not exist.',
+    description: 'Check the project before building: missing extensions or device, features the target device cannot do, canvases without a layout, script syntax errors, duplicate assetIds, animation names that do not exist, images showing a camera that does not exist, stream urls, camera resolutions, more than one embodied VRM.',
     inputSchema: schema({}),
     readOnly: true,
     async run(args, session) {
@@ -319,6 +329,10 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         }
       }
       for (const [a, n] of assetIds) if (n > 1) warnings.push(`assetId "${a}" is used by ${n} objects; scripts will reach only one`);
+      // カメラ・画像に映すもの (source)・自分の体 (embody)。doc/23
+      const media = mediaIssues(p as any);
+      problems.push(...media.problems);
+      warnings.push(...media.warnings);
       const animations = (await listAnimations(session.resolve(args))).map((a) => a.name);
       for (const issue of characterAnimationIssues(p as any, animations)) warnings.push(issue);
       // VRM 1.0 は、VRM の読み込みを置き換える拡張機能 (replaces: vrm-loader) が無いと実機で出ない
@@ -412,7 +426,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         sceneName: s.name,
         objects: s.objects.map((o: Args) => ({
           id: o.id, name: o.name, type: o.type, assetId: o.assetId, primitiveType: o.primitiveType,
-          modelPath: o.modelPath, canvasSettings: o.canvasSettings, transform: o.transform, ext: o.ext,
+          modelPath: o.modelPath, canvasSettings: o.canvasSettings, camera: o.camera, transform: o.transform, ext: o.ext,
         })),
       };
     },
@@ -445,6 +459,48 @@ export const ARSIST_TOOLS: ArsistTool[] = [
           id: uid(), name, type: 'primitive', primitiveType: args.primitiveType, assetId: args.assetId || name,
           transform: transformFrom(args, { position: { x: 0, y: 0, z: 2 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.2, y: 0.2, z: 0.2 } }),
           material: { color: args.color || '#FFFFFF', metallic: 0, roughness: 0.5 },
+        };
+        s.objects.push(obj);
+        return { success: true, object: obj, sceneId: s.id };
+      });
+    },
+  },
+  {
+    name: 'ir_add_camera',
+    description: 'Add a virtual camera: it films the scene from where it is placed (forward = its local +Z) into a texture that UI images can show ' +
+      '(ir_update_ui_element source { kind: "camera", camera: <assetId> }), scripts can move (cameras.*) and extensions can record. ' +
+      'Editor coordinates: meters, +Z ahead, +X the user\'s left; rotation in degrees (y: 180 turns it to face the user at the origin).',
+    inputSchema: schema({
+      name: { type: 'string' }, assetId: { type: 'string', description: 'Name for scripts and image sources (default: the name)' },
+      sceneId: { type: 'string' }, position: vec3, rotation: vec3,
+      settings: {
+        type: 'object',
+        description: 'Camera settings; omitted keys use the defaults',
+        properties: {
+          fov: { type: 'number', description: 'vertical field of view in degrees (default 50)' },
+          resolution: { type: 'array', items: { type: 'number' }, description: '[width, height] px (default [1920, 1080]; portrait [1080, 1920])' },
+          fps: { type: 'number', description: 'renders per second (default 30; 0 = every frame while used)' },
+          backgroundColor: { type: 'string', description: '#RRGGBB (default #1e2430)' },
+          near: { type: 'number' }, far: { type: 'number' },
+          showSelf: { type: 'boolean', description: 'film the VRM that moves as your body (default true)' },
+          showGizmo: { type: 'boolean', description: 'show the camera body and its view cone in the headset (default true)' },
+        },
+      },
+    }),
+    readOnly: false,
+    async run(args, session) {
+      if (args.settings !== undefined) {
+        const err = checkCameraSettings(args.settings);
+        if (err) throw new Error(err);
+      }
+      return write(session, args, (p) => {
+        const s = scene(p, args.sceneId);
+        const name = args.name || 'Camera';
+        const obj: Args = {
+          id: uid(), name, type: 'camera', assetId: args.assetId || name,
+          // 既定: ユーザーの 2 m 先、目の高さから少し下で、ユーザーの方 (-Z) を向く
+          transform: transformFrom(args, { position: { x: 0, y: -0.1, z: 2 }, rotation: { x: 0, y: 180, z: 0 }, scale: { x: 1, y: 1, z: 1 } }),
+          camera: { ...CAMERA_DEFAULTS, ...(args.settings ?? {}) },
         };
         s.objects.push(obj);
         return { success: true, object: obj, sceneId: s.id };
@@ -550,7 +606,8 @@ export const ARSIST_TOOLS: ArsistTool[] = [
   },
   {
     name: 'ir_update_object',
-    description: 'Rename an object, change its assetId, color (#RRGGBB), primitiveType, a canvas panel\'s size / pixel density / layout, or a VRM\'s character settings (animation, blink, breathe, lookAtUser).',
+    description: 'Rename an object, change its assetId, color (#RRGGBB), primitiveType, a canvas panel\'s size / pixel density / layout, a camera\'s settings, ' +
+      'or a VRM\'s character settings (animation, blink, breathe, lookAtUser, embody = move it with your own head and hands).',
     inputSchema: schema({
       objectId: { type: 'string' }, sceneId: { type: 'string' }, name: { type: 'string' }, assetId: { type: 'string' },
       color: { type: 'string' }, primitiveType: { type: 'string', enum: ['cube', 'sphere', 'plane', 'cylinder', 'capsule'] },
@@ -566,11 +623,37 @@ export const ARSIST_TOOLS: ArsistTool[] = [
           animation: { type: 'string', description: 'Looping animation at start: an ir_list_animations name, "" for none' },
           blink: { type: 'boolean' }, breathe: { type: 'boolean' },
           lookAtUser: { type: 'string', enum: ['off', 'always', 'nearby'] },
+          embody: {
+            type: ['object', 'null'],
+            description: 'Move this VRM as your own body: head follows your head, hands follow controllers / tracked hands; hidden from your own eyes but seen by cameras; mouth moves with your voice. Merged; null turns it off. Only one VRM should have it.',
+            properties: {
+              enabled: { type: 'boolean' },
+              hands: { type: 'string', enum: ['auto', 'controllers', 'hands'] },
+              lipSync: { type: 'boolean' }, hideFromSelf: { type: 'boolean' }, matchHeight: { type: 'boolean' },
+            },
+          },
+        },
+      },
+      camera: {
+        type: 'object',
+        description: 'Camera objects only: settings merged into the current ones (fov, resolution [w, h], fps, backgroundColor, near, far, showSelf, showGizmo)',
+        properties: {
+          fov: { type: 'number' }, resolution: { type: 'array', items: { type: 'number' } }, fps: { type: 'number' },
+          backgroundColor: { type: 'string' }, near: { type: 'number' }, far: { type: 'number' },
+          showSelf: { type: 'boolean' }, showGizmo: { type: 'boolean' },
         },
       },
     }, ['objectId']),
     readOnly: false,
     async run(args, session) {
+      if (args.camera !== undefined) {
+        const err = checkCameraSettings(args.camera);
+        if (err) throw new Error(err);
+      }
+      if (args.character && args.character.embody !== undefined && args.character.embody !== null) {
+        const err = checkEmbodySettings(args.character.embody);
+        if (err) throw new Error(`character.${err}`);
+      }
       return write(session, args, (p) => {
         const { object } = findObject(p, args.objectId, args.sceneId);
         if (args.name !== undefined) object.name = args.name;
@@ -600,10 +683,20 @@ export const ARSIST_TOOLS: ArsistTool[] = [
           if (object.type !== 'vrm') throw new Error('character applies to VRM objects only');
           if (args.character === null) delete object.character;
           else {
-            const next = { ...(object.character ?? CHARACTER_DEFAULTS), ...args.character };
+            const { embody, ...rest } = args.character;
+            const next = { ...(object.character ?? CHARACTER_DEFAULTS), ...rest };
             if (!next.animation) delete next.animation;
+            if (embody === null) delete next.embody;
+            else if (embody !== undefined) next.embody = { ...(next.embody ?? EMBODY_DEFAULTS), ...embody };
             object.character = next;
           }
+        }
+        if (args.camera !== undefined) {
+          if (object.type !== 'camera') throw new Error('camera applies to camera objects only (add one with ir_add_camera)');
+          const next = { ...CAMERA_DEFAULTS, ...(object.camera ?? {}), ...args.camera };
+          const err = checkCameraSettings(next);
+          if (err) throw new Error(err);
+          object.camera = next;
         }
         return { success: true, object };
       });
@@ -750,6 +843,13 @@ export const ARSIST_TOOLS: ArsistTool[] = [
       bind: { type: 'object', properties: { key: { type: 'string' }, format: { type: 'string' } } },
       style: { type: 'object' }, layout: { type: 'string', enum: ['FlexRow', 'FlexColumn', 'Absolute'] },
       reveal: { type: ['object', 'null'], properties: { speed: { type: 'number', description: 'letters per second' } }, description: 'Text/Button: the text appears letter by letter whenever it changes; null = all at once' },
+      source: {
+        type: ['object', 'null'],
+        description: 'Image only: what it shows instead of assetPath. { kind: "camera", camera: <camera object id or assetId>, mirror? } shows a virtual camera live ' +
+          '(mirror: true flips it like a mirror); { kind: "stream", url, mirror? } shows an MJPEG stream (e.g. a PC screen from products/ScreenCast: ' +
+          '"http://{store:pc.address}/stream/slides" — {store:key} is replaced by that store value and reconnects when it changes). null = back to assetPath.',
+        properties: { kind: { type: 'string', enum: ['camera', 'stream'] }, camera: { type: 'string' }, url: { type: 'string' }, mirror: { type: 'boolean' } },
+      },
     }, ['type']),
     readOnly: false,
     async run(args, session) {
@@ -760,6 +860,7 @@ export const ARSIST_TOOLS: ArsistTool[] = [
         const element: Args = { id: uid(), type: args.type, style: args.style || {}, children: [] };
         for (const key of ['content', 'bindingId', 'assetPath', 'bind', 'layout']) if (args[key] !== undefined) element[key] = args[key];
         if (args.reveal) element.reveal = { speed: Number(args.reveal.speed) || 12 };
+        if (args.source) element.source = sourceFrom(args.source, element.type, p);
         parent.children = Array.isArray(parent.children) ? parent.children : [];
         parent.children.push(element);
         return { success: true, layoutId: l.id, element };
@@ -773,6 +874,13 @@ export const ARSIST_TOOLS: ArsistTool[] = [
       layoutId: { type: 'string' }, elementId: { type: 'string' }, type: { type: 'string' }, content: { type: 'string' },
       bindingId: { type: 'string' }, assetPath: { type: 'string' }, bind: { type: 'object' }, style: { type: 'object' }, layout: { type: 'string' },
       reveal: { type: ['object', 'null'], properties: { speed: { type: 'number', description: 'letters per second' } }, description: 'Text/Button: the text appears letter by letter whenever it changes; null = all at once' },
+      source: {
+        type: ['object', 'null'],
+        description: 'Image only: what it shows instead of assetPath. { kind: "camera", camera: <camera object id or assetId>, mirror? } shows a virtual camera live ' +
+          '(mirror: true flips it like a mirror); { kind: "stream", url, mirror? } shows an MJPEG stream (e.g. a PC screen from products/ScreenCast: ' +
+          '"http://{store:pc.address}/stream/slides" — {store:key} is replaced by that store value and reconnects when it changes). null = back to assetPath.',
+        properties: { kind: { type: 'string', enum: ['camera', 'stream'] }, camera: { type: 'string' }, url: { type: 'string' }, mirror: { type: 'boolean' } },
+      },
     }, ['elementId']),
     readOnly: false,
     async run(args, session) {
@@ -785,6 +893,8 @@ export const ARSIST_TOOLS: ArsistTool[] = [
           if (args.style !== undefined) el.style = { ...(el.style ?? {}), ...args.style };
           if (args.reveal === null) delete el.reveal;
           else if (args.reveal !== undefined) el.reveal = { speed: Number(args.reveal.speed) || 12 };
+          if (args.source === null) delete el.source;
+          else if (args.source !== undefined) el.source = sourceFrom(args.source, el.type, p);
           return { success: true, layoutId: l.id, element: el };
         }
         throw new Error(`element not found: ${args.elementId}`);

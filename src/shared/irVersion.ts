@@ -28,10 +28,11 @@
  *          古いプロジェクトの VRM は今までどおり (動きなし) のまま
  *   6  Layster.Virtual β 1.0.0。形は α5 と同じで、先頭に `layster` の見出し
  *          ({ profile: 'virtual', stage: 'beta', version: '1.0.0' }) を持つ。
+ *   7  Layster.Virtual β 1.1.0。カメラ (シーンに置く仮想カメラ)、UI の画像に映すもの (カメラの映像・PC からの画面の配信)、VRM を自分の頭と手で動かす設定 (embody) を足しました。項目を足しただけで、今までの中身は変わりません。
  *
  * 版を上げる手順は src/main/project/migrations.ts の先頭。`npm run ir:new -- "<説明>"` で雛形が入る。
  */
-export const CURRENT_IR_VERSION = 6;
+export const CURRENT_IR_VERSION = 7;
 
 /** project.json から版を読む。項目が無ければ 1。数でなければ 1 として扱う。 */
 export function readIrVersion(raw: unknown): number {

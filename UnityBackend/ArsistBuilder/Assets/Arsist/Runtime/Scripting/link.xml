@@ -11,6 +11,11 @@
     <type fullname="Arsist.Runtime.Scripting.AudioWrapper" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.CameraWrapper" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.StorageWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Scripting.CamerasWrapper" preserve="all" />
+    <type fullname="Arsist.Runtime.Media.ArsistCameras" preserve="all" />
+    <type fullname="Arsist.Runtime.Media.ArsistVirtualCamera" preserve="all" />
+    <type fullname="Arsist.Runtime.Media.ArsistMediaImage" preserve="all" />
+    <type fullname="Arsist.Runtime.Media.ArsistEmbodiment" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.ViewerWrapper" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.ModelWrapper" preserve="all" />
     <type fullname="Arsist.Runtime.Scripting.PerceptionWrapper" preserve="all" />

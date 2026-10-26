@@ -11,8 +11,8 @@ structures. **Layster.Spatial** (`project.spatial.json`) has its own types; see 
 
 | Field | Meaning |
 |-------|---------|
-| `irVersion` | Integer format version, `CURRENT_IR_VERSION` in `src/shared/irVersion.ts` (now **6**). 1–5 = **α1–α5**, 6 = **Layster.Virtual β 1.0.0**. Missing = 1. Older projects are migrated in memory and open read-only until the user accepts the upgrade; newer ones do not open (`doc/03`, `doc/15` §3) |
-| `layster` | Header `{ profile: 'virtual', stage: 'beta', version: '1.0.0' }` (`LaysterHeader`, `src/shared/layster/version.ts`). Written first in the file by `migrateProject`; informational — the version decision uses `irVersion` |
+| `irVersion` | Integer format version, `CURRENT_IR_VERSION` in `src/shared/irVersion.ts` (now **7**). 1–5 = **α1–α5**, 6 = **Layster.Virtual β 1.0.0**, 7 = **β 1.1.0** (cameras, image sources, embody — doc/23). Missing = 1. Older projects are migrated in memory and open read-only until the user accepts the upgrade; newer ones do not open (`doc/03`, `doc/15` §3) |
+| `layster` | Header `{ profile: 'virtual', stage: 'beta', version: '1.1.0' }` (`LaysterHeader`, `src/shared/layster/version.ts`). Written first in the file by `migrateProject`; informational — the version decision uses `irVersion` |
 | `version` | The **app's** version, chosen by the user. Not the IR version |
 
 Show versions to people only through `formatLayster` / `describeVirtualIrVersion` ("Layster.Virtual α5"), never "IR v5".
@@ -189,12 +189,38 @@ The scene viewport draws this spawn viewpoint (marker + forward arrow + the devi
   material?: MaterialData        // color, metallic, roughness, texture, emissive, emissiveIntensity
   children?: SceneObject[]
   ext?: Record<extId, Record<string, unknown>>   // per-object extension options (α4〜, doc/17)
-  character?: CharacterSettings  // type === 'vrm' only (α5〜): { animation?, blink?, breathe?, lookAtUser? } (doc/18)
+  character?: CharacterSettings  // type === 'vrm' only (α5〜): { animation?, blink?, breathe?, lookAtUser?, embody? } (doc/18)
+  camera?: CameraSettings        // type === 'camera' only (β1.1.0〜, doc/23)
 }
 ```
 
 A VRM without `character` stands still (relaxed standing pose, never a T-pose); a VRM newly placed in the editor
 gets `CHARACTER_DEFAULTS` (`blink`, `breathe`, `lookAtUser: 'nearby'`).
+
+**`CameraSettings`** (β1.1.0〜, doc/23) — a virtual camera films the scene from its transform (forward = local **+Z**,
+Virtual coordinates like every object) into a RenderTexture. UI images show it (`UIElement.source`), scripts move it
+(`cameras.*`), extensions record it (`quest-input` `recorder`). It cannot film passthrough; the background is painted.
+
+```typescript
+{
+  fov?: number                   // vertical, degrees (default 50)
+  resolution?: [number, number]  // px (default [1920, 1080]; 16..4096 each, else ir_validate_project errors)
+  fps?: number                   // renders per second while used (default 30; 0 = every frame)
+  backgroundColor?: string       // '#rrggbb' (default '#1e2430')
+  near?: number; far?: number    // clip planes, m (default 0.05 / 100)
+  showSelf?: boolean             // film the embodied VRM (default true)
+  showGizmo?: boolean            // show the camera body + view cone in the headset, never in the camera (default true)
+}
+```
+
+Defaults: `CAMERA_DEFAULTS`. The build fills missing keys (`unityScenesData` in `src/bridge/UnityBridge.ts`), so the
+Unity side always receives a complete `camera` object.
+
+**`EmbodySettings`** (`character.embody`, β1.1.0〜) — move the VRM as the user's own body: head from the head pose,
+hands from controllers / tracked hands, mouth from the voice level; hidden from the user's own eyes, seen by cameras.
+`{ enabled, hands?: 'auto'|'controllers'|'hands', lipSync?, hideFromSelf?, matchHeight? }` — defaults `EMBODY_DEFAULTS`
+(all on, `hands: 'auto'`), filled at build time like `camera`. While present it takes precedence over `animation` /
+`lookAtUser`. At most one VRM should have it (`ir_validate_project` warns).
 
 **`CanvasSettings`** — when a SceneObject is type `canvas`, it renders a UILayout into 3D space:
 
@@ -313,8 +339,15 @@ UILayoutData
   style: UIStyle
   children: UIElement[]
   reveal?: { speed: number }  // Text / Button: write the text out letter by letter (chars/s, α5〜)
+  source?: MediaSource   // Image: what it shows instead of assetPath (β1.1.0〜, doc/23)
 }
 ```
+
+**`MediaSource`** (β1.1.0〜, doc/23) — `{ kind: 'camera', camera: '<camera object id or assetId>', mirror? }` (a virtual
+camera, live; `mirror` flips left/right) or `{ kind: 'stream', url, mirror? }` (an MJPEG stream such as a PC screen from
+`products/ScreenCast`). `{store:<key>}` in `url` is replaced by that store value and reconnects when it changes; while it
+is empty the image waits (grey). The picture is fitted inside the element (contain). `ir_validate_project`: a camera
+that does not exist is an error, a url that does not start with `http(s)://` a warning.
 
 **`UIBinding`:**
 ```typescript

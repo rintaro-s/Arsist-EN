@@ -157,7 +157,7 @@ export interface ProjectExtensionState {
 /** スクリプトの組み込みの名前 (ScriptEngineManager.InitEngine)。拡張機能はこれを上書きできない。 */
 export const BUILTIN_SCRIPT_GLOBALS = [
   'api', 'ui', 'store', 'scene', 'vrm', 'remote', 'viewer', 'perception', 'model', 'log', 'error',
-  'audio', 'camera', 'storage', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', '__arsistTimers',
+  'audio', 'camera', 'cameras', 'storage', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', '__arsistTimers',
   'globalThis', 'window', 'console',
 ];
 

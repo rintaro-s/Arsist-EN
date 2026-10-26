@@ -178,6 +178,11 @@ export const MIGRATIONS: IrMigration[] = [
   // Layster.Virtual β 1.0.0。形は α5 と同じで、先頭に見出しを持つ (doc/19-layster.md §1.2)。
   // 以後の版の見出しは migrateProject が書く (ここは β 1.0.0 で固定)。
   defineMigration(6, { ops: [{ op: 'set', path: 'layster', value: { profile: 'virtual', stage: 'beta', version: '1.0.0' } }] }),
+  // カメラ (シーンに置く仮想カメラ)、UI の画像に映すもの (カメラの映像・PC からの画面の配信)、VRM を自分の頭と手で動かす設定 (embody) を足しました。項目を足しただけで、今までの中身は変わりません。
+  defineMigration(7, { ops: [
+    // 例: { op: 'default', path: 'arSettings.newThing', value: 1 },
+    //     { op: 'rename', path: 'scenes[].objects[].oldName', to: 'newName' },
+  ] }),
   // @ir-migrations-end (npm run ir:new はこの行の上に足す)
 ];
 

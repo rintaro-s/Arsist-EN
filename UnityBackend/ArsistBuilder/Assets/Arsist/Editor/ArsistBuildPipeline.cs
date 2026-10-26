@@ -74,6 +74,9 @@ namespace Arsist.Builder
                 Debug.Log("[Arsist] Phase 1: Generating scenes...");
                 EnsureUILayerExists();
                 EnsureHudLayerExists();
+                // 自分の体 (頭のカメラに写さない) と仮想カメラの形 (仮想カメラに写さない)。doc/23。番号は Runtime/Media/ArsistMediaLayers
+                EnsureLayerExists(Arsist.Runtime.Media.ArsistMediaLayers.SelfHiddenName, Arsist.Runtime.Media.ArsistMediaLayers.SelfHiddenFallback);
+                EnsureLayerExists(Arsist.Runtime.Media.ArsistMediaLayers.GizmoName, Arsist.Runtime.Media.ArsistMediaLayers.GizmoFallback);
                 // 折り返しの規則は UI を作る前に置く。TMP は文字を並べる時点でこの表を読むので、
                 // 後から用意しても間に合わない (未設定だとここでビルドが止まる)。
                 EnsureTmpLineBreakingRules();
@@ -791,6 +794,12 @@ namespace Arsist.Builder
                 };
                 go = GameObject.CreatePrimitive(pType);
             }
+            // 仮想カメラ (Layster.Virtual β1.1.0、doc/23)。Camera と RenderTexture は実行時に ArsistVirtualCamera が作る
+            else if (type == "camera")
+            {
+                go = new GameObject(name);
+                ConfigureVirtualCamera(go, objData, assetId);
+            }
             else if (type == "light")
             {
                 go = new GameObject(name);
@@ -937,6 +946,28 @@ namespace Arsist.Builder
             ApplyImageAnchor(go, objData, name);
 
             return go;
+        }
+
+        /// <summary>IR の camera (UnityBridge が CAMERA_DEFAULTS で埋めてある) を ArsistVirtualCamera に入れる。</summary>
+        private static void ConfigureVirtualCamera(GameObject go, JObject objData, string assetId)
+        {
+            var cam = go.AddComponent<Arsist.Runtime.Media.ArsistVirtualCamera>();
+            var c = objData["camera"] as JObject ?? new JObject();
+            cam.objectId = objData["id"]?.ToString() ?? go.name;
+            cam.assetId = assetId ?? "";
+            cam.fov = c["fov"]?.Value<float>() ?? 50f;
+            if (c["resolution"] is JArray res && res.Count >= 2)
+            {
+                cam.width = Mathf.Clamp(res[0].Value<int>(), 16, 4096);
+                cam.height = Mathf.Clamp(res[1].Value<int>(), 16, 4096);
+            }
+            cam.fps = c["fps"]?.Value<float>() ?? 30f;
+            cam.backgroundColor = TryParseColor(c["backgroundColor"], out var bg) ? bg : new Color(0.118f, 0.141f, 0.188f, 1f);
+            cam.near = c["near"]?.Value<float>() ?? 0.05f;
+            cam.far = c["far"]?.Value<float>() ?? 100f;
+            cam.showSelf = c["showSelf"]?.Type != JTokenType.Boolean || c["showSelf"].Value<bool>();
+            cam.showGizmo = c["showGizmo"]?.Type != JTokenType.Boolean || c["showGizmo"].Value<bool>();
+            Debug.Log($"[Arsist] Virtual camera '{go.name}' (id {cam.objectId}, asset {cam.assetId}): {cam.width}x{cam.height} @ {cam.fps} fps, fov {cam.fov}, showSelf={cam.showSelf}, gizmo={cam.showGizmo}");
         }
 
         /// <summary>
@@ -2039,6 +2070,9 @@ namespace Arsist.Builder
             var controllerFull = Path.Combine(Application.dataPath, "..", CharacterControllerPath);
             if (File.Exists(indexFull) && File.Exists(controllerFull) && File.ReadAllText(indexFull) == indexText)
             {
+                // 前のビルドのコントローラーが IK Pass 無しで作られていれば、それだけ直す
+                var existing = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(CharacterControllerPath);
+                if (existing != null) EnableIkPass(existing);
                 Debug.Log($"[Arsist] Character animations unchanged ({entries.Count}): {string.Join(", ", entries.Select(e => e.Key))}");
                 return;
             }
@@ -2055,12 +2089,27 @@ namespace Arsist.Builder
                 state.motion = entry.Value;
                 state.writeDefaultValues = true;
             }
+            EnableIkPass(controller);
             EditorUtility.SetDirty(controller);
 
             File.WriteAllText(indexFull, indexText);
             AssetDatabase.SaveAssets();
             AssetDatabase.ImportAsset(CharacterIndexPath, ImportAssetOptions.ForceSynchronousImport);
             Debug.Log($"[Arsist] Character animations ({entries.Count}) → {CharacterControllerPath}: {string.Join(", ", entries.Select(e => e.Key))}");
+        }
+
+        /// <summary>
+        /// 層の IK Pass を入れる (OnAnimatorIK が呼ばれるように。拡張機能やスクリプトが手足を動かすため)。
+        /// エンジンの自分の体 (ArsistEmbodiment) は Animator に頼らず自前で解くので、無くても動く。
+        /// </summary>
+        private static void EnableIkPass(UnityEditor.Animations.AnimatorController controller)
+        {
+            var layers = controller.layers;
+            if (layers.Length == 0 || layers[0].iKPass) return;
+            layers[0].iKPass = true;
+            controller.layers = layers;
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssets();
         }
 
         /// <summary>
@@ -4788,6 +4837,17 @@ ScriptedImporter:
                         {
                             Debug.LogWarning($"[Arsist] Sprite not found for Image: {unityAssetPath}");
                         }
+                    }
+                    // 映すもの (カメラの映像・配信。doc/23)。子の RawImage に映す。元の画像が無ければ要素は透明
+                    if (elementData["source"] is JObject mediaSource && mediaSource.HasValues)
+                    {
+                        if (uiImage.sprite == null) uiImage.color = Color.clear;
+                        uiImage.raycastTarget = false;
+                        var media = go.AddComponent<Arsist.Runtime.Media.ArsistMediaImage>();
+                        var mediaRegistry = go.GetComponent<UiBindingRegistry>();
+                        media.bindingId = mediaRegistry != null && !string.IsNullOrEmpty(mediaRegistry.bindingId) ? mediaRegistry.bindingId : elementId;
+                        media.sourceJson = mediaSource.ToString(Formatting.None);
+                        Debug.Log($"[Arsist] Image '{elementId}' shows {media.sourceJson}");
                     }
                     break;
 

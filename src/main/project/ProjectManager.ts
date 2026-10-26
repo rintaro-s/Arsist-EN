@@ -22,7 +22,7 @@ import { checkProjectRequirements, migrateExtensionData, type ExtensionDataUpgra
 import { getExtensionCatalog } from '../extensions/catalogService';
 import { describeJsonError, resolveSceneAndUiCopies, seenAfterSave, stableStringify, syncStaleCopies, type CopySeen } from './sceneCopies';
 import { listBuiltinAdapterNames } from '../adapters/adapterDirs';
-import { generateBuildManifest, generateUnityManifest } from '../../bridge/UnityBridge';
+import { generateBuildManifest, generateUnityManifest, unityScenesData, unityUiData } from '../../bridge/UnityBridge';
 import { atomicWriteJson } from './projectIO';
 import { createARSettings, createInitialDataFlow } from './defaults';
 
@@ -422,8 +422,8 @@ export class ProjectManager {
       } else {
         await fs.writeJSON(path.join(exportDir, 'manifest.json'), manifest, { spaces: 2 });
       }
-      await fs.writeJSON(path.join(exportDir, 'scenes.json'), project.scenes, { spaces: 2 });
-      await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), project.uiLayouts, { spaces: 2 });
+      await fs.writeJSON(path.join(exportDir, 'scenes.json'), unityScenesData(project.scenes), { spaces: 2 });
+      await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), unityUiData(project.uiLayouts), { spaces: 2 });
       if (project.dataFlow) {
         await fs.writeJSON(path.join(exportDir, 'dataflow.json'), project.dataFlow, { spaces: 2 });
       }

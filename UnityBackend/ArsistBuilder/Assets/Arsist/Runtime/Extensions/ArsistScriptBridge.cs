@@ -27,7 +27,7 @@ namespace Arsist.Runtime.Extensions
         public static readonly string[] BuiltInNames =
         {
             "api", "ui", "store", "scene", "vrm", "remote", "viewer", "perception", "model", "log", "error",
-            "audio", "camera", "storage", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "__arsistTimers",
+            "audio", "camera", "cameras", "storage", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "__arsistTimers",
             "globalThis", "window", "console",
         };
 

@@ -2,8 +2,11 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.shippedModels = shippedModels;
 exports.referencedModels = referencedModels;
+exports.unityScenesData = unityScenesData;
+exports.unityUiData = unityUiData;
 exports.generateBuildManifest = generateBuildManifest;
 exports.generateUnityManifest = generateUnityManifest;
+const media_1 = require("../shared/media");
 const irVersion_1 = require("../shared/irVersion");
 const version_1 = require("../shared/layster/version");
 /**
@@ -55,8 +58,45 @@ function isTaskResolvable(task, targets) {
     return (target.regions ?? []).some((r) => r.id === source.regionId);
 }
 /**
- * プロジェクト全体をUnityマニフェストに変換
+ * Unity に渡すシーン (scenes.json / manifest.scenes)。IR のままの形で、名前も IR と同じ。
+ * 既定のある項目 (β1.1.0〜) は埋めて渡す: Unity 側が既定を持たなくてよいように。
+ *   - type 'camera' の物の camera → CAMERA_DEFAULTS で埋める (無くても作る)
+ *   - VRM の character.embody → EMBODY_DEFAULTS で埋める (embody が無ければ足さない = 今までどおり)
+ * 何度通しても同じ結果になる (ビルドの入口が複数あり、どこで通しても困らないように)。元の IR は書き換えない。
  */
+function unityScenesData(scenes) {
+    const mapObject = (obj) => {
+        if (!obj || typeof obj !== 'object')
+            return obj;
+        let out = obj;
+        if (obj.type === 'camera')
+            out = { ...out, camera: (0, media_1.cameraSettingsOf)(obj.camera) };
+        if (obj.type === 'vrm' && obj.character && typeof obj.character === 'object' && obj.character.embody) {
+            out = { ...out, character: { ...obj.character, embody: (0, media_1.embodySettingsOf)(obj.character.embody) } };
+        }
+        if (Array.isArray(obj.children) && obj.children.length)
+            out = { ...out, children: obj.children.map(mapObject) };
+        return out;
+    };
+    return (scenes ?? []).map((s) => (s && Array.isArray(s.objects) ? { ...s, objects: s.objects.map(mapObject) } : s));
+}
+/**
+ * Unity に渡す UI (ui_layouts.json)。Image の source は mirror を埋める (無ければ false)。
+ * 元の IR は書き換えない。何度通しても同じ。
+ */
+function unityUiData(layouts) {
+    const mapElement = (el) => {
+        if (!el || typeof el !== 'object')
+            return el;
+        let out = el;
+        if (el.source && typeof el.source === 'object')
+            out = { ...out, source: { ...el.source, mirror: el.source.mirror === true } };
+        if (Array.isArray(el.children) && el.children.length)
+            out = { ...out, children: el.children.map(mapElement) };
+        return out;
+    };
+    return (layouts ?? []).map((l) => (l && l.root ? { ...l, root: mapElement(l.root) } : l));
+}
 /**
  * ビルドに渡すマニフェスト。
  *
@@ -79,7 +119,7 @@ function generateBuildManifest(project, overrides = {}) {
         buildSettings: project.buildSettings,
         remoteInput,
         designSystem: project.designSystem,
-        scenes: project.scenes,
+        scenes: unityScenesData(project.scenes),
         // 有効にした拡張機能とその設定 (IR のまま)。どれが実際にビルドに入るかは、端末のタグと
         // sdk/ の中身を見て UnityBuilder.planExtensions が決め、manifest.json の extensions に書く。
         projectExtensions: project.extensions ?? {},

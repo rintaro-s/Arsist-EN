@@ -796,7 +796,80 @@ export interface SceneObject {
    * エディタで新しく置いた VRM には CHARACTER_DEFAULTS が入る。
    */
   character?: CharacterSettings;
+  /**
+   * 仮想カメラの設定 (type === 'camera'、β1.1.0〜)。シーンを撮って RenderTexture に描く。
+   * 映したもの (UI の画像の source)・録画 (拡張機能)・スクリプト (cameras.*) が使う。doc/23。
+   */
+  camera?: CameraSettings;
 }
+
+/**
+ * 仮想カメラ。ユーザーの目とは別に、シーンを置いた位置から撮る。
+ * Quest のパススルーは撮れない (端末のカメラの画とは別物)。背景は backgroundColor で塗る。
+ */
+export interface CameraSettings {
+  /** 縦の画角 (度)。既定 50 */
+  fov?: number;
+  /** 撮る大きさ (px)。既定 [1920, 1080] */
+  resolution?: [number, number];
+  /** 1 秒に何回撮るか。既定 30。0 なら使われている間だけ毎フレーム */
+  fps?: number;
+  /** 背景の色 (#rrggbb)。既定 '#1e2430' */
+  backgroundColor?: string;
+  /** 近い・遠いクリップ面 (m)。既定 0.05 / 100 */
+  near?: number;
+  far?: number;
+  /** 自分の体として動かしている VRM (character.embody) を写す。既定 true */
+  showSelf?: boolean;
+  /** ヘッドセットの中にカメラの形と撮る範囲を出す (カメラ自身には写らない)。既定 true */
+  showGizmo?: boolean;
+}
+
+export const CAMERA_DEFAULTS: Required<CameraSettings> = {
+  fov: 50,
+  resolution: [1920, 1080],
+  fps: 30,
+  backgroundColor: '#1e2430',
+  near: 0.05,
+  far: 100,
+  showSelf: true,
+  showGizmo: true,
+};
+
+/**
+ * UI の画像 (Image) に映すもの (β1.1.0〜)。無ければ今までどおり assetPath の画像。
+ * - camera: シーンの仮想カメラの映像 (camera = カメラの物の id か assetId)。mirror で左右反転 (鏡)
+ * - stream: PC などから配信される画面 (MJPEG over HTTP、multipart/x-mixed-replace)。
+ *   url の中の {store:<key>} は DataStore の値に置き換わり、値が変わるとつなぎ直す
+ *   (例 "http://{store:pc.address}/stream/slides")。送る側は products/ScreenCast
+ */
+export type MediaSource =
+  | { kind: 'camera'; camera: string; mirror?: boolean }
+  | { kind: 'stream'; url: string; mirror?: boolean };
+
+/**
+ * VRM を自分の体として動かす (character.embody、β1.1.0〜)。頭は頭の位置と向き、手はコントローラーか手の位置で動く。
+ * 自分の目には写さず (hideFromSelf)、仮想カメラや鏡には写る。
+ */
+export interface EmbodySettings {
+  enabled: boolean;
+  /** 手を何で動かすか。auto = 手が見えていれば手、無ければコントローラー。既定 auto */
+  hands?: 'auto' | 'controllers' | 'hands';
+  /** 声の大きさで口を動かす (声の大きさは拡張機能が渡す。例 quest-input の mic)。既定 true */
+  lipSync?: boolean;
+  /** 自分の目には見せない。既定 true */
+  hideFromSelf?: boolean;
+  /** 体の大きさをユーザーの背に合わせる (起動時の目の高さから)。既定 true */
+  matchHeight?: boolean;
+}
+
+export const EMBODY_DEFAULTS: Required<EmbodySettings> = {
+  enabled: true,
+  hands: 'auto',
+  lipSync: true,
+  hideFromSelf: true,
+  matchHeight: true,
+};
 
 /**
  * VRM をキャラクターとして動かす設定。動きの中身は Assets/Animations/ の FBX (人型、Mixamo など)。
@@ -811,10 +884,12 @@ export interface CharacterSettings {
   breathe?: boolean;
   /** ユーザーの頭の方を見る。off / always / nearby (近く (2.5 m 以内) で、こちらが見ているとき) */
   lookAtUser?: 'off' | 'always' | 'nearby';
+  /** 自分の体として動かす (β1.1.0〜)。あると animation / lookAtUser より優先 */
+  embody?: EmbodySettings;
 }
 
 /** エディタで新しく置いた VRM の既定。 */
-export const CHARACTER_DEFAULTS: Required<Omit<CharacterSettings, 'animation'>> = {
+export const CHARACTER_DEFAULTS: Required<Omit<CharacterSettings, 'animation' | 'embody'>> = {
   blink: true,
   breathe: true,
   lookAtUser: 'nearby',
@@ -898,6 +973,8 @@ export interface UIElement {
    * 文字が変わるたびに、先頭から 1 文字ずつ現れる。無ければ一度に出す。
    */
   reveal?: TextReveal;
+  /** Image に映すもの (β1.1.0〜)。カメラの映像か配信される画面。無ければ assetPath */
+  source?: MediaSource;
 }
 
 export interface TextReveal {

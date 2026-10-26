@@ -1,0 +1,111 @@
+{
+  "id": "9ddc2258-fda6-53d8-b4da-5b68bf23932d",
+  "name": "Monitor",
+  "scope": "canvas",
+  "resolution": {
+    "width": 1920,
+    "height": 1200
+  },
+  "root": {
+    "id": "92581a14-3dc8-5af7-8acb-708c05ffaf20",
+    "type": "Panel",
+    "layout": "Absolute",
+    "style": {
+      "width": "100%",
+      "height": "100%",
+      "backgroundColor": "#0b0d12"
+    },
+    "children": [
+      {
+        "id": "6b67456d-5f7d-5a0a-b70f-99a2e94bd98d",
+        "type": "Image",
+        "style": {
+          "position": "absolute",
+          "left": 0,
+          "top": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "children": [],
+        "bindingId": "monitorImg",
+        "source": {
+          "kind": "camera",
+          "camera": "Cam",
+          "mirror": true
+        }
+      },
+      {
+        "id": "52974401-f8c3-5c4e-9581-d7d7222c8468",
+        "type": "Text",
+        "style": {
+          "position": "absolute",
+          "left": 30,
+          "top": 1100,
+          "width": 640,
+          "height": 84,
+          "fontSize": 56,
+          "color": "#ff6b6b"
+        },
+        "children": [],
+        "content": "■ 待機中",
+        "bind": {
+          "key": "rec.label"
+        }
+      },
+      {
+        "id": "b519a76e-d0d9-56ee-8c7c-bbf48fddfb95",
+        "type": "Button",
+        "style": {
+          "position": "absolute",
+          "left": 700,
+          "top": 1094,
+          "width": 480,
+          "height": 96,
+          "backgroundColor": "#8a2b2b",
+          "color": "#ffffff",
+          "fontSize": 50,
+          "borderRadius": 18
+        },
+        "children": [],
+        "content": "● 録画開始",
+        "bindingId": "recBtnM"
+      },
+      {
+        "id": "69005f01-d794-5b9b-8be7-a37be76c21d3",
+        "type": "Button",
+        "style": {
+          "position": "absolute",
+          "left": 1210,
+          "top": 1094,
+          "width": 330,
+          "height": 96,
+          "backgroundColor": "#2a3142",
+          "color": "#ffffff",
+          "fontSize": 50,
+          "borderRadius": 18
+        },
+        "children": [],
+        "content": "◀ 前",
+        "bindingId": "prevBtnM"
+      },
+      {
+        "id": "9c43b1d3-145c-561a-bfa9-d433f7c996a2",
+        "type": "Button",
+        "style": {
+          "position": "absolute",
+          "left": 1560,
+          "top": 1094,
+          "width": 330,
+          "height": 96,
+          "backgroundColor": "#2a3142",
+          "color": "#ffffff",
+          "fontSize": 50,
+          "borderRadius": 18
+        },
+        "children": [],
+        "content": "次 ▶",
+        "bindingId": "nextBtnM"
+      }
+    ]
+  }
+}

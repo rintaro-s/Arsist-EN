@@ -286,6 +286,10 @@ namespace Arsist.Runtime.VRM
         private void SetUpCharacter(string actualAssetId, GameObject vrmInstance)
         {
             if (vrmInstance == null) return;
+            // 自分の体として動かす部品 (character.embody / vrm.embody)。骨の基準の形 (T ポーズ) は読み込んだ直後の
+            // 今しか測れないので、embody が無くても付けておく (動かさない間は何もしない)。
+            try { Arsist.Runtime.Media.ArsistEmbodiment.Ensure(vrmInstance); }
+            catch (System.Exception e) { Debug.LogWarning($"[ArsistVRMLoaderTask] embodiment setup failed for '{actualAssetId}': {e.Message}"); }
             if (string.IsNullOrEmpty(characterJson))
             {
                 // character の無い VRM も T ポーズでは立たせない (力を抜いた立ち姿だけ。まばたき・呼吸・視線は off のまま)
@@ -300,6 +304,9 @@ namespace Arsist.Runtime.VRM
                 if (vrmInstance.GetComponent<VRMLookAtController>() == null) vrmInstance.AddComponent<VRMLookAtController>();
                 var character = ArsistCharacter.Ensure(vrmInstance);
                 character.Configure(characterJson);
+                // character.embody (doc/23)。立ち姿・まばたきの部品が付いた後に始める
+                if (Newtonsoft.Json.Linq.JObject.Parse(characterJson)["embody"] is Newtonsoft.Json.Linq.JObject embody)
+                    Arsist.Runtime.Media.ArsistEmbodiment.Ensure(vrmInstance).Configure(embody);
             }
             catch (System.Exception e)
             {

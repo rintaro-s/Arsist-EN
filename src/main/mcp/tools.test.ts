@@ -222,4 +222,40 @@ describe('Arsist tools', () => {
     expect('character' in saved.scenes[0].objects.find((o: any) => o.assetId === 'Sister')).toBe(false);
     expect('reveal' in saved.uiLayouts[0].root.children[0]).toBe(false);
   });
+
+  it('adds a camera, shows it in an image, embodies a VRM, and validates the references (doc/23)', async () => {
+    const s = new ToolSession({ projectPath: dir });
+    const cam = await call(s, 'ir_add_camera', { name: 'Cam', settings: { fov: 40, resolution: [1080, 1920] } });
+    expect(cam.ok).toBe(true);
+    expect((cam.result as any).object).toMatchObject({ type: 'camera', assetId: 'Cam', camera: { fov: 40, resolution: [1080, 1920], fps: 30, showGizmo: true } });
+    // 範囲外は断る
+    expect((await call(s, 'ir_add_camera', { settings: { resolution: [8, 8] } })).ok).toBe(false);
+    expect((await call(s, 'ir_update_object', { objectId: 'Cam', camera: { fov: 0 } })).ok).toBe(false);
+    expect((await call(s, 'ir_update_object', { objectId: 'Cam', camera: { showSelf: false } })).ok).toBe(true);
+
+    // 画像に映す: 無いカメラは断る / あるカメラは通る / 画像以外には付けられない
+    expect((await call(s, 'ir_add_ui_element', { type: 'Image', bindingId: 'screen', source: { kind: 'camera', camera: 'Nope' } })).ok).toBe(false);
+    expect((await call(s, 'ir_add_ui_element', { type: 'Image', bindingId: 'screen', source: { kind: 'camera', camera: 'Cam', mirror: true } })).ok).toBe(true);
+    expect((await call(s, 'ir_add_ui_element', { type: 'Text', source: { kind: 'stream', url: 'http://x' } })).ok).toBe(false);
+    expect((await call(s, 'ir_add_ui_element', { type: 'Image', bindingId: 'slides', source: { kind: 'stream', url: 'http://{store:pc.address}/stream/slides' } })).ok).toBe(true);
+    expect((await call(s, 'ir_update_ui_element', { elementId: 'slides', source: null })).ok).toBe(true);
+
+    // VRM を自分の体に
+    const vrm = await call(s, 'ir_place_model', { modelAssetPath: 'Assets/Models/me.vrm', assetId: 'Me' });
+    expect(vrm.ok).toBe(true);
+    expect((await call(s, 'ir_update_object', { objectId: 'Me', character: { embody: { hands: 'wings' } } })).ok).toBe(false);
+    const embodied = await call(s, 'ir_update_object', { objectId: 'Me', character: { embody: { hands: 'controllers' } } });
+    expect((embodied.result as any).object.character).toMatchObject({ blink: true, embody: { enabled: true, hands: 'controllers', hideFromSelf: true } });
+
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, 'project.json'), 'utf8'));
+    expect(saved.scenes[0].objects.find((o: any) => o.assetId === 'Cam').camera.showSelf).toBe(false);
+    const images = saved.uiLayouts[0].root.children;
+    expect(images.find((e: any) => e.bindingId === 'screen').source).toEqual({ kind: 'camera', camera: 'Cam', mirror: true });
+    expect('source' in images.find((e: any) => e.bindingId === 'slides')).toBe(false);
+
+    // 確かめ: カメラを消すと、それを映す画像が error になる
+    expect((await call(s, 'ir_remove_scene_object', { objectId: 'Cam' })).ok).toBe(true);
+    const v = (await call(s, 'ir_validate_project')).result as any;
+    expect(v.problems.some((m: string) => /shows camera "Cam"/.test(m))).toBe(true);
+  });
 });

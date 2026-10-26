@@ -26,7 +26,7 @@ import type {
   PerceptionTask,
   ModelDefinition,
 } from '../../shared/types';
-import { CHARACTER_DEFAULTS } from '../../shared/types';
+import { CAMERA_DEFAULTS, CHARACTER_DEFAULTS } from '../../shared/types';
 import { describeVirtualIrVersion } from '../../shared/layster/version';
 
 /** 古い版の IR を開いたときの提案 (main の PendingUpgrade と同じ形)。 */
@@ -506,9 +506,12 @@ export const useProjectStore = create<ProjectState>()(
             rotation: { x: 0, y: 0, z: 0 },
             scale: { x: 1, y: 1, z: 1 },
           },
-          material: obj.material || { color: '#FFFFFF', metallic: 0.5, roughness: 0.5 },
+          // カメラには色が無い (インスペクタに「マテリアル」を出さない)
+          material: obj.material || (obj.type === 'camera' ? undefined : { color: '#FFFFFF', metallic: 0.5, roughness: 0.5 }),
           ...(obj.assetId ? { assetId: obj.assetId } : {}),
           ...(obj.ext ? { ext: obj.ext } : {}),
+          // 仮想カメラ (β1.1.0)。新しく置いたカメラは最初から既定の設定を持つ
+          ...((obj.camera || obj.type === 'camera') ? { camera: obj.camera ?? { ...CAMERA_DEFAULTS, resolution: [...CAMERA_DEFAULTS.resolution] as [number, number] } } : {}),
           // 新しく置いた VRM は最初からキャラクター (まばたき・呼吸・こちらを見る)。古い VRM は character 無し = 今までどおり
           ...((obj.character || (obj.type === 'vrm'))
             ? { character: obj.character ?? { ...CHARACTER_DEFAULTS } }

@@ -1,0 +1,805 @@
+{
+  "layster": {
+    "profile": "virtual",
+    "stage": "beta",
+    "version": "1.1.0"
+  },
+  "id": "a6327110-2e9e-57e3-8bad-f6562ffb7993",
+  "name": "Presentation Recorder",
+  "version": "1.0.0",
+  "irVersion": 7,
+  "createdAt": "2026-10-25T12:00:00.000Z",
+  "updatedAt": "2026-10-25T12:00:00.000Z",
+  "appType": "3d_ar_scene",
+  "targetDevice": "Meta_Quest",
+  "arSettings": {
+    "worldScale": 1,
+    "enableRemoteControl": true,
+    "remoteControlPort": 8765,
+    "remoteControlPassword": "",
+    "interaction": {
+      "controllerRay": true,
+      "handTracking": true
+    },
+    "trackingMode": "6dof",
+    "presentationMode": "world_anchored",
+    "defaultDepth": 2,
+    "backgroundMode": "passthrough"
+  },
+  "designSystem": {
+    "defaultFont": "Roboto-Regular.ttf",
+    "primaryColor": "#4f8cff",
+    "secondaryColor": "#3ccf8e",
+    "backgroundColor": "#15181d",
+    "textColor": "#FFFFFF"
+  },
+  "dataFlow": {
+    "dataSources": [],
+    "transforms": []
+  },
+  "scenes": [
+    {
+      "id": "5ac6ad1f-0fea-5548-a128-859de9b3b16e",
+      "name": "MainScene",
+      "objects": [
+        {
+          "id": "f4830159-4f2d-5d1d-bab7-a77648a791ad",
+          "name": "Me",
+          "type": "vrm",
+          "modelPath": "Assets/Models/avatar.vrm",
+          "assetId": "Me",
+          "transform": {
+            "position": {
+              "x": 0,
+              "y": -1.55,
+              "z": 0
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          },
+          "character": {
+            "blink": true,
+            "breathe": true,
+            "lookAtUser": "off",
+            "embody": {
+              "enabled": true,
+              "hands": "auto",
+              "lipSync": true,
+              "hideFromSelf": true,
+              "matchHeight": true
+            }
+          }
+        },
+        {
+          "id": "05a11a81-6713-5293-9bf5-6025fa0d886b",
+          "name": "Cam",
+          "type": "camera",
+          "assetId": "Cam",
+          "transform": {
+            "position": {
+              "x": 0.3,
+              "y": -0.15,
+              "z": 3.6
+            },
+            "rotation": {
+              "x": 0,
+              "y": -163.7,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          },
+          "camera": {
+            "fov": 48,
+            "resolution": [
+              1920,
+              1080
+            ],
+            "fps": 30,
+            "backgroundColor": "#1e2430",
+            "near": 0.05,
+            "far": 100,
+            "showSelf": true,
+            "showGizmo": true
+          },
+          "ext": {
+            "quest-input": {
+              "grab": "grab",
+              "reach": "far"
+            }
+          }
+        },
+        {
+          "id": "4ae46b19-bd08-50c1-9d22-6c136e4fd05e",
+          "name": "SlideScreen",
+          "type": "canvas",
+          "assetId": "SlideScreen",
+          "canvasSettings": {
+            "layoutId": "e2ffd6a8-bec0-56fe-b097-308d3e29eeb0",
+            "widthMeters": 2.4,
+            "heightMeters": 1.35,
+            "pixelsPerUnit": 800
+          },
+          "transform": {
+            "position": {
+              "x": -1.45,
+              "y": 0.1,
+              "z": 0.25
+            },
+            "rotation": {
+              "x": 0,
+              "y": -152.4,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          },
+          "ext": {
+            "quest-input": {
+              "grab": "grab",
+              "reach": "far"
+            }
+          }
+        },
+        {
+          "id": "4cfd420f-decf-53f9-b852-a7d363e73625",
+          "name": "Monitor",
+          "type": "canvas",
+          "assetId": "Monitor",
+          "canvasSettings": {
+            "layoutId": "9ddc2258-fda6-53d8-b4da-5b68bf23932d",
+            "widthMeters": 2.4,
+            "heightMeters": 1.5,
+            "pixelsPerUnit": 800
+          },
+          "transform": {
+            "position": {
+              "x": 1.8,
+              "y": 0.0,
+              "z": 4.6
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          },
+          "ext": {
+            "quest-input": {
+              "grab": "grab",
+              "reach": "far"
+            }
+          }
+        },
+        {
+          "id": "83b56823-a1ac-50ba-980c-8cbb38ed86b1",
+          "name": "Notes",
+          "type": "canvas",
+          "assetId": "Notes",
+          "canvasSettings": {
+            "layoutId": "28ed40a5-a8a2-55ff-a374-bdf192165147",
+            "widthMeters": 4.8,
+            "heightMeters": 2.7,
+            "pixelsPerUnit": 400
+          },
+          "transform": {
+            "position": {
+              "x": -2.4,
+              "y": 0.35,
+              "z": 6.5
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          },
+          "ext": {
+            "quest-input": {
+              "grab": "grab",
+              "reach": "far"
+            }
+          }
+        },
+        {
+          "id": "8f64b8ca-098a-53b5-af73-c85de58d57c0",
+          "name": "Setup",
+          "type": "canvas",
+          "assetId": "Setup",
+          "canvasSettings": {
+            "layoutId": "30dee505-c381-5c8b-95a3-507c6d0820b7",
+            "widthMeters": 0.6,
+            "heightMeters": 0.45,
+            "pixelsPerUnit": 2000
+          },
+          "transform": {
+            "position": {
+              "x": 0.0,
+              "y": -0.38,
+              "z": 0.72
+            },
+            "rotation": {
+              "x": 28,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "uiLayouts": [
+    {
+      "id": "e2ffd6a8-bec0-56fe-b097-308d3e29eeb0",
+      "name": "Slides",
+      "scope": "canvas",
+      "resolution": {
+        "width": 1920,
+        "height": 1080
+      },
+      "root": {
+        "id": "c5956dea-f84d-56e9-b433-d2f9f13c08b1",
+        "type": "Panel",
+        "layout": "Absolute",
+        "style": {
+          "width": "100%",
+          "height": "100%",
+          "backgroundColor": "#000000"
+        },
+        "children": [
+          {
+            "id": "8cbc2be3-d79b-59d0-955f-d63a8cba44c7",
+            "type": "Image",
+            "style": {
+              "position": "absolute",
+              "left": 0,
+              "top": 0,
+              "width": 1920,
+              "height": 1080
+            },
+            "children": [],
+            "bindingId": "slideImg",
+            "source": {
+              "kind": "stream",
+              "url": "http://{store:pc.address}/stream/slides"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "9ddc2258-fda6-53d8-b4da-5b68bf23932d",
+      "name": "Monitor",
+      "scope": "canvas",
+      "resolution": {
+        "width": 1920,
+        "height": 1200
+      },
+      "root": {
+        "id": "92581a14-3dc8-5af7-8acb-708c05ffaf20",
+        "type": "Panel",
+        "layout": "Absolute",
+        "style": {
+          "width": "100%",
+          "height": "100%",
+          "backgroundColor": "#0b0d12"
+        },
+        "children": [
+          {
+            "id": "6b67456d-5f7d-5a0a-b70f-99a2e94bd98d",
+            "type": "Image",
+            "style": {
+              "position": "absolute",
+              "left": 0,
+              "top": 0,
+              "width": 1920,
+              "height": 1080
+            },
+            "children": [],
+            "bindingId": "monitorImg",
+            "source": {
+              "kind": "camera",
+              "camera": "Cam",
+              "mirror": true
+            }
+          },
+          {
+            "id": "52974401-f8c3-5c4e-9581-d7d7222c8468",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 30,
+              "top": 1100,
+              "width": 640,
+              "height": 84,
+              "fontSize": 56,
+              "color": "#ff6b6b"
+            },
+            "children": [],
+            "content": "■ 待機中",
+            "bind": {
+              "key": "rec.label"
+            }
+          },
+          {
+            "id": "b519a76e-d0d9-56ee-8c7c-bbf48fddfb95",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 700,
+              "top": 1094,
+              "width": 480,
+              "height": 96,
+              "backgroundColor": "#8a2b2b",
+              "color": "#ffffff",
+              "fontSize": 50,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "● 録画開始",
+            "bindingId": "recBtnM"
+          },
+          {
+            "id": "69005f01-d794-5b9b-8be7-a37be76c21d3",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 1210,
+              "top": 1094,
+              "width": 330,
+              "height": 96,
+              "backgroundColor": "#2a3142",
+              "color": "#ffffff",
+              "fontSize": 50,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "◀ 前",
+            "bindingId": "prevBtnM"
+          },
+          {
+            "id": "9c43b1d3-145c-561a-bfa9-d433f7c996a2",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 1560,
+              "top": 1094,
+              "width": 330,
+              "height": 96,
+              "backgroundColor": "#2a3142",
+              "color": "#ffffff",
+              "fontSize": 50,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "次 ▶",
+            "bindingId": "nextBtnM"
+          }
+        ]
+      }
+    },
+    {
+      "id": "28ed40a5-a8a2-55ff-a374-bdf192165147",
+      "name": "Notes",
+      "scope": "canvas",
+      "resolution": {
+        "width": 1920,
+        "height": 1080
+      },
+      "root": {
+        "id": "8f71a3bf-d9c3-548b-a998-35f73c478a4f",
+        "type": "Panel",
+        "layout": "Absolute",
+        "style": {
+          "width": "100%",
+          "height": "100%",
+          "backgroundColor": "#000000"
+        },
+        "children": [
+          {
+            "id": "af2bb5ce-154d-5a41-935d-b92a013a93e4",
+            "type": "Image",
+            "style": {
+              "position": "absolute",
+              "left": 0,
+              "top": 0,
+              "width": 1920,
+              "height": 1080
+            },
+            "children": [],
+            "bindingId": "notesImg",
+            "source": {
+              "kind": "stream",
+              "url": "http://{store:pc.address}/stream/notes"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "30dee505-c381-5c8b-95a3-507c6d0820b7",
+      "name": "Setup",
+      "scope": "canvas",
+      "resolution": {
+        "width": 1200,
+        "height": 900
+      },
+      "root": {
+        "id": "996ed580-e710-5236-8e18-6727d14a792d",
+        "type": "Panel",
+        "layout": "Absolute",
+        "style": {
+          "width": "100%",
+          "height": "100%",
+          "backgroundColor": "#11151ef2",
+          "borderRadius": 40
+        },
+        "children": [
+          {
+            "id": "3fc51538-1755-5857-9b12-e292a96dbd2c",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 26,
+              "width": 760,
+              "height": 60,
+              "fontSize": 48,
+              "color": "#ffffff"
+            },
+            "children": [],
+            "content": "プレゼン録画"
+          },
+          {
+            "id": "c1462501-8787-59d1-8e54-21ef20ac5b83",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 96,
+              "width": 1120,
+              "height": 44,
+              "fontSize": 30,
+              "color": "#9aa3b8"
+            },
+            "children": [],
+            "content": "PC のアドレス (ScreenCast の画面に出ている 192.168.x.x:8090)"
+          },
+          {
+            "id": "9c77cc79-c888-5830-8a5b-f8fe8da69346",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 146,
+              "width": 640,
+              "height": 64,
+              "fontSize": 50,
+              "color": "#ffffff"
+            },
+            "children": [],
+            "content": "192.168.0.10:8090",
+            "bind": {
+              "key": "ui.pcDraft"
+            }
+          },
+          {
+            "id": "3db3bdad-5d14-5b1c-862c-15f4f481a6d4",
+            "type": "Keyboard",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 222,
+              "width": 560,
+              "height": 470,
+              "fontSize": 44,
+              "backgroundColor": "#00000066"
+            },
+            "children": [],
+            "content": "123|456|789|.0:",
+            "bindingId": "pcKb",
+            "bind": {
+              "key": "ui.pcDraft"
+            }
+          },
+          {
+            "id": "54ed5ea2-f7ee-5516-a6e3-18cd442f759d",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 704,
+              "width": 640,
+              "height": 40,
+              "fontSize": 28,
+              "color": "#9aa3b8"
+            },
+            "children": [],
+            "content": "",
+            "bind": {
+              "key": "pc.address",
+              "format": "接続先: {value}"
+            }
+          },
+          {
+            "id": "6741a363-c866-5882-9629-ceb144c1ec16",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 748,
+              "width": 640,
+              "height": 40,
+              "fontSize": 28,
+              "color": "#9aa3b8"
+            },
+            "children": [],
+            "content": "",
+            "bind": {
+              "key": "media.slideImg.status",
+              "format": "スライド: {value}"
+            }
+          },
+          {
+            "id": "5fee17ea-8a32-57a7-8faf-a46dcaec72dc",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 792,
+              "width": 640,
+              "height": 40,
+              "fontSize": 28,
+              "color": "#9aa3b8"
+            },
+            "children": [],
+            "content": "",
+            "bind": {
+              "key": "media.notesImg.status",
+              "format": "カンペ: {value}"
+            }
+          },
+          {
+            "id": "1b9a91d5-64e6-5c87-9429-59fea4a53a78",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 40,
+              "top": 836,
+              "width": 1120,
+              "height": 44,
+              "fontSize": 28,
+              "color": "#ffd27a"
+            },
+            "children": [],
+            "content": "",
+            "bind": {
+              "key": "ui.message"
+            }
+          },
+          {
+            "id": "1b8762bc-5ae7-56ce-b0da-35fc0795110c",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 720,
+              "top": 222,
+              "width": 440,
+              "height": 100,
+              "backgroundColor": "#8a2b2b",
+              "color": "#ffffff",
+              "fontSize": 44,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "● 録画開始",
+            "bindingId": "recBtn"
+          },
+          {
+            "id": "7b035f47-ec1d-57be-8021-d1ca96880000",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 720,
+              "top": 330,
+              "width": 440,
+              "height": 56,
+              "fontSize": 40,
+              "color": "#ff6b6b"
+            },
+            "children": [],
+            "content": "■ 待機中",
+            "bind": {
+              "key": "rec.label"
+            }
+          },
+          {
+            "id": "adc6a2d2-e518-5037-8867-0ba1dc97705e",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 720,
+              "top": 386,
+              "width": 440,
+              "height": 40,
+              "fontSize": 28,
+              "color": "#9aa3b8"
+            },
+            "children": [],
+            "content": "",
+            "bind": {
+              "key": "input.recorder.seconds",
+              "format": "0 秒"
+            }
+          },
+          {
+            "id": "e6d059ed-e00b-5539-9eac-dc10800f386b",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 720,
+              "top": 440,
+              "width": 210,
+              "height": 90,
+              "backgroundColor": "#2a3142",
+              "color": "#ffffff",
+              "fontSize": 40,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "◀ 前",
+            "bindingId": "prevBtn"
+          },
+          {
+            "id": "e6f7ea2b-4d5c-5f12-9f20-22a0b8366cef",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 950,
+              "top": 440,
+              "width": 210,
+              "height": 90,
+              "backgroundColor": "#2a3142",
+              "color": "#ffffff",
+              "fontSize": 40,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "次 ▶",
+            "bindingId": "nextBtn"
+          },
+          {
+            "id": "a0f1f0fd-263b-53cc-9eab-22c87e99ac29",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 720,
+              "top": 548,
+              "width": 210,
+              "height": 80,
+              "backgroundColor": "#2a3142",
+              "color": "#ffffff",
+              "fontSize": 30,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "背を測る",
+            "bindingId": "calibBtn"
+          },
+          {
+            "id": "12803b1c-351f-523b-9cb5-b76d5df8c82b",
+            "type": "Button",
+            "style": {
+              "position": "absolute",
+              "left": 950,
+              "top": 548,
+              "width": 210,
+              "height": 80,
+              "backgroundColor": "#2a3142",
+              "color": "#ffffff",
+              "fontSize": 30,
+              "borderRadius": 18
+            },
+            "children": [],
+            "content": "カメラを戻す",
+            "bindingId": "camResetBtn"
+          },
+          {
+            "id": "ac30a9aa-9a16-502f-95ee-8411b592378e",
+            "type": "Text",
+            "style": {
+              "position": "absolute",
+              "left": 720,
+              "top": 640,
+              "width": 440,
+              "height": 190,
+              "fontSize": 28,
+              "color": "#9aa3b8"
+            },
+            "children": [],
+            "content": "A 次 / B 前 / X 録画 / Y 一時停止\n左スティック: カメラの向き\n右スティック ↑↓: ズーム\n左グリップ + スティック: カメラを動かす\n≡ この板"
+          }
+        ]
+      }
+    }
+  ],
+  "models": [],
+  "extensions": {
+    "quest-input": {
+      "enabled": true,
+      "dataVersion": 1,
+      "settings": {
+        "publishToStore": true,
+        "scriptEvents": true,
+        "physicalKeyboard": true,
+        "micAutoStart": true,
+        "voiceThreshold": 0.45,
+        "micOutputRate": "16000",
+        "gestureHoldSeconds": 0.1,
+        "recorderFolder": "Arsist",
+        "recorderBitrate": 8000000,
+        "recorderMaxMinutes": 60
+      }
+    },
+    "vrm10": {
+      "enabled": true,
+      "dataVersion": 1,
+      "settings": {}
+    }
+  },
+  "storage": {
+    "persist": [
+      "pc.address"
+    ]
+  },
+  "buildSettings": {
+    "packageName": "com.arsist.presentationrecorder",
+    "version": "1.0.0",
+    "versionCode": 1,
+    "minSdkVersion": 32,
+    "targetSdkVersion": 34
+  },
+  "scripts": [
+    {
+      "id": "5e0488b5-1aad-5110-83f0-5f37cf34cf6e",
+      "name": "プレゼン録画",
+      "trigger": {
+        "type": "onStart"
+      },
+      "code": "// ==== プレゼン録画 (samples/virtual/presentation-recorder) ====\n// PC の画面 (products/ScreenCast) を大きなスクリーンに映し、自分は VRM (character.embody) になって説明し、\n// 仮想カメラ \"Cam\" で撮って MP4 にする (quest-input の recorder)。doc/23。\n//\n//   スクリーン SlideScreen … http://<PC>/stream/slides を映す (UI の Image の source)\n//   モニター   Monitor     … カメラの映像を鏡にして映す (カメラのすぐ後ろ = 撮る範囲の外)\n//   カンペ     Notes       … http://<PC>/stream/notes\n//   手元の板   Setup       … PC のアドレス・録画・スライド送り。録画中は隠す (映り込まないように)\n//\n// コントローラー: A 次 / B 前 / X 録画開始・停止 / Y 一時停止・再開 / ≡ 手元の板\n//   左スティック = カメラの向き、右スティック上下 = ズーム、左グリップを握りながら左スティック = カメラを前後左右に、\n//   左グリップ + 右スティック上下 = カメラを上下に。\n//   スライド・モニター・カンペ・カメラは、コントローラーを向けてグリップでつかんで動かせる (quest-input の grab、reach: far)。\n//   つかんでいる手のスティック上下で奥へ / 手前へ。つかんでいる間はスティックでカメラを動かさない\n\nvar CAM = 'Cam';\nvar ME = 'Me';\nvar SETUP = 'Setup';\nvar DEFAULT_PORT = 8090;\nvar FOV = { now: 48, min: 24, max: 70 };\n// 発表者とスクリーンの真ん中。cameras.* は実行中の世界の座標 (x = 右) なので、IR の配置 (x = 左) の X を反転した値\nvar LOOK_AT = { x: 0.72, y: -0.1, z: 0.12 };\nvar CAM_HOME = null; // 起動したときのカメラの姿勢 (「カメラを戻す」で使う)\n\nvar setupShown = true;\nfunction showSetup(on) { setupShown = !!on; scene.setVisible(SETUP, setupShown); }\n\nfunction hasRecorder() { return typeof recorder !== 'undefined' && recorder; }\nfunction hasController() { return typeof controller !== 'undefined' && controller; }\n\n// ---- 知らせ (手元の板の下の 1 行。数秒で消える) ----\nvar messageTimer = null;\nfunction say(text) {\n  log('[presentation] ' + text);\n  store.set('ui.message', text);\n  if (messageTimer) clearTimeout(messageTimer);\n  messageTimer = setTimeout(function () { store.set('ui.message', ''); }, 6000);\n}\n\n// ---- PC のアドレス (端末に残す: project.storage.persist = [\"pc.address\"]) ----\nfunction pcAddress() { return String(store.get('pc.address') || ''); }\n\n// \"http://192.168.0.12:8090/stream/slides\" → \"192.168.0.12:8090\"。ポートが無ければ 8090\nfunction normalizeAddress(text) {\n  var s = String(text || '').trim().replace(/^https?:\\/\\//i, '').replace(/\\/.*$/, '');\n  if (!s) return '';\n  if (s.indexOf(':') < 0) s = s + ':' + DEFAULT_PORT;\n  return s;\n}\n\nstore.set('ui.pcDraft', pcAddress());\nui.on('pcKb:submit', function () {\n  var a = normalizeAddress(store.get('ui.pcDraft'));\n  store.set('ui.pcDraft', a);\n  store.set('pc.address', a); // 画像の url の {store:pc.address} が変わり、つなぎ直す\n  if (typeof storage !== 'undefined') storage.save();\n  say(a ? '接続先を ' + a + ' にしました' : '接続先を消しました');\n  if (a) checkPc();\n});\n\n// PC の ScreenCast が動いているか (/status)。スライド送りができるかも分かる\nfunction checkPc() {\n  var a = pcAddress();\n  if (!a) return;\n  api.request({ url: 'http://' + a + '/status', method: 'GET', responseType: 'json', timeout: 4 }, function (r) {\n    if (!r.ok || !r.json) { say('PC (' + a + ') に届きません。ScreenCast は動いていますか? (' + (r.status || r.error || '') + ')'); return; }\n    var names = [];\n    for (var i = 0; i < (r.json.streams || []).length; i++) names.push(r.json.streams[i].name);\n    say('PC につながりました: ' + names.join(', ') + (r.json.control ? '' : ' (この PC ではスライド送りができません)'));\n  });\n}\n\n// ---- スライド送り (PC で → ← などのキーを押す) ----\nfunction slide(action) {\n  var a = pcAddress();\n  if (!a) { say('先に PC のアドレスを入れてください'); return; }\n  api.request({ url: 'http://' + a + '/control', method: 'POST', json: { action: action }, responseType: 'json', timeout: 3 }, function (r) {\n    if (!r.ok) say('スライド送りができません: ' + ((r.json && r.json.error) || r.status || r.error));\n  });\n  if (hasController()) controller.vibrate(action === 'next' ? 'right' : 'left', 0.3, 0.04);\n}\n\n// ---- 録画 ----\nfunction recState() { return hasRecorder() ? String(recorder.state || 'idle') : 'unavailable'; }\n\nfunction startRecording() {\n  if (!hasRecorder()) { say('録画は Quest (quest-input 拡張機能) でだけ使えます'); return; }\n  showSetup(false); // 手元の板は写したくない\n  // ビットレート・保存先・最長は拡張機能の設定 (recorderBitrate / recorderFolder / recorderMaxMinutes)\n  recorder.start({ camera: CAM, audio: true, fps: 30 }, function (r) {\n    if (!r || !r.ok) {\n      showSetup(true);\n      say('録画を始められません: ' + (r && r.error));\n    }\n  });\n}\n\nfunction stopRecording() {\n  if (!hasRecorder()) return;\n  recorder.stop(function (r) {\n    showSetup(true);\n    if (r && r.ok) say('保存しました: Movies/Arsist/' + r.file + ' (' + Math.round(r.seconds || 0) + ' 秒)');\n    else say('保存できませんでした: ' + (r && r.error));\n  });\n}\n\nfunction toggleRecording() {\n  var s = recState();\n  if (s === 'idle') startRecording();\n  else if (s === 'recording' || s === 'paused') stopRecording();\n}\n\nfunction togglePause() {\n  var s = recState();\n  if (s === 'recording') recorder.pause();\n  else if (s === 'paused') recorder.resume();\n}\n\nui.on('quest-input:recorder:started', function () { say('録画しています'); });\nui.on('quest-input:recorder:stopped', function () { showSetup(true); });\nui.on('quest-input:recorder:error', function () { showSetup(true); say('録画が止まりました (ログを見てください)'); });\n\n// 録画の表示 (モニターと手元の板が rec.label を出す)\nfunction two(n) { return (n < 10 ? '0' : '') + n; }\nfunction clock(seconds) {\n  var s = Math.max(0, Math.floor(seconds || 0));\n  return two(Math.floor(s / 60)) + ':' + two(s % 60);\n}\nvar lastLabel = '';\nfunction refreshRecLabel() {\n  var s = recState();\n  var secs = Number(store.get('input.recorder.seconds') || 0);\n  var label;\n  if (s === 'recording') label = '● REC ' + clock(secs);\n  else if (s === 'paused') label = '❚❚ 一時停止 ' + clock(secs);\n  else if (s === 'starting') label = '… 準備中';\n  else if (s === 'stopping') label = '… 保存中';\n  else if (s === 'unavailable') label = '録画は Quest で';\n  else label = '■ 待機中';\n  if (label === lastLabel) return;\n  lastLabel = label;\n  store.set('rec.label', label);\n  var busy = s === 'recording' || s === 'paused';\n  ui.setText('recBtn', busy ? '■ 録画停止' : '● 録画開始');\n  ui.setText('recBtnM', busy ? '■ 録画停止' : '● 録画開始');\n}\nsetInterval(refreshRecLabel, 250);\nrefreshRecLabel();\n\n// ---- ボタン ----\nui.on('recBtn', toggleRecording);\nui.on('recBtnM', toggleRecording);\nui.on('prevBtn', function () { slide('prev'); });\nui.on('prevBtnM', function () { slide('prev'); });\nui.on('nextBtn', function () { slide('next'); });\nui.on('nextBtnM', function () { slide('next'); });\nui.on('calibBtn', function () { vrm.calibrate(ME); say('背を測り直しました (まっすぐ立って前を見ているとき)'); });\n\n// ---- コントローラー (quest-input) ----\nif (hasController()) {\n  controller.on('right.a.down', function () { slide('next'); });\n  controller.on('right.b.down', function () { slide('prev'); });\n  controller.on('left.x.down', toggleRecording);\n  controller.on('left.y.down', togglePause);\n  controller.on('left.menu.down', function () {\n    if (recState() === 'recording') return; // 録画中は出さない\n    showSetup(!setupShown);\n  });\n  setInterval(stickTick, 50);\n}\n\n// ---- カメラをスティックで動かす (20 回/秒) ----\nvar STICK = { dead: 0.2, turn: 60, move: 0.8, zoom: 25 }; // 度/秒・m/秒・度/秒 (いっぱいに倒したとき)\nvar camMoved = false;\nfunction axis(v) { return Math.abs(v) < STICK.dead ? 0 : (v - (v > 0 ? STICK.dead : -STICK.dead)) / (1 - STICK.dead); }\n// つかんでいる間 (板やカメラを遠くからつかんで動かしているとき) は、スティックでカメラを動かさない\nvar holding = { left: false, right: false };\nif (hasController()) {\n  controller.on('grab', function (e) { holding[e.hand] = true; });\n  controller.on('release', function (e) { holding[e.hand] = false; });\n}\nfunction stickTick() {\n  if (holding.left || holding.right) return;\n  var l = controller.stick('left') || { x: 0, y: 0 };\n  var r = controller.stick('right') || { x: 0, y: 0 };\n  var lx = axis(l.x), ly = axis(l.y), ry = axis(r.y);\n  if (!lx && !ly && !ry) {\n    if (camMoved) { camMoved = false; var q = cameras.getPose(CAM); if (q) say('カメラ  向き ' + Math.round(q.ry) + '°  ' + Math.round(-q.rx) + '°  画角 ' + Math.round(FOV.now) + '°'); }\n    return;\n  }\n  var dt = 0.05;\n  var p = cameras.getPose(CAM);\n  if (!p) return;\n  camMoved = true;\n  var grip = controller.isDown('left', 'grip');\n  if (grip) {\n    // 前後左右 (カメラの水平の向きを基準に)、右スティックで上下\n    var yaw = p.ry * Math.PI / 180;\n    var fwd = ly * STICK.move * dt, side = lx * STICK.move * dt;\n    p.x += Math.sin(yaw) * fwd + Math.cos(yaw) * side;\n    p.z += Math.cos(yaw) * fwd - Math.sin(yaw) * side;\n    p.y += ry * STICK.move * dt;\n  } else {\n    p.ry += lx * STICK.turn * dt;\n    var pitch = p.rx > 180 ? p.rx - 360 : p.rx;\n    p.rx = Math.max(-70, Math.min(70, pitch - ly * STICK.turn * dt));\n    if (ry) {\n      FOV.now = Math.max(FOV.min, Math.min(FOV.max, FOV.now - ry * STICK.zoom * dt));\n      cameras.setFov(CAM, FOV.now);\n    }\n  }\n  cameras.setPose(CAM, p.x, p.y, p.z, p.rx, p.ry, 0);\n}\n\nfunction resetCamera() {\n  if (!CAM_HOME) return;\n  cameras.setPose(CAM, CAM_HOME.x, CAM_HOME.y, CAM_HOME.z, CAM_HOME.rx, CAM_HOME.ry, 0);\n  FOV.now = CAM_HOME.fov || 48;\n  cameras.setFov(CAM, FOV.now);\n  say('カメラを最初の位置に戻しました');\n}\nui.on('camResetBtn', resetCamera);\n\n// ---- 起動 ----\ncameras.lookAt(CAM, LOOK_AT.x, LOOK_AT.y, LOOK_AT.z); // 置いた向きの丸めを直す\nCAM_HOME = cameras.getPose(CAM);\nvrm.embody(ME, true);\nif (pcAddress()) checkPc();\nelse say('PC で ScreenCast を起動し、そのアドレスを入れて Enter');\n",
+      "enabled": true,
+      "description": "PC の画面を映し、スライド送りと録画をする (ボタン・コントローラー)",
+      "createdAt": "2026-10-25T12:00:00.000Z",
+      "updatedAt": "2026-10-25T12:00:00.000Z"
+    }
+  ]
+}

@@ -7,9 +7,10 @@
  * 動きの名前はファイル名 = スクリプトの vrm.playAnimation(id, name) の名前なので、一覧に呼び方も出す。
  */
 import { useEffect, useState } from 'react';
-import { Footprints, Play, Square, Upload, Sparkles } from 'lucide-react';
-import type { CharacterSettings, SceneObject } from '../../../shared/types';
-import { CHARACTER_DEFAULTS } from '../../../shared/types';
+import { Footprints, Play, Square, Upload, Sparkles, PersonStanding } from 'lucide-react';
+import type { CharacterSettings, EmbodySettings, SceneObject } from '../../../shared/types';
+import { CHARACTER_DEFAULTS, EMBODY_DEFAULTS } from '../../../shared/types';
+import { allSceneObjects, embodySettingsOf, isEmbodied } from '../../../shared/media';
 import { useT } from '../../i18n';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -151,13 +152,68 @@ export function CharacterSection({ object }: { object: SceneObject }) {
           </div>
 
           <p className="text-[10px] text-arsist-muted leading-snug">{t('character.scriptHint')}</p>
+
+          {/* 自分の体として動かす (character.embody、β1.1.0) */}
+          <EmbodySection object={object} character={character} disabled={readOnly} onChange={(embody) => set({ embody })} />
         </>
       )}
     </div>
   );
 }
 
-function Toggle({ label, help, value, disabled, onChange }: {
+/**
+ * 「自分の体として動かす」(character.embody)。on にすると EMBODY_DEFAULTS が入る。off で embody ごと消す
+ * (enabled: false で残すより、無い = 今までどおり の方が読みやすい)。
+ */
+function EmbodySection({ object, character, disabled, onChange }: {
+  object: SceneObject; character: CharacterSettings; disabled?: boolean; onChange: (embody: EmbodySettings | undefined) => void;
+}) {
+  const t = useT();
+  const project = useProjectStore((s) => s.project);
+  const on = isEmbodied(object);
+  const e = embodySettingsOf(character.embody);
+  const set = (updates: Partial<EmbodySettings>) => onChange({ ...e, ...updates, enabled: true });
+  const others = on && project ? allSceneObjects(project).filter((o) => o.id !== object.id && isEmbodied(o)) : [];
+  const id = object.assetId || object.name;
+  return (
+    <div className="pt-2 space-y-2 hairline-t">
+      <div className="flex items-start gap-2">
+        <PersonStanding size={14} className="text-arsist-accent mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold text-arsist-text">{t('embody.title')}</div>
+          <div className="text-[10px] text-arsist-muted leading-snug">{t('embody.help')}</div>
+        </div>
+        <button role="switch" aria-checked={on} aria-label={t('embody.title')} disabled={disabled}
+          onClick={() => onChange(on ? undefined : { ...EMBODY_DEFAULTS })}
+          className={`relative w-9 h-5 rounded-full transition-colors shrink-0 mt-0.5 ${on ? 'bg-arsist-accent' : 'bg-arsist-border'} ${disabled ? 'opacity-50' : ''}`}>
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
+        </button>
+      </div>
+      {on && (
+        <>
+          {others.length > 0 && (
+            <p className="text-[10px] text-arsist-warning leading-snug">{t('embody.otherWarning', { name: others.map((o) => o.name).join(', ') })}</p>
+          )}
+          <div>
+            <label className="input-label">{t('embody.hands')}</label>
+            <select className="input text-xs" value={e.hands} disabled={disabled}
+              onChange={(ev) => set({ hands: ev.target.value as EmbodySettings['hands'] })}>
+              <option value="auto">{t('embody.handsAuto')}</option>
+              <option value="controllers">{t('embody.handsControllers')}</option>
+              <option value="hands">{t('embody.handsHands')}</option>
+            </select>
+          </div>
+          <Toggle label={t('embody.lipSync')} help={t('embody.lipSyncHelp')} value={e.lipSync} disabled={disabled} onChange={(v) => set({ lipSync: v })} />
+          <Toggle label={t('embody.hideFromSelf')} help={t('embody.hideFromSelfHelp')} value={e.hideFromSelf} disabled={disabled} onChange={(v) => set({ hideFromSelf: v })} />
+          <Toggle label={t('embody.matchHeight')} help={t('embody.matchHeightHelp')} value={e.matchHeight} disabled={disabled} onChange={(v) => set({ matchHeight: v })} />
+          <p className="text-[10px] text-arsist-muted font-mono break-all">vrm.embody('{id}', false) / vrm.calibrate('{id}')</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function Toggle({ label, help, value, disabled, onChange }: {
   label: string; help: string; value: boolean; disabled?: boolean; onChange: (v: boolean) => void;
 }) {
   return (
