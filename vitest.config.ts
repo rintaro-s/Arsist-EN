@@ -7,7 +7,8 @@ import path from 'path';
 export default defineConfig({
   test: {
     root: __dirname,
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // scripts/*.test.ts: the arsist CLI (spawns scripts/arsist.mjs against temp dirs)
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.test.ts'],
     environment: 'node',
   },
   resolve: {

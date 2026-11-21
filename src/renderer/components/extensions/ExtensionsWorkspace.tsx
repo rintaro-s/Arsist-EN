@@ -19,6 +19,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { extensionFit, localized, useExtensions, type ExtensionListItem, type InstallReply } from '../../extensions/useExtensions';
 import { ExtensionFieldInput } from '../panels/ExtensionsSection';
 import { MiniMarkdown } from '../common/MiniMarkdown';
+import { describeVirtualIrVersion } from '../../../shared/layster/version';
 
 type Filter = 'all' | 'enabled' | 'fits';
 
@@ -514,7 +515,7 @@ function ExtensionDetail({ item, enabled, settings, onToggle, onMessage, onChang
           <dt className="text-arsist-muted">ID</dt><dd className="font-mono">{m.id}</dd>
           <dt className="text-arsist-muted">{t('extTab.version')}</dt><dd>{m.version}</dd>
           {m.data && (<><dt className="text-arsist-muted">{t('extTab.dataVersion')}</dt><dd>{m.data.version}</dd></>)}
-          {m.minIrVersion !== undefined && (<><dt className="text-arsist-muted">{t('extTab.minIr')}</dt><dd>IR v{m.minIrVersion}</dd></>)}
+          {m.minIrVersion !== undefined && (<><dt className="text-arsist-muted">{t('extTab.minIr')}</dt><dd>Layster.Virtual {describeVirtualIrVersion(m.minIrVersion)}</dd></>)}
           <dt className="text-arsist-muted">{t('extTab.location')}</dt><dd className="font-mono break-all">{item.dir}</dd>
           {item.overrides && (<><dt className="text-arsist-muted">{t('extTab.overridesWhich')}</dt><dd className="font-mono break-all">{item.overrides}</dd></>)}
         </dl>

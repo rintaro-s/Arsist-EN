@@ -145,7 +145,8 @@ namespace Arsist.Runtime.Diagnostics
             AppendField(sb, "token", Token); sb.Append(',');
             AppendField(sb, "app", AppName); sb.Append(',');
             AppendField(sb, "level", level); sb.Append(',');
-            sb.Append("\"t\":").Append(DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond).Append(',');
+            // Unix 時刻のミリ秒 (受け手は new Date(t) でそのまま読める)
+            sb.Append("\"t\":").Append(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()).Append(',');
             AppendField(sb, "msg", text);
             if (trace.Length > 0)
             {

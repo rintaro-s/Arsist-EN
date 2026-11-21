@@ -4,6 +4,10 @@
 ・ エディタ: `src/renderer/components/vision/` ・ 契約: `src/renderer/vision/opCatalog.ts`
 ・ 学習済みモデル (ONNX) と GPU の使い方は `doc/15-models-and-ir-versions.md`
 
+画像処理パイプラインは **Layster.Virtual の機能**: `project.json` の `perception.tasks[]` のうち
+`type: 'vision'` のタスクが `pipeline` (`VisionPipeline`: `maxWidth` / `ops` / `outputs`) を持つ
+(`src/shared/types.ts`)。Layster.Spatial にはタスクもパイプラインも無い (カメラの画は Mind の `observe.camera` で渡す。doc/20)。
+
 ## 1. 方針 — エンジンは「一手」だけを持つ
 
 **エンジンに「空を青くする」「ランプを数える」のような個別の機能を足してはいけない。**
@@ -53,6 +57,7 @@ UnityEngine を使わない層は `tools/perception-check` (数値検証) と
 | edges | 勾配の強さと向き |
 | boundary | 列（行）ごとの境界位置 |
 | blobs / contours | 塊・輪郭の一覧 |
+| quads | 四角形の一覧 |
 | record | 数値の集まり（DataStore にそのまま入る） |
 
 | op | 入力 → 出力 | 何をするか |
@@ -75,7 +80,7 @@ UnityEngine を使わない層は `tools/perception-check` (数値検証) と
 | `recolor` | color, mask → color | 明暗を残して塗り替える |
 | `dominantColor` | color → record | 多数派の色相と、その色の名前 |
 | `templateMatch` | gray → record | 参照画像の位置（NCC） |
-| `infer` | color → record / blobs / mask | 学習済みモデル (ONNX) を流す。**出力の型はモデルの task で決まる** (classify → record, detect → blobs, segment → mask)。`doc/15` |
+| `infer` | color → record / blobs / mask | 学習済みモデル (ONNX) を流す。**出力の型はモデルの task で決まる** (classify → record, detect → blobs, segment → mask)。使えるのは画像のモデルで、実機で Unity の Inference Engine が動かすものだけ。`doc/15` §1.1 |
 | `select` | blobs → blobs | ラベル・スコア・大きさで絞り、並べ替え、数を絞る |
 | `countItems` | blobs → record | 件数、ラベルごとの数、一番確かな物 |
 | `track` | blobs → blobs | **フレームをまたいで**同じ物に ID、位置の平滑化、速度。状態を持つ |
@@ -105,7 +110,8 @@ UnityEngine を使わない層は `tools/perception-check` (数値検証) と
 
 ## 4. エディタ (`src/renderer/components/vision/`)
 
-`Vision` タブ。上に**絵コンテ** (カメラ → 一手 → … → 出しどころ を、**各段の結果の絵つき**で横に)、
+`Vision` タブ。**既定では隠してある** (設定 → モデル →「画像処理タブを表示する」)。隠していても、
+パイプラインを持つプロジェクトはそのまま動き、ビルドもされる。上に**絵コンテ** (カメラ → 一手 → … → 出しどころ を、**各段の結果の絵つき**で横に)、
 中央に選んだ一手の大きな絵、右に設定。
 
 ノードを線で繋ぐ形にも、文字の一覧にもしなかったのは、画像処理は途中経過が**絵で**見えないと

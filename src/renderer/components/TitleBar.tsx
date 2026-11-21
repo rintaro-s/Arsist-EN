@@ -3,9 +3,16 @@ import { Minus, Square, X, Sun, Moon } from 'lucide-react';
 import { useProjectStore } from '../stores/projectStore';
 import { useTheme } from '../theme';
 import { useT } from '../i18n';
+import { useSpatialStore } from '../spatial/store';
 
 export function TitleBar() {
-  const { project, isDirty, readOnly } = useProjectStore();
+  const virtual = useProjectStore();
+  // Layster.Spatial を開いているときはそちらの名前と未保存の印を出す (画面は SpatialWorkspace)
+  const spatialProject = useSpatialStore((s) => s.project);
+  const spatialDirty = useSpatialStore((s) => s.dirty);
+  const project = spatialProject ?? virtual.project;
+  const isDirty = spatialProject ? spatialDirty : virtual.isDirty;
+  const readOnly = spatialProject ? false : virtual.readOnly;
   const { theme, toggleTheme } = useTheme();
   const t = useT();
 

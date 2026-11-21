@@ -169,13 +169,16 @@ namespace Arsist.Runtime.VRM
             // VRM0.x: VRMBlendShapeProxy.ImmediatelySetValue
             if (_blendShapeProxy != null && _immSetValueMethod != null && _createUnknownKey != null)
             {
+                // プリセット (A, Blink, Joy …) として読める名前を先に試す。"aa" の候補 "A" より先に
+                // 名前だけの "aa" を試すと、UniVRM 0.x はそれを受け付けたうえで何もしない (口が動かない)
+                candidates.Sort((x, y) => IsVrm0Preset(y).CompareTo(IsVrm0Preset(x)));
                 foreach (var candidate in candidates)
                 {
                     try
                     {
                         object key = null;
                         // BlendShapePreset 名と一致するか試す
-                        if (_createPresetKey != null && _blendShapePresetType != null)
+                        if (_createPresetKey != null && IsVrm0Preset(candidate))
                         {
                             try
                             {
@@ -278,6 +281,13 @@ namespace Arsist.Runtime.VRM
             return new List<string>(_fallbackCache.Keys);
         }
 
+        private bool IsVrm0Preset(string candidate)
+        {
+            if (_blendShapePresetType == null || string.IsNullOrEmpty(candidate)) return false;
+            try { return Enum.IsDefined(_blendShapePresetType, Enum.Parse(_blendShapePresetType, candidate, true)) && !string.Equals(candidate, "Unknown", StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
         private static List<string> ResolveExpressionCandidates(string name)
         {
             var result = new List<string>();
@@ -298,7 +308,12 @@ namespace Arsist.Runtime.VRM
                 { "Sorrow", new[] { "sad", "Sorrow", "sorrow" } },
                 { "Fun", new[] { "relaxed", "Fun", "fun" } },
                 { "Surprised", new[] { "surprised", "Surprised" } },
-                { "Neutral", new[] { "neutral", "Neutral" } }
+                { "Neutral", new[] { "neutral", "Neutral" } },
+                // 口の形 (VRM 1.0 の名前 ⇔ VRM 0.x のプリセット)。口パク (audio.play・embody) は "aa" を使う
+                { "aa", new[] { "A", "aa" } }, { "ih", new[] { "I", "ih" } }, { "ou", new[] { "U", "ou" } },
+                { "ee", new[] { "E", "ee" } }, { "oh", new[] { "O", "oh" } },
+                { "A", new[] { "aa", "A" } }, { "I", new[] { "ih", "I" } }, { "U", new[] { "ou", "U" } },
+                { "E", new[] { "ee", "E" } }, { "O", new[] { "oh", "O" } }
             };
 
             if (map.TryGetValue(name, out var aliases))

@@ -2,7 +2,7 @@
 // Arsist Extension: quest-input — script API (Jint)
 // samples/extensions/quest-input/Runtime/InputScriptApis.cs
 //
-// スクリプトに出す名前: controller / hands / mic / keyboard / headset。
+// スクリプトに出す名前: controller / hands / mic / keyboard / headset / recorder。
 // どれも on(name, fn) / off(name) を持ち、出来事の表は共通 (README の一覧)。
 // 値は素の値 (JSON) で返す。座標は実行時の Unity ワールド (viewer.* / scene.* と同じ)。
 // 手の名前は 'left' / 'right'。
@@ -395,6 +395,96 @@ namespace Arsist.Extensions.QuestInput
             }
             Debug.LogWarning($"[ArsistJS] headset.setRefreshRate({hz}): not one of {string.Join(", ", OVRManager.display.displayFrequenciesAvailable)}");
             return false;
+        }
+    }
+
+    // ---- recorder ----
+
+    /// <summary>
+    /// 仮想カメラの録画 (MP4) と静止画 (JPEG)。結果はどれも callback で受け取る (保存は別スレッドで進むため)。
+    /// Android 以外では start が { ok: false, error: "recorder needs Android" } を返す (photo は端末内のフォルダに保存)。
+    /// </summary>
+    [UnityEngine.Scripting.Preserve]
+    public sealed class RecorderApi : InputApiBase
+    {
+        internal RecorderApi(ArsistScriptBridge js, Func<QuestInputService> service) : base(js, service) { }
+
+        private static Dictionary<string, object> NotReady() =>
+            new Dictionary<string, object> { ["ok"] = false, ["error"] = "not started yet" };
+
+        /// <summary>idle / starting / recording / paused / stopping</summary>
+        [UnityEngine.Scripting.Preserve]
+        public string state => Service?.Recorder != null ? Service.Recorder.State : "idle";
+
+        /// <summary>録っている秒数 (一時停止の分を除く)。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public double seconds() => Service?.Recorder != null ? Math.Round(Service.Recorder.Seconds, 1) : 0;
+
+        [UnityEngine.Scripting.Preserve]
+        public void start() => start(JsValue.Undefined, JsValue.Undefined);
+
+        [UnityEngine.Scripting.Preserve]
+        public void start(JsValue options) => start(options, JsValue.Undefined);
+
+        /// <summary>
+        /// 録り始める。options: { camera: 'Cam', audio: true, fps: 30, bitrate: 8000000, width?, height? }
+        /// (camera を省くとシーンの最初のカメラ)。始まったら fn({ ok, camera, width, height, fps, audio, sampleRate } / { ok: false, error })。
+        /// </summary>
+        [UnityEngine.Scripting.Preserve]
+        public void start(JsValue options, JsValue callback)
+        {
+            if (Js.IsFunction(options)) { callback = options; options = JsValue.Undefined; }
+            var recorder = Service?.Recorder;
+            if (recorder == null) { Js.Call(callback, NotReady()); return; }
+            var opt = RecorderOptions.From(Js.FromJs(options) as Dictionary<string, object>, recorder.DefaultBitrate);
+            recorder.Start(opt, result => Js.Call(callback, result));
+        }
+
+        [UnityEngine.Scripting.Preserve]
+        public void stop() => stop(JsValue.Undefined);
+
+        /// <summary>止めて保存する。保存できたら fn({ ok, file, uri, seconds, bytes, width, height, frames, dropped, reason })。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public void stop(JsValue callback)
+        {
+            var recorder = Service?.Recorder;
+            if (recorder == null) { Js.Call(callback, NotReady()); return; }
+            recorder.Stop("script", result => Js.Call(callback, result));
+        }
+
+        /// <summary>一時停止 (止めている間は動画の時間も進まない)。録っていなければ false。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public bool pause() => Service?.Recorder != null && Service.Recorder.Pause();
+
+        [UnityEngine.Scripting.Preserve]
+        public bool resume() => Service?.Recorder != null && Service.Recorder.Resume();
+
+        [UnityEngine.Scripting.Preserve]
+        public void photo() => photo(JsValue.Undefined, JsValue.Undefined);
+
+        [UnityEngine.Scripting.Preserve]
+        public void photo(JsValue options) => photo(options, JsValue.Undefined);
+
+        /// <summary>静止画 (JPEG)。options: { camera: 'Cam', width?, height? }。fn({ ok, file, uri, bytes, width, height })。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public void photo(JsValue options, JsValue callback)
+        {
+            if (Js.IsFunction(options)) { callback = options; options = JsValue.Undefined; }
+            var recorder = Service?.Recorder;
+            if (recorder == null) { Js.Call(callback, NotReady()); return; }
+            var plain = Js.FromJs(options);
+            var d = plain as Dictionary<string, object>;
+            var camera = plain as string ?? MiniJson.Text(d, "camera", null);
+            recorder.Photo(camera, Math.Max(0, MiniJson.Int(d, "width", 0)), Math.Max(0, MiniJson.Int(d, "height", 0)),
+                result => Js.Call(callback, result));
+        }
+
+        /// <summary>このアプリが保存した動画。fn([{ file, uri, bytes, date, seconds }])。</summary>
+        [UnityEngine.Scripting.Preserve]
+        public void list(JsValue callback)
+        {
+            var recorder = Service?.Recorder;
+            Js.Call(callback, recorder != null ? recorder.List() : new List<object>());
         }
     }
 }

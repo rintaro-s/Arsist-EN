@@ -10,6 +10,10 @@
 > The geometry that neither the Unity build nor the device can check for you — placement arithmetic and
 > region rectification — is covered by `npm test` (`src/shared/placement.test.ts`) and
 > `npm run test:perception` (`tools/perception-check/`). **Run both after touching either.**
+>
+> **Profile:** everything here (regions, placement, perception tasks) is part of **Layster.Virtual**
+> (`project.json` `perception`). Layster.Spatial has none of it (doc/19, doc/20). The later sections on
+> controller rays, touch, gaze-dwell and text entry are runtime input behaviour shared by every build.
 
 ---
 
@@ -114,7 +118,7 @@ author actually meant.
 ### 2.3 `PerceptionTask` — the verb
 
 ```ts
-export type PerceptionTaskType = 'ocr' | 'capture';   // 将来: 'barcode' | 'color' | 'classify'
+export type PerceptionTaskType = 'ocr' | 'capture' | 'vision';   // vision = image pipeline, doc/14
 
 /** 何のピクセルを見るか。 */
 export type PerceptionSource =
@@ -135,8 +139,11 @@ export interface PerceptionTask {
   /** 結果を書き込む DataStore キー。UI の bind からそのまま読める。 */
   storeAs: string;
 
-  /** 認識エンジンの選択と設定。 */
+  /** 認識エンジンの選択と設定 ({ kind: 'mlkit' | 'mock', script?: 'latin' | 'japanese', mockText? })。 */
   engine?: PerceptionEngineConfig;
+
+  /** type === 'vision' のときに流すパイプライン (doc/14)。 */
+  pipeline?: VisionPipeline;
 }
 ```
 
@@ -188,9 +195,11 @@ The recogniser already produces a homography `H` mapping **target-plane metres �
 
 Two practical consequences:
 
-- **Capture at full resolution, not at detection resolution.** Detection runs at 640×480 for speed
-  (`doc/11` §5.1); a task requests a one-off full-resolution frame (1280×960 on Quest) so small text
-  survives. The frame source grows a `TryCaptureHighRes(out frame)` alongside `TryAcquire`.
+- **Capture at full resolution, not at detection resolution.** Detection runs at 640 px wide for speed
+  (`doc/11` §5.2); a task asks `ArsistPerceptionManager.RequestStill(callback, wantColor, maxWidth)` for a
+  one-off still (OCR asks for full resolution — 1280×960 on Quest — so small text survives; `FrameBudget`
+  reads only the widest width anyone is waiting for, doc/15 §2). The rectified crop is at most 900 px on the
+  long side (`MaxRectifiedSide`).
 - **Reject rather than guess.** If the quad falls outside the frame, or the region is too oblique
   (rectified area below a minimum, i.e. viewed nearly edge-on), the task fails with a *reason the UI can
   show* — `outOfView` / `tooOblique` / `notTracked` — instead of returning garbage text.
@@ -208,9 +217,11 @@ author gets every field as a bindable path for free:
 |----------------|-------|
 | `<storeAs>.text` | recognised text, lines joined by `\n` |
 | `<storeAs>.lines` | array of lines |
-| `<storeAs>.status` | `'idle' \| 'running' \| 'ok' \| 'error'` |
-| `<storeAs>.error` | `'notTracked' \| 'outOfView' \| 'tooOblique' \| 'engine' \| 'network'` |
+| `<storeAs>.status` | `'running' \| 'ok' \| 'error'` |
+| `<storeAs>.error` | a reason code, e.g. `notTracked` / `outOfView` / `tooOblique` / `regionTooSmall` / `noCamera` / `noFrame` / `engine` / `engineUnavailable` / `pipelineFailed` |
+| `<storeAs>.elapsedMs` | how long the run took |
 | `<storeAs>.at` | ISO 8601 timestamp |
+| `<storeAs>.<key>` | `vision` tasks: every value the pipeline's `store` outputs wrote, plus `gated` / `gateReason` (doc/14) |
 
 A Text element bound to `<storeAs>.status` is a working spinner with zero code — which matters, because
 OCR is not instant (§5).
@@ -229,12 +240,14 @@ reason HTTP is:
 
 ```js
 perception.run('scanPanel')                    // 実行のみ。結果は store と event へ
-perception.run('scanPanel', (r) => {           // r = { ok, text, lines, error }
+perception.run('scanPanel', (r) => {           // r = { ok, text, lines, error, elapsedMs }
   if (r.ok) ui.setText('label', r.text);
 })
 perception.lastResult('scanPanel')             // 直近の結果（同期）
-perception.regionPose('panel', 'reading')      // 領域中心のワールド姿勢
-perception.isTracked('panel')                  // doc/11 から継続
+perception.value('sky', 'coverage')            // vision タスクの値を名前で (storeAs, key)
+perception.gated('sky')                        // パイプラインの gate で止まったか
+perception.getRegionPose('panel', 'reading')   // 領域中心のワールド姿勢
+perception.isTracked('panel')                  // doc/11 §3.4 から継続
 ```
 
 ---
@@ -267,7 +280,7 @@ public struct RgbaImage {
 public interface IArsistTextRecognizer {
     bool IsAvailable { get; }
     string Description { get; }
-    void Recognize(RgbaImage image, TextRecognizeOptions options, Action<TextResult> done);
+    void Recognize(RgbaImage image, string script, Action<TextResult> done);   // script: "latin" | "japanese"
 }
 ```
 
@@ -379,22 +392,25 @@ nowhere near the real problem.
    a comment reading "inserted before the `**`DEPS`**` token" gets the entire dependency list injected
    into the middle of the sentence.
 
-The pipeline should assert both when it generates the template rather than let them recur.
+The pipeline checks the generated template for non-ASCII bytes before writing it.
 
-Once Arsist owns this, every future native capability (barcode, BLE, audio) uses the same hook: an
-adapter contributes dependency lines, `ArsistBuildPipeline` merges them into the copied template.
+Arsist now owns this hook: `ArsistBuildPipeline` collects every Maven dependency the build needs
+(ML Kit from `ConfigureMlKitPlugin`, the bundled ONNX Runtime from `ConfigureOnnxRuntimePlugin`, doc/16 §3.1)
+and writes the copied template **once** (`WriteAndroidGradleTemplate`); with no dependencies the template is
+removed again.
 
 ### Calling it
 
-The Java side is a thin static bridge (`ArsistMlkitOcr.recognizeRgba`) that builds an ARGB_8888 `Bitmap`
+The Java side is a thin static bridge (`ArsistMlkitOcr.recognizeRgba`; source
+`Editor/AndroidPlugins/ArsistMlkitOcr.java.txt`, copied to `Assets/Plugins/Android/` only when a task uses ML Kit) that builds an ARGB_8888 `Bitmap`
 from the rectified pixels and returns via `UnityPlayer.UnitySendMessage`, which marshals back to the
 Unity main thread for free. The one non-obvious detail: **Unity textures are bottom-up and Android
 bitmaps are top-down**, so the flip happens on the C# side before the call — forgetting it produces the
 quiet failure mode where text is detected but comes back as nonsense.
 
-Language selection is per task: `TextRecognizerOptions.DEFAULT_OPTIONS` (Latin) or
-`JapaneseTextRecognizerOptions` (Japanese + Latin). Shipping only the language you need keeps the APK
-smaller, so the engine choice belongs in the IR, not hardcoded.
+Language selection is per task (`engine.script`): `TextRecognizerOptions.DEFAULT_OPTIONS` (Latin) or
+`JapaneseTextRecognizerOptions` (Japanese + Latin). The build adds only the model artifacts the project's
+tasks use (`CollectOcrScripts`), so the APK carries only the languages you need.
 
 ---
 
@@ -408,10 +424,12 @@ smaller, so the engine choice belongs in the IR, not hardcoded.
 
 So a task is **always** asynchronous, always writes `status: 'running'` first, and never blocks the main
 thread. The declarative path gives the author a status binding for free precisely so the app does not look
-frozen. Tasks are queued per-task-id — pressing the button twice does not launch two requests.
+frozen. One run per task at a time — pressing the button again while it runs fails that request with
+`busy` instead of launching a second one, and `interval` waits for the previous run to finish.
 
-`interval` triggers are allowed but capped: on-device OCR is free per call but not free in battery, and
-a 10 Hz OCR loop on a headset is a heat problem, not a feature.
+`interval` triggers (milliseconds) have a floor of 0.1 s. That suits fast vision pipelines that follow the
+world; for OCR keep it long — on-device OCR is free per call but not in battery, and a 10 Hz OCR loop on a
+headset is a heat problem, not a feature.
 
 ---
 
@@ -425,8 +443,9 @@ The authoring surface is where this feature is won or lost. Four pieces:
 2. **Placement controls.** A 7-way direction picker + gap + facing, replacing raw XYZ for anchored
    objects (raw XYZ stays available as the nudge). The viewport preview updates live, which is the whole
    point — you see the Canvas move to the right of the photo plane as you pick.
-3. **A perception panel** listing tasks: type, source region, trigger (a dropdown of button bindingIds
-   found in the project, plus `manual` / `onFound` / `interval`), `storeAs`, engine.
+3. **A perception panel** listing tasks (`PerceptionInspector`): type, source region, trigger (an event —
+   button bindingIds found in the project or `perception.found:<target>` — plus `onStart` / `interval` /
+   `manual`), `storeAs`, engine. `vision` tasks are edited in the Vision tab (doc/14).
 4. **Preview in the editor, on the reference photo.** Region tuning without a headset needs *some*
    recogniser that runs on the desktop, and the on-device engine by definition does not. Options, in
    order of preference: (a) run the rectifier in the editor and show the exact crop the device would see
@@ -455,9 +474,9 @@ This is a small addition on top of what §3 already builds, and it is the strong
 | `ArsistBuildPipeline.cs` | write regions + tasks into `StreamingAssets/Perception/perception.json`; add `ArsistPerceptionTaskRunner` to the scene only when tasks exist |
 | `Runtime/Perception/` | `RegionRectifier` (geometry only), `ArsistPerceptionTaskRunner` |
 | `Runtime/Perception/Text/` | `IArsistTextRecognizer`, `MockTextRecognizer`, `MlKitTextRecognizer` |
-| `Assets/Plugins/Android/` | `ArsistMlkitOcr.java` bridge; `mainTemplate.gradle` copied from the installed editor with ML Kit deps injected |
-| `Runtime/Scripting/PerceptionWrapper.cs` | `run` / `lastResult` / `regionPose` |
-| `Adapters/*` | Gradle dependency lines contributed per device; merged into the copied template by the pipeline |
+| `Assets/Plugins/Android/` (generated) | `ArsistMlkitOcr.java` bridge; `mainTemplate.gradle` copied from the installed editor with ML Kit deps injected |
+| `Runtime/Scripting/PerceptionWrapper.cs` | `run` / `lastResult` / `value` / `gated` / `getRegionPose` |
+| `Editor/AndroidPlugins/` | Java bridges kept as `.java.txt`, copied into `Assets/Plugins/Android/` by the build only when needed |
 | `src/renderer/…` | region editor, placement controls, task panel, preview |
 
 Regions and tasks are **additive to the existing `perception.json`** — an older APK ignores them, and a
@@ -566,11 +585,8 @@ Only the last two genuinely need the headset, and the first of them is a one-com
 
 ## 10. Open questions worth deciding before Phase 2
 
-1. **Which language model to ship.** Phase 0 showed the Japanese artifact (+2.6 MB) also reads Latin
-   perfectly, so this is a one-of choice, not a combination: Latin-only (+1.4 MB) or Japanese+Latin
-   (+2.6 MB). Per-project selection is the right answer long term — it belongs in the IR and it changes
-   the Gradle dependency line — which means the Gradle merge step has to accept a project-dependent
-   dependency list. Worth deciding before Phase 3.
+1. ~~**Which language model to ship.**~~ Decided: per task (`engine.script`: `latin` or `japanese`); the
+   build adds only the artifacts the project's tasks name (§4a).
 2. **Does `viewport` source need a visible frame in-app?** Almost certainly yes (the user has to aim), which
    means a small HUD overlay the task owns. Cheap, but it is UI that does not exist yet.
 3. **Region coordinates when the photo is replaced.** Regions are normalised, so they survive a

@@ -3,8 +3,9 @@
 `Runtime/Inference/` ・ `Runtime/Scripting/ModelWrapper.cs` ・ `src/renderer/components/models/`
 ・ `src/main/model/{ModelImport,ModelTry}.ts` ・ `tools/vision-preview/{ModelTry,OnnxModelRunner}.cs`
 
-IR v3 から、学習済みモデルは画像認識の部品ではなく**プロジェクトの独立した資産**になった
-(エディタでは「モデル」タブ)。用途 (`use`) で分ける:
+Layster.Virtual α3 (旧 IR v3) から、学習済みモデルは画像認識の部品ではなく**プロジェクトの独立した資産**になった
+(エディタでは「モデル」タブ)。Layster.Spatial も同じ `ModelDefinition` を `models` に持ち、スクリプトの
+`model.*` は両方の形で使える (画像処理の `infer` ステップは Virtual の画像処理タスクだけ)。用途 (`use`) で分ける:
 
 | use | 何に | どこから使う |
 |---|---|---|
@@ -26,6 +27,7 @@ ModelWrapper ──▶ InferenceService (UnityEngine 非依存)
                    ├─ TextGenerationSession 1 トークンずつ、KV キャッシュ、止める判定
                    ├─ TextEncoding         埋め込み (pooling / 正規化)・分類
                    └─ IModelRunner  ──▶ 実機:     ArsistModelExecutor (Unity Inference Engine、GPU)
+                                                    または ArsistOrtRunner (同梱の ONNX Runtime、CPU。§3)
                                           エディタ: OnnxModelRunner (ONNX Runtime、「試す」)
 ```
 
@@ -67,11 +69,13 @@ text
 ├── chatFormat      chatml | llama3 | phi3 | gemma | mistral | none | custom (+ promptTemplate)
 ├── systemPrompt?   既定の指示 (スクリプトの options.system で上書き)
 ├── maxNewTokens / temperature / topK / topP / repetitionPenalty / stop[] / eosTokens[] / maxContext
+├── hideThinking    <think> … </think> を答えから外す (既定 true。§4.1)
 └── pooling / normalize / outputName / maxLength / labels      (embed / classify)
 ```
 
 画像の読み方 (`task` / `input` / `output` / `labels`) は `use: 'image'` のときだけ持つ。
-v2 のモデルは全部画像のモデルなので、2 → 3 の移行は `use: 'image'` を補うだけ。
+α2 のモデルは全部画像のモデルなので、α2 → α3 の移行は `use: 'image'` を補うだけ。
+用途によらない項目 (`runtime` / `backend` / `includeInBuild` / `inspection`) は doc/15 §1.1。
 
 ## 2. 分割器 (tokenizer.json)
 
@@ -98,7 +102,9 @@ v2 のモデルは全部画像のモデルなので、2 → 3 の移行は `use:
 
 ## 3. 実機で何に動かしてもらうか — 2 つの推論器
 
-実機には推論器が 2 つある。モデルごとに、取り込み時に決める (`ModelDefinition.runtime`、既定は自動)。
+実機には推論器が 2 つある。モデルごとに、取り込み時に決める (`ModelDefinition.runtime`)。取り込みは
+演算子を見て `unity` か `onnxruntime` を書き込む (`src/shared/unityOps.ts` の `resolveRuntime`)。
+`auto` (または未設定) のまま残っている定義は、ビルドが同じ判定 (`ArsistBuildPipeline.ModelRuntimeOf`) をする。
 
 | runtime | 何が動かすか | 得手 / 不得手 |
 |---|---|---|
@@ -121,6 +127,7 @@ LLM の書き出しはこれらを使うことが多い。だから **Unity だ�
 Inference Engine 2.6.1 のパッケージには、これらの演算子がどこにも無い (`ONNXModelConverter` の表にも、
 `com.microsoft` の実装にも)。**そのためのもう 1 つの推論器が `onnxruntime`** で、これを選んだモデルは
 Unity のエンジンを通らない。取り込み時に演算子を見て自動で振り分けるので、普段は意識しなくてよい。
+ただし画像処理の `infer` ステップは Unity のエンジンで動くモデルしか使えない (doc/15 §1.1。ビルドが止まる)。
 
 ### 3.1 ONNX Runtime を同梱する道
 
@@ -175,11 +182,12 @@ $J/OpenJDK/bin/javac -cp "<onnxruntime-android.aar の classes.jar>:$J/SDK/platf
 (`importDownloadedModel` → `OnnxInspector` → 定義の下書き) を通る。大きな ONNX と `tokenizer.json` は
 二重に持たない (その場を指す)。
 
-- **精度の選び方**: 一覧には大きさと「実機でも動く見込み / エディタのみ」を添える。量子化された
-  書き出し (q4 / int8 …) は ONNX Runtime 専用の演算子を使うので、実機では動かない (§3)。
-  既定では q4 を選ぶ (手元で試すには一番軽い)。実際にどの演算子を使っているかは、落とした後の
-  取り込みで確かめ、動かないものは **「ビルドに含める」を自動で外す** (`includeInBuild: false`)。
-  そのモデルはエディタの「試す」では使えるが、APK には入らない。
+- **精度の選び方**: 一覧には大きさと、量子化 (q4 / int8 …) かどうかを添える。量子化された書き出しは
+  ONNX Runtime 専用の演算子を使うので、Unity のエンジンには取り込めない。既定では q4 を選ぶ
+  (手元で試すには一番軽い)。実際にどの演算子を使っているかは、落とした後の取り込みで確かめ、
+  Unity が読めないものは `runtime: 'onnxruntime'` にする (§3。実機では同梱の ONNX Runtime が動かす)。
+  「ビルドに含める」(`includeInBuild`) は取り込み時はいつも on。外すと、エディタの「試す」では使えるが
+  APK には入らない (大きすぎるモデルを手元でだけ使うときなど)。
 - **トークン**: 設定の「Hugging Face のアクセストークン」。非公開・同意が要るリポジトリだけに要る。
   electron-store に置き、`huggingface.co` にだけ送る。
 - 画像も読むモデル (VLM) は ONNX が複数 (`vision_encoder` / `embed_tokens` / `decoder_model_merged`) に
@@ -233,6 +241,7 @@ InferenceService** を ONNX Runtime で動かす。標準出力に 1 行 1 JSON 
 (`src/main/model/ModelTry.ts` → IPC `model:try-line`)。止めるとプロセスを終わらせる。
 
 画像処理タブは画像のモデルだけを見る (文章のモデルを `infer` に指定すると `modelNotImage` で名指し)。
+ONNX Runtime に回した画像のモデルはエディタの結線チェックでは弾かれず、ビルドで止まる (doc/15 §1.1)。
 「モデル」ボタンはモデルタブを開く。
 
 ## 6. 検証したこと
@@ -247,7 +256,6 @@ InferenceService** を ONNX Runtime で動かす。標準出力に 1 行 1 JSON 
 | 取り込み (dist の `importModel`) | SmolLM2 → text/generate/chatml/`<|im_end|>`、MiniLM → text/embed、tiny-stories → text/generate (vocab.json + merges.txt から組み立て) |
 | Qwen3.5-0.8B-Text-ONNX q4 (注意のキャッシュ + 大きさの決まった状態、`num_logits_to_keep`) | 日本語で正しく答える。約 16 トークン/秒 (CPU)。`<think>` は隠れる |
 | Hugging Face から取り込む | Qwen3.5 の精度 5 種を大きさつきで一覧 (fp32 2935MB … q4f16 448MB)、VLM のリポジトリは「複数に分かれている」と警告、MiniLM を実際に落として取り込み |
-
 | ONNX Runtime 同梱のビルド | Qwen3.5-0.8B (q4) を積んだ Quest 向け APK が通る (654 MB)。APK の中に `lib/arm64-v8a/libonnxruntime.so` (33 MB) と `assets/ArsistModels/<id>/` (model.onnx + 重み 550 MB + tokenizer.json) が入る |
 | Java ブリッジ | `javac` で単体コンパイルが通る (Unity のビルドを待たずに確かめられる。§3.1) |
 
@@ -255,8 +263,7 @@ InferenceService** を ONNX Runtime で動かす。標準出力に 1 行 1 JSON 
 長さ 0 の KV キャッシュを Inference Engine が受け付けるか。
 ログは `[Arsist] Model '<id>' on ONNX Runtime: … ms` / `on GPUCompute: … ms` と `[ArsistJS]`。
 
-
-## 同梱 ONNX Runtime の落とし穴 (2026-09 に踏んだもの)
+## 7. 同梱 ONNX Runtime の落とし穴 (2026-09 に踏んだもの)
 
 **JNI は「つないでいないスレッド」からは何も呼べない。** 推論はメインスレッドを止めないために
 別スレッドで回している。Unity の `AndroidJavaClass` は、つないでいないスレッドから呼ばれても

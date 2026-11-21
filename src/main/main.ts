@@ -18,8 +18,10 @@ import { installExtension, packExtension, uninstallExtension, PACKAGE_EXTENSION 
 import { describeCatalogProblems } from './extensions/ExtensionCatalog';
 import { registerAiIpc } from './ipc/aiIpc';
 import { ProjectWatcher } from './project/projectWatcher';
+import { closeSpatialWatcher, forgetSpatialProject, registerSpatialIpc } from './layster/spatialIpc';
 import { importAnimation, listAnimations } from './project/animationAssets';
 import { readVrmSpec } from './project/vrmInfo';
+import { unityScenesData, unityUiData } from '../bridge/UnityBridge';
 import { adapterTags } from '../shared/adapterTags';
 import {
   isUnsupportedTextureExtension,
@@ -53,7 +55,8 @@ protocol.registerSchemesAsPrivileged([
 const store = new Store({
   defaults: {
     unityPath: '',
-    unityVersion: '2022.3.20f1',
+    // 受け付ける最低の版 (unity:validate)。テンプレートが固定している版 = UnityBackend/ArsistBuilder/ProjectSettings/ProjectVersion.txt
+    unityVersion: '6000.0.40f1',
     recentProjects: [],
     theme: 'dark',
     layoutSettings: {
@@ -97,17 +100,36 @@ function shutdownBackgroundWork(): void {
     // 止められなくても、下の killAllChildren で木ごと落とす
   }
   projectWatcher.close();
+  closeSpatialWatcher();
   if (trackedCount() > 0) {
     console.log(`[Arsist] Closing: stopping ${trackedCount()} background process(es): ${trackedLabels().join(', ')}`);
   }
   killAllChildren((message) => console.log(message));
 }
 let adapterManager: AdapterManager | null = null;
+/**
+ * 今開いているプロジェクトのフォルダ (Virtual でも Spatial でも)。arsist-file:// の配信範囲、
+ * model:* / vision:preview の既定の置き場、AI の IPC が見るプロジェクトはこれ。
+ */
 let currentProjectPathForAssets: string | null = null;
 // 開いているプロジェクトが外 (エージェント等) で変わったら、レンダラに知らせて読み直してもらう
 const projectWatcher = new ProjectWatcher((projectPath, files) => {
   mainWindow?.webContents.send('project:external-change', { projectPath, files });
 });
+
+/** Virtual のプロジェクトを開いた: Spatial の側を手放し、Virtual の見張りを始める */
+function openedVirtualProject(projectPath: string): void {
+  forgetSpatialProject();
+  currentProjectPathForAssets = projectPath;
+  updateRecentProjects(projectPath);
+  projectWatcher.watch(projectPath);
+}
+
+/** Spatial のプロジェクトを開いた (spatialIpc から): Virtual の見張りを止める */
+function openedSpatialProject(projectPath: string): void {
+  projectWatcher.close();
+  currentProjectPathForAssets = projectPath;
+}
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -743,10 +765,7 @@ ipcMain.handle('project:create', async (_, options) => {
   projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
   const res = await projectManager.createProject(options);
   if (res?.success) {
-    const projectDir = path.join(options.path, options.name);
-    currentProjectPathForAssets = projectDir;
-    updateRecentProjects(projectDir);
-    projectWatcher.watch(projectDir);
+    openedVirtualProject(path.join(options.path, options.name));
   }
   return res;
 });
@@ -757,11 +776,7 @@ ipcMain.handle('project:load', async (_, projectPath: string) => {
   }
   projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
   const res = await projectManager.loadProject(projectPath);
-  if (res?.success) {
-    currentProjectPathForAssets = projectPath;
-    updateRecentProjects(projectPath);
-    projectWatcher.watch(projectPath);
-  }
+  if (res?.success) openedVirtualProject(projectPath);
   return res;
 });
 
@@ -939,7 +954,10 @@ ipcMain.handle('unity:get-path', async () => {
   return store.get('unityPath');
 });
 
-ipcMain.handle('unity:build', async (_, buildConfig) => {
+ipcMain.handle('unity:build', async (_, buildConfig) => runUnityBuild(buildConfig));
+
+/** Unity のビルド。Virtual のビルド画面 ('unity:build') と Layster.Spatial のビルド (spatialIpc) が同じ道を通る */
+async function runUnityBuild(buildConfig: any) {
   const unityPath = store.get('unityPath') as string;
   const unityVersion = store.get('unityVersion') as string;
   if (!unityPath) {
@@ -971,8 +989,21 @@ ipcMain.handle('unity:build', async (_, buildConfig) => {
 
   return await unityBuilder.build({
     ...buildConfig,
+    // カメラ・embody・source の既定を埋める (UnityBridge.unityScenesData。何度通しても同じ)
+    ...(Array.isArray(buildConfig?.scenesData) ? { scenesData: unityScenesData(buildConfig.scenesData) } : {}),
+    ...(Array.isArray(buildConfig?.uiData) ? { uiData: unityUiData(buildConfig.uiData) } : {}),
     unityVersion: buildConfig?.unityVersion || unityVersion,
   });
+}
+
+// Layster.Spatial (project.spatial.json) のプロジェクト。作成・読み書き・Mind を試す・ビルド (doc/19-layster.md)
+registerSpatialIpc({
+  getWindow: () => mainWindow,
+  addRecent: (projectPath) => updateRecentProjects(projectPath),
+  runUnityBuild: (config) => runUnityBuild(config),
+  buildLog: (line) => mainWindow?.webContents.send('unity:build-log', line),
+  getSetting: (key) => store.get(key as any),
+  onOpened: (projectPath) => openedSpatialProject(projectPath),
 });
 
 ipcMain.handle('unity:cancel-build', async () => {
@@ -1016,13 +1047,6 @@ ipcMain.handle('adapters:get', async (_, adapterId: string) => {
     adapterManager = new AdapterManager();
   }
   return await adapterManager.getAdapter(adapterId);
-});
-
-ipcMain.handle('adapters:apply-patch', async (_, adapterId: string, projectPath: string) => {
-  if (!adapterManager) {
-    adapterManager = new AdapterManager();
-  }
-  return await adapterManager.applyPatch(adapterId, projectPath);
 });
 
 // 拡張機能 (Extensions/<id>/)。一覧と、端末のタグ (どの拡張機能がその端末で動くかを画面で示すため)。

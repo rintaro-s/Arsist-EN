@@ -46,11 +46,13 @@ const fs = __importStar(require("fs-extra"));
 const uuid_1 = require("uuid");
 const YAML = __importStar(require("yaml"));
 const irVersion_1 = require("../../shared/irVersion");
+const version_1 = require("../../shared/layster/version");
 const migrations_1 = require("./migrations");
 const extensions_1 = require("../../shared/extensions");
 const catalogService_1 = require("../extensions/catalogService");
 const sceneCopies_1 = require("./sceneCopies");
 const adapterDirs_1 = require("../adapters/adapterDirs");
+const UnityBridge_1 = require("../../bridge/UnityBridge");
 const projectIO_1 = require("./projectIO");
 const defaults_1 = require("./defaults");
 // ========================================
@@ -94,6 +96,7 @@ class ProjectManager {
             const normalizedTarget = (options.targetDevice || '').toLowerCase();
             const isQuest = normalizedTarget.includes('quest') || normalizedTarget.includes('meta');
             const project = {
+                layster: (0, version_1.virtualHeaderFor)(irVersion_1.CURRENT_IR_VERSION),
                 id: (0, uuid_1.v4)(),
                 name: options.name,
                 version: '1.0.0',
@@ -273,12 +276,14 @@ class ProjectManager {
             const backupDir = path.join(this.projectPath, 'Backups');
             await fs.ensureDir(backupDir);
             const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const backupPath = path.join(backupDir, `project.v${upgrade.from}.${stamp}.json`);
+            // 名前に版を入れる (project.alpha5.<時刻>.json / project.beta1.0.0.<時刻>.json)。どの Arsist に戻せば読めるかが分かる
+            const backupPath = path.join(backupDir, `project.${(0, migrations_1.virtualBackupTag)(upgrade.from)}.${stamp}.json`);
             if (await fs.pathExists(projectFile))
                 await fs.copy(projectFile, backupPath);
             this.readOnly = false;
             this.pendingUpgrade = null;
             this.currentProject.irVersion = irVersion_1.CURRENT_IR_VERSION;
+            this.currentProject.layster = (0, version_1.virtualHeaderFor)(irVersion_1.CURRENT_IR_VERSION);
             const saved = await this.saveProject({});
             if (!saved.success) {
                 this.readOnly = true;
@@ -347,27 +352,23 @@ class ProjectManager {
         try {
             const exportDir = options.outputPath;
             await fs.ensureDir(exportDir);
-            // Unity用マニフェスト
-            const manifest = this.generateUnityManifest();
-            if (options.format === 'json') {
-                await fs.writeJSON(path.join(exportDir, 'manifest.json'), manifest, { spaces: 2 });
-            }
-            else if (options.format === 'yaml') {
+            // ビルドの転送 (UnityBuilder.transferProjectData) と同じファイルを、同じ作り方で書く。
+            // ビルドの時にしか決まらないもの (logRelay・deviceTags・有効な拡張機能) は入らない。
+            const project = this.currentProject;
+            const manifest = (0, UnityBridge_1.generateBuildManifest)(project);
+            if (options.format === 'yaml') {
                 await fs.writeFile(path.join(exportDir, 'manifest.yaml'), YAML.stringify(manifest));
             }
-            // シーンデータ出力
-            await fs.writeJSON(path.join(exportDir, 'scenes.json'), this.currentProject.scenes, { spaces: 2 });
-            // UIレイアウトデータ出力
-            await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), this.currentProject.uiLayouts, { spaces: 2 });
-            // DataFlow 定義出力
-            await fs.writeJSON(path.join(exportDir, 'dataflow.json'), this.currentProject.dataFlow, { spaces: 2 });
-            // スクリプトバンドル出力 (Jint用 JSON IR)
-            const scriptBundle = {
-                version: '1.0',
-                scripts: (this.currentProject.scripts ?? [])
-                    .filter((sc) => sc.enabled)
-                    .map((sc) => ({ id: sc.id, trigger: sc.trigger, code: sc.code, enabled: sc.enabled })),
-            };
+            else {
+                await fs.writeJSON(path.join(exportDir, 'manifest.json'), manifest, { spaces: 2 });
+            }
+            await fs.writeJSON(path.join(exportDir, 'scenes.json'), (0, UnityBridge_1.unityScenesData)(project.scenes), { spaces: 2 });
+            await fs.writeJSON(path.join(exportDir, 'ui_layouts.json'), (0, UnityBridge_1.unityUiData)(project.uiLayouts), { spaces: 2 });
+            if (project.dataFlow) {
+                await fs.writeJSON(path.join(exportDir, 'dataflow.json'), project.dataFlow, { spaces: 2 });
+            }
+            // スクリプトバンドル (Jint 用。BuildDialog の exportScriptBundle と同じ形: 有効なスクリプト + storage.persist)
+            const { scriptBundle } = (0, UnityBridge_1.generateUnityManifest)(project);
             await fs.writeJSON(path.join(exportDir, 'scripts.json'), scriptBundle, { spaces: 2 });
             // アセットをコピー
             if (options.includeAssets) {
@@ -484,32 +485,6 @@ class ProjectManager {
             };
         }
         return ui;
-    }
-    generateUnityManifest() {
-        if (!this.currentProject)
-            return {};
-        const { remoteInput, ...androidBuild } = this.currentProject.buildSettings;
-        const scripts = this.currentProject.scripts ?? [];
-        const hasActiveScripts = scripts.some((sc) => sc.enabled);
-        return {
-            projectId: this.currentProject.id,
-            projectName: this.currentProject.name,
-            version: this.currentProject.version,
-            irVersion: this.currentProject.irVersion ?? irVersion_1.CURRENT_IR_VERSION,
-            appType: this.currentProject.appType,
-            targetDevice: this.currentProject.targetDevice,
-            arSettings: this.currentProject.arSettings,
-            designSystem: this.currentProject.designSystem,
-            dataFlow: this.currentProject.dataFlow,
-            build: androidBuild,
-            buildSettings: this.currentProject.buildSettings,
-            remoteInput,
-            scripting: {
-                enabled: hasActiveScripts,
-            },
-            models: this.currentProject.models ?? [],
-            exportedAt: new Date().toISOString(),
-        };
     }
 }
 exports.ProjectManager = ProjectManager;

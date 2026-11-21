@@ -1,17 +1,24 @@
 {
   "id": "quest-input",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": {
-    "en": "All Quest input (controllers, hands, keyboard, mic)",
-    "ja": "Quest の入力ぜんぶ (コントローラー・手・キーボード・マイク)"
+    "en": "All Quest input (controllers, hands, keyboard, mic, recording)",
+    "ja": "Quest の入力ぜんぶ (コントローラー・手・キーボード・マイク・録画)"
   },
   "description": {
-    "en": "Every Touch button, stick and trigger with vibration; hand tracking with 26 joints, pinch and gestures (fist, point, peace, open, thumbs up); the system keyboard and Bluetooth keyboards; the microphone with level, speech start/end and WAV recording; headset on/off, recenter and refresh rate. Usable from scripts, from UI bindings (input.*), as script events (quest-input:*), and without code: objects can be grabbed and thrown.",
-    "ja": "Touch コントローラーの全ボタン・スティック・トリガーと振動、手の 26 関節・つまみ・ジェスチャー (グー・指差し・ピース・パー・グッド)、システムキーボードと Bluetooth キーボード、マイク (音量・話し始め / 終わり・WAV 録音)、ヘッドセットの着脱・リセンター・リフレッシュレート。スクリプト・UI の表示 (input.*)・スクリプトイベント (quest-input:*) から使え、コード無しでも物をつかんで投げられます。"
+    "en": "Every Touch button, stick and trigger with vibration; hand tracking with 26 joints, pinch and gestures (fist, point, peace, open, thumbs up); the system keyboard and Bluetooth keyboards; the microphone with level, speech start/end and WAV recording; headset on/off, recenter and refresh rate; recording a scene camera to MP4 (H.264 + AAC, saved to Movies/Arsist) and photos to Pictures/Arsist. Usable from scripts, from UI bindings (input.*), as script events (quest-input:*), and without code: objects can be grabbed and thrown.",
+    "ja": "Touch コントローラーの全ボタン・スティック・トリガーと振動、手の 26 関節・つまみ・ジェスチャー (グー・指差し・ピース・パー・グッド)、システムキーボードと Bluetooth キーボード、マイク (音量・話し始め / 終わり・WAV 録音)、ヘッドセットの着脱・リセンター・リフレッシュレート、シーンのカメラの録画 (MP4: H.264 + AAC、Movies/Arsist に保存) と静止画 (Pictures/Arsist)。スクリプト・UI の表示 (input.*)・スクリプトイベント (quest-input:*) から使え、コード無しでも物をつかんで投げられます。"
   },
-  "tags": ["feature:text-input", "feature:hand-tracking"],
+  "tags": [
+    "feature:text-input",
+    "feature:hand-tracking"
+  ],
   "requires": {
-    "all": ["cap:controllers", "cap:hand-tracking", "sdk:meta-core"]
+    "all": [
+      "cap:controllers",
+      "cap:hand-tracking",
+      "sdk:meta-core"
+    ]
   },
   "minIrVersion": 4,
   "data": {
@@ -21,7 +28,10 @@
         "key": "publishToStore",
         "type": "boolean",
         "default": true,
-        "label": { "en": "Put input state in the store (input.*, mic.*)", "ja": "入力の状態をストアに入れる (input.* / mic.*)" },
+        "label": {
+          "en": "Put input state in the store (input.*, mic.*)",
+          "ja": "入力の状態をストアに入れる (input.* / mic.*)"
+        },
         "help": {
           "en": "UI text can show input.right.gesture, input.mode, mic.level … directly. Written only when a value changes.",
           "ja": "input.right.gesture / input.mode / mic.level などを UI の文字にそのまま出せます。値が変わったときだけ書きます。"
@@ -31,7 +41,10 @@
         "key": "scriptEvents",
         "type": "boolean",
         "default": true,
-        "label": { "en": "Fire script events (quest-input:*)", "ja": "スクリプトイベントを鳴らす (quest-input:*)" },
+        "label": {
+          "en": "Fire script events (quest-input:*)",
+          "ja": "スクリプトイベントを鳴らす (quest-input:*)"
+        },
         "help": {
           "en": "A script with trigger event \"quest-input:right.a.down\" runs when A is pressed — no on() needed.",
           "ja": "トリガーが event「quest-input:right.a.down」のスクリプトが、A を押したときに走ります (on() を書かなくてよい)。"
@@ -41,13 +54,19 @@
         "key": "physicalKeyboard",
         "type": "boolean",
         "default": true,
-        "label": { "en": "Read Bluetooth keyboards", "ja": "Bluetooth キーボードを読む" }
+        "label": {
+          "en": "Read Bluetooth keyboards",
+          "ja": "Bluetooth キーボードを読む"
+        }
       },
       {
         "key": "micAutoStart",
         "type": "boolean",
         "default": false,
-        "label": { "en": "Start the microphone on launch", "ja": "起動したらマイクを開く" },
+        "label": {
+          "en": "Start the microphone on launch",
+          "ja": "起動したらマイクを開く"
+        },
         "help": {
           "en": "Asks for the microphone permission the first time. Off: a script calls mic.start() or mic.record().",
           "ja": "初回にマイクの許可を求めます。切ると、スクリプトが mic.start() / mic.record() を呼んだときに開きます。"
@@ -60,7 +79,10 @@
         "min": 0,
         "max": 1,
         "step": 0.05,
-        "label": { "en": "Speech starts above this level", "ja": "話し始めとみなす音量" },
+        "label": {
+          "en": "Speech starts above this level",
+          "ja": "話し始めとみなす音量"
+        },
         "help": {
           "en": "0..1 on a dB scale (0.5 ≈ -30 dBFS). Raise it in a noisy room.",
           "ja": "0〜1 (dB 目盛り。0.5 ≈ -30 dBFS)。騒がしい場所では上げます。"
@@ -70,11 +92,32 @@
         "key": "micOutputRate",
         "type": "select",
         "default": "16000",
-        "label": { "en": "Recorded audio sample rate", "ja": "録音した音声のサンプルレート" },
+        "label": {
+          "en": "Recorded audio sample rate",
+          "ja": "録音した音声のサンプルレート"
+        },
         "options": [
-          { "value": "16000", "label": { "en": "16 kHz (speech recognition)", "ja": "16 kHz (音声認識向け)" } },
-          { "value": "24000", "label": { "en": "24 kHz", "ja": "24 kHz" } },
-          { "value": "48000", "label": { "en": "48 kHz", "ja": "48 kHz" } }
+          {
+            "value": "16000",
+            "label": {
+              "en": "16 kHz (speech recognition)",
+              "ja": "16 kHz (音声認識向け)"
+            }
+          },
+          {
+            "value": "24000",
+            "label": {
+              "en": "24 kHz",
+              "ja": "24 kHz"
+            }
+          },
+          {
+            "value": "48000",
+            "label": {
+              "en": "48 kHz",
+              "ja": "48 kHz"
+            }
+          }
         ]
       },
       {
@@ -84,10 +127,58 @@
         "min": 0,
         "max": 1,
         "step": 0.05,
-        "label": { "en": "Gesture must hold for (s)", "ja": "ジェスチャーを確定するまでの時間 (秒)" },
+        "label": {
+          "en": "Gesture must hold for (s)",
+          "ja": "ジェスチャーを確定するまでの時間 (秒)"
+        },
         "help": {
           "en": "A hand shape counts only after it has been held this long, so passing shapes do not fire.",
           "ja": "この時間続いた形だけを数えます。指を動かす途中の形で誤反応しないように。"
+        }
+      },
+      {
+        "key": "recorderFolder",
+        "type": "string",
+        "default": "Arsist",
+        "label": {
+          "en": "Recording folder",
+          "ja": "録画の保存フォルダ"
+        },
+        "help": {
+          "en": "Videos go to Movies/<this>/, photos to Pictures/<this>/ (Quest: Files app, or over USB).",
+          "ja": "動画は Movies/<これ>/、静止画は Pictures/<これ>/ に入ります (Quest の「ファイル」アプリや USB から見えます)。"
+        }
+      },
+      {
+        "key": "recorderBitrate",
+        "type": "number",
+        "default": 8000000,
+        "min": 500000,
+        "max": 50000000,
+        "step": 500000,
+        "label": {
+          "en": "Recording bitrate (bit/s)",
+          "ja": "録画のビットレート (bit/秒)"
+        },
+        "help": {
+          "en": "8 Mbps ≈ 60 MB per minute. recorder.start({ bitrate }) overrides it.",
+          "ja": "8 Mbps で 1 分およそ 60 MB。recorder.start({ bitrate }) で録画ごとに変えられます。"
+        }
+      },
+      {
+        "key": "recorderMaxMinutes",
+        "type": "number",
+        "default": 60,
+        "min": 0,
+        "max": 600,
+        "step": 5,
+        "label": {
+          "en": "Longest recording (minutes)",
+          "ja": "録画の最長 (分)"
+        },
+        "help": {
+          "en": "Recording stops and saves by itself after this long. 0: no limit.",
+          "ja": "この長さで自動的に止めて保存します。0 で無制限。"
         }
       }
     ],
@@ -96,42 +187,131 @@
         "key": "grab",
         "type": "select",
         "default": "none",
-        "label": { "en": "Can be grabbed", "ja": "つかめる" },
+        "label": {
+          "en": "Can be grabbed",
+          "ja": "つかめる"
+        },
         "help": {
           "en": "Controller: squeeze the grip near it. Hands: pinch or make a fist on it (panels: fist only, so pinching still presses their buttons).",
           "ja": "コントローラー: 近くでグリップを握る。手: つまむか握る (パネルは握るだけ。つまむとパネルのボタンを押す操作になるため)。"
         },
         "options": [
-          { "value": "none", "label": { "en": "No", "ja": "つかめない" } },
-          { "value": "grab", "label": { "en": "Grab and move", "ja": "つかんで動かす" } },
-          { "value": "throw", "label": { "en": "Grab and throw (falls with gravity)", "ja": "つかんで投げる (重力で落ちる)" } }
+          {
+            "value": "none",
+            "label": {
+              "en": "No",
+              "ja": "つかめない"
+            }
+          },
+          {
+            "value": "grab",
+            "label": {
+              "en": "Grab and move",
+              "ja": "つかんで動かす"
+            }
+          },
+          {
+            "value": "throw",
+            "label": {
+              "en": "Grab and throw (falls with gravity)",
+              "ja": "つかんで投げる (重力で落ちる)"
+            }
+          }
+        ]
+      },
+      {
+        "key": "reach",
+        "type": "select",
+        "default": "near",
+        "label": {
+          "en": "Reach",
+          "ja": "届く距離"
+        },
+        "help": {
+          "en": "Far: point a controller at it from anywhere (up to 20 m) and squeeze the grip. While held it moves with the controller (1–2×) and turns with its yaw only, so it stays upright — for fine-tuning big screens and far panels. The held hand's stick up/down pushes / pulls it.",
+          "ja": "遠くから: 離れていても (20 m まで) コントローラーを向けてグリップを握るとつかめる。持っている間はコントローラーを動かした分 (1〜2 倍) だけ動き、水平の向きだけ回る (傾かない)。大きなスクリーンや奥の板の微調整向け。持っている手のスティック上下で押す / 引く。"
+        },
+        "options": [
+          {
+            "value": "near",
+            "label": {
+              "en": "Within hand's reach",
+              "ja": "手の届く所だけ"
+            }
+          },
+          {
+            "value": "far",
+            "label": {
+              "en": "From far away (controller ray)",
+              "ja": "遠くから (コントローラーのレイ)"
+            }
+          }
         ]
       },
       {
         "key": "grabWith",
         "type": "select",
         "default": "both",
-        "label": { "en": "Grab with", "ja": "何でつかむか" },
+        "label": {
+          "en": "Grab with",
+          "ja": "何でつかむか"
+        },
         "options": [
-          { "value": "both", "label": { "en": "Controllers and hands", "ja": "コントローラーと手" } },
-          { "value": "controller", "label": { "en": "Controllers only", "ja": "コントローラーだけ" } },
-          { "value": "hand", "label": { "en": "Hands only", "ja": "手だけ" } }
+          {
+            "value": "both",
+            "label": {
+              "en": "Controllers and hands",
+              "ja": "コントローラーと手"
+            }
+          },
+          {
+            "value": "controller",
+            "label": {
+              "en": "Controllers only",
+              "ja": "コントローラーだけ"
+            }
+          },
+          {
+            "value": "hand",
+            "label": {
+              "en": "Hands only",
+              "ja": "手だけ"
+            }
+          }
         ]
       },
       {
         "key": "hapticOnGrab",
         "type": "boolean",
         "default": true,
-        "label": { "en": "Vibrate when grabbed", "ja": "つかんだら振動する" }
+        "label": {
+          "en": "Vibrate when grabbed",
+          "ja": "つかんだら振動する"
+        }
       }
     ]
   },
   "script": {
-    "globals": ["controller", "hands", "mic", "keyboard", "headset"]
+    "globals": [
+      "controller",
+      "hands",
+      "mic",
+      "keyboard",
+      "headset",
+      "recorder"
+    ]
   },
   "android": {
-    "permissions": ["android.permission.RECORD_AUDIO", "com.oculus.permission.HAND_TRACKING"],
-    "features": [{ "name": "oculus.software.handtracking", "required": false }]
+    "permissions": [
+      "android.permission.RECORD_AUDIO",
+      "com.oculus.permission.HAND_TRACKING"
+    ],
+    "features": [
+      {
+        "name": "oculus.software.handtracking",
+        "required": false
+      }
+    ]
   },
   "unity": {
     "entry": "Arsist.Extensions.QuestInput.QuestInputExtension"

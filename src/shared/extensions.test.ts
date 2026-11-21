@@ -167,7 +167,7 @@ describe('the Quest input extension', () => {
   });
 
   it('exposes one script name per input area, none of them built-in', () => {
-    expect(input.script?.globals).toEqual(['controller', 'hands', 'mic', 'keyboard', 'headset']);
+    expect(input.script?.globals).toEqual(['controller', 'hands', 'mic', 'keyboard', 'headset', 'recorder']);
   });
 });
 

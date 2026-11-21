@@ -5,7 +5,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ErrorDialog } from './ErrorDialog';
 import { useT } from '../../i18n';
-import { generateBuildManifest } from '../../../bridge/UnityBridge';
+import { generateBuildManifest, unityScenesData, unityUiData } from '../../../bridge/UnityBridge';
 
 interface BuildDialogProps {
   onClose: () => void;
@@ -334,8 +334,8 @@ export function BuildDialog({ onClose }: BuildDialogProps) {
         cleanBuild,
         manualLicenseFile: unityManualLicenseFile || undefined,
         manifestData,
-        scenesData: project.scenes,
-        uiData: project.uiLayouts,
+        scenesData: unityScenesData(project.scenes),
+        uiData: unityUiData(project.uiLayouts),
         scriptsData: exportScriptBundle(),
       });
 

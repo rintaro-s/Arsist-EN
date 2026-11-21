@@ -1,4 +1,6 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect, useContext } from 'react';
+import { MediaPlaceholder, MediaViewContext } from '../camera/MediaPlaceholder';
+import { findCameraObject } from '../../../shared/media';
 import { createPortal } from 'react-dom';
 import { X, Eye, Monitor, Compass, Zap } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
@@ -19,7 +21,7 @@ type PreviewMode = 'user' | 'orbit';
  * Lightweight UIElementRenderer (preview-only)
  * Independent lightweight version from UIEditor.tsx ElementRenderer
  * ================================================================ */
-function SimpleUIRenderer({ element }: { element: UIElement }) {
+export function SimpleUIRenderer({ element }: { element: UIElement }) {
   const t = useT();
   let storeCtx: { data: Record<string, unknown> } | null = null;
   try {
@@ -29,10 +31,14 @@ function SimpleUIRenderer({ element }: { element: UIElement }) {
     // outside provider
   }
   const data = storeCtx?.data || {};
+  const media = useContext(MediaViewContext);
+  const project = useProjectStore((s) => s.project);
 
   const resolveContent = (el: UIElement): string => {
     if (el.bind?.key) {
       const raw = data[el.bind.key];
+      // 値がまだ無いときは、書かれている文字 (実機でも値が来るまではそれが出る) → 無ければ —
+      if (raw == null && el.content) return el.content;
       const val = raw != null ? String(raw) : '—';
       return el.bind.format ? el.bind.format.replace('{value}', val) : val;
     }
@@ -76,6 +82,18 @@ function SimpleUIRenderer({ element }: { element: UIElement }) {
     return (
       <div style={{ ...styleObj, cursor: 'pointer', userSelect: 'none' }}>
         {resolveContent(element) || t('preview.button')}
+      </div>
+    );
+  }
+
+  if (element.type === 'Image' && element.source) {
+    const src = element.source;
+    const label = src.kind === 'camera'
+      ? t('media.cameraPlaceholder', { name: media?.cameraName?.(src.camera) ?? (project ? findCameraObject(project, src.camera)?.name : undefined) ?? src.camera })
+      : t('media.streamPlaceholder', { url: src.url });
+    return (
+      <div style={styleObj}>
+        <MediaPlaceholder source={src} label={label} shot={src.kind === 'camera' ? media?.shot?.(src.camera) : undefined} />
       </div>
     );
   }
@@ -227,11 +245,12 @@ function PreviewContent({
   useEffect(() => {
     if (!autoUpdateData) return;
     const interval = setInterval(() => {
+      const deviceStatus = (data.deviceStatus ?? {}) as { brightness?: number } & Record<string, unknown>;
       setData({
         ...data,
         deviceStatus: {
-          ...data.deviceStatus,
-          brightness: Math.max(30, Math.min(100, (data.deviceStatus?.brightness || 75) + (Math.random() - 0.5) * 10)),
+          ...deviceStatus,
+          brightness: Math.max(30, Math.min(100, (deviceStatus.brightness || 75) + (Math.random() - 0.5) * 10)),
         },
         systemClock: new Date().toLocaleTimeString(),
         timestamp: Date.now(),

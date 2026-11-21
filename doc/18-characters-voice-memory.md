@@ -5,8 +5,9 @@
 ・ `Editor/ArsistBuildPipeline.cs` (`ImportCharacterAnimations`)
 
 「部屋の中にキャラクターがいて、話しかけると声で答え、見たものや出来事を次の日も覚えている」ような
-アプリを、エディタの画面とスクリプトだけで組めるようにするための機能 (IR v5)。どれも特定のアプリ向けではなく、
-キャラクター・音・カメラ・保存という汎用の部品として入っている。
+アプリを、エディタの画面とスクリプトだけで組めるようにするための機能 (Layster.Virtual α5 で入り、β 1.0.0 も同じ形)。
+どれも特定のアプリ向けではなく、キャラクター・音・カメラ・保存という汎用の部品として入っている。
+§1〜§7 は Layster.Virtual (`project.json`) の書き方。Layster.Spatial でのキャラクターと記憶は §9。
 
 | やりたいこと | 使うもの | エディタのどこで |
 |---|---|---|
@@ -62,9 +63,15 @@ FBX は取り込み直さない (ビルドの使い回しを壊さない)。人�
 | `breathe` | 胸がわずかに上下する |
 | `lookAtUser` | `off` / `always` / `nearby` (2.5 m 以内で、ユーザーの頭がこちらを向いているとき。少し余裕を持って外れる) |
 
-**`character` が無い VRM は v4 までとまったく同じ** (立っているだけ)。古いプロジェクトをアップグレードしても補わない
+**`character` が無い VRM は α4 までとまったく同じ** (立っているだけ)。古いプロジェクトをアップグレードしても補わない
 (補うと、古いアプリのキャラクターがいきなり瞬きを始める)。エディタやエージェントが新しく置いた VRM には
 `CHARACTER_DEFAULTS` (まばたき・呼吸・近くで見られたら見返す) が入る。
+
+**自分の体として動かす (`character.embody`、β 1.1.0〜)**: `{ "embody": { "enabled": true, "hands": "auto", "lipSync": true,
+"hideFromSelf": true, "matchHeight": true } }` を足すと、その VRM は頭 (XR のカメラ) と手 (コントローラー / XR Hands) で動く
+(`Runtime/Media/ArsistEmbodiment.cs`、実行順 9995)。動いている間は上の動き・歩く・こちらを見るは止まる (まばたきはそのまま)。
+口は声の大きさ (`ArsistVoice`、マイクを持つ拡張機能が入れる) で "aa" が開く。`hideFromSelf` なら自分の目には写らず、
+仮想カメラ (`type: "camera"`) には写る。スクリプトは `vrm.embody(id, on)` / `vrm.calibrate(id)`。詳しくは doc/23 §2。
 
 実機では読み込み後に `ArsistCharacter` (実行順 9990: Animator の後、視線・腕の IK (10000) の前) が付く。
 キャラクターの正面は、VRM 0.x / 1.0 で根元の向きが 180° 違うので、両脚の付け根から求めている。
@@ -185,3 +192,22 @@ UI タブで Text / Button を選び「書いていくように出す」(1 秒�
   論理 (偽の実機 API の上で 1 セッションを流した) まで。最初に試すときは `npm run logs` で `[Arsist]` と `[ArsistJS]` を見る。
 - 経路探索 (NavMesh) は無い。音声認識・読み上げ・LLM は端末の外 (同じ LAN の PC かクラウド) の API を呼ぶ。
   Quest には Android 標準の音声認識・読み上げが無い。
+
+## 9. Layster.Spatial では
+
+Spatial (`project.spatial.json`、doc/19) にはシーンの物も `vrm` / `scene` のスクリプトも無い。キャラクターは
+**`visual.kind: 'character'` の物 (thing)** で、ビルドで同じ `vrm` の物 + `character` に書き出されるので、実機では上と同じ
+`ArsistCharacter` が動く (`src/shared/layster/spatial/lower.ts`)。
+
+```json
+{ "id": "buddy", "visual": { "kind": "character", "file": "Assets/Characters/buddy.vrm", "animation": "Idle", "height": 1.5 },
+  "place": { "near": { "user": "feet" }, "distance": [0.8, 1.6], "facing": "user" } }
+```
+
+- `blink` / `breathe` の既定は true、`lookAtUser` の既定は `nearby` (Virtual と違い、書かなくても動く)。`height` (既定 1.5 m) は
+  置き方の計算に使う箱の高さで、ランタイムは足元を箱の底に合わせる。
+- 動きのファイルは同じく `Assets/Animations/<名前>.fbx` (Spatial のエディタの読み込みも `animationAssets.ts` を通る)。
+  最初の動きの名前が無ければ、ビルドの最初に同じ `WARNING` が出る。
+- 動かすのは行動 (規則・Mind・`world.act`): `move` (歩く、`ArsistCharacter.WalkTo`)・`look`・`animate` (`then: "stand"`)・
+  `say` (store の `say.text` に文、`audio` があればその物の位置で鳴らして口が動く)。doc/20 §7。
+- 残すキーは `project.storage.persist` ではなく `memory.persist` (書き方は §4 と同じ)。`layster.` で始まるキーは自動で残る。

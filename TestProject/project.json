@@ -1,11 +1,20 @@
 {
-  "appType": "ar",
+  "layster": {
+    "profile": "virtual",
+    "stage": "beta",
+    "version": "1.0.0"
+  },
+  "appType": "3d_ar_scene",
   "arSettings": {
     "presentationMode": "world_anchored",
     "floatingScreen": {
-      "distance": 2.0
+      "distance": 2
     },
-    "trackingMode": "6dof"
+    "trackingMode": "6dof",
+    "interaction": {
+      "controllerRay": true,
+      "handTracking": false
+    }
   },
   "name": "Test AR App",
   "version": "1.0.0",
@@ -14,14 +23,22 @@
     "packageName": "com.test.arapp",
     "productName": "Test AR App"
   },
-  "uiAuthoring": {
-    "mode": "visual"
-  },
   "id": "test-project-001",
   "scenes": [
     {
       "name": "MainScene",
       "objects": []
     }
-  ]
+  ],
+  "dataFlow": {
+    "dataSources": [],
+    "transforms": []
+  },
+  "scripts": [],
+  "models": [],
+  "extensions": {},
+  "storage": {
+    "persist": []
+  },
+  "irVersion": 6
 }

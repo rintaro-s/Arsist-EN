@@ -55,8 +55,10 @@ const packages_1 = require("./extensions/packages");
 const ExtensionCatalog_1 = require("./extensions/ExtensionCatalog");
 const aiIpc_1 = require("./ipc/aiIpc");
 const projectWatcher_1 = require("./project/projectWatcher");
+const spatialIpc_1 = require("./layster/spatialIpc");
 const animationAssets_1 = require("./project/animationAssets");
 const vrmInfo_1 = require("./project/vrmInfo");
+const UnityBridge_1 = require("../bridge/UnityBridge");
 const adapterTags_1 = require("../shared/adapterTags");
 const assets_1 = require("../shared/assets");
 const childProcesses_1 = require("./platform/childProcesses");
@@ -78,7 +80,8 @@ electron_1.protocol.registerSchemesAsPrivileged([
 const store = new electron_store_1.default({
     defaults: {
         unityPath: '',
-        unityVersion: '2022.3.20f1',
+        // 受け付ける最低の版 (unity:validate)。テンプレートが固定している版 = UnityBackend/ArsistBuilder/ProjectSettings/ProjectVersion.txt
+        unityVersion: '6000.0.40f1',
         recentProjects: [],
         theme: 'dark',
         layoutSettings: {
@@ -120,17 +123,34 @@ function shutdownBackgroundWork() {
         // 止められなくても、下の killAllChildren で木ごと落とす
     }
     projectWatcher.close();
+    (0, spatialIpc_1.closeSpatialWatcher)();
     if ((0, childProcesses_1.trackedCount)() > 0) {
         console.log(`[Arsist] Closing: stopping ${(0, childProcesses_1.trackedCount)()} background process(es): ${(0, childProcesses_1.trackedLabels)().join(', ')}`);
     }
     (0, childProcesses_1.killAllChildren)((message) => console.log(message));
 }
 let adapterManager = null;
+/**
+ * 今開いているプロジェクトのフォルダ (Virtual でも Spatial でも)。arsist-file:// の配信範囲、
+ * model:* / vision:preview の既定の置き場、AI の IPC が見るプロジェクトはこれ。
+ */
 let currentProjectPathForAssets = null;
 // 開いているプロジェクトが外 (エージェント等) で変わったら、レンダラに知らせて読み直してもらう
 const projectWatcher = new projectWatcher_1.ProjectWatcher((projectPath, files) => {
     mainWindow?.webContents.send('project:external-change', { projectPath, files });
 });
+/** Virtual のプロジェクトを開いた: Spatial の側を手放し、Virtual の見張りを始める */
+function openedVirtualProject(projectPath) {
+    (0, spatialIpc_1.forgetSpatialProject)();
+    currentProjectPathForAssets = projectPath;
+    updateRecentProjects(projectPath);
+    projectWatcher.watch(projectPath);
+}
+/** Spatial のプロジェクトを開いた (spatialIpc から): Virtual の見張りを止める */
+function openedSpatialProject(projectPath) {
+    projectWatcher.close();
+    currentProjectPathForAssets = projectPath;
+}
 const isDev = process.env.NODE_ENV === 'development';
 function getAppLang() {
     try {
@@ -756,10 +776,7 @@ electron_1.ipcMain.handle('project:create', async (_, options) => {
     projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
     const res = await projectManager.createProject(options);
     if (res?.success) {
-        const projectDir = path.join(options.path, options.name);
-        currentProjectPathForAssets = projectDir;
-        updateRecentProjects(projectDir);
-        projectWatcher.watch(projectDir);
+        openedVirtualProject(path.join(options.path, options.name));
     }
     return res;
 });
@@ -769,11 +786,8 @@ electron_1.ipcMain.handle('project:load', async (_, projectPath) => {
     }
     projectManager.setWriteObserver((file, text) => projectWatcher.recordOwnWrite(file, text));
     const res = await projectManager.loadProject(projectPath);
-    if (res?.success) {
-        currentProjectPathForAssets = projectPath;
-        updateRecentProjects(projectPath);
-        projectWatcher.watch(projectPath);
-    }
+    if (res?.success)
+        openedVirtualProject(projectPath);
     return res;
 });
 electron_1.ipcMain.handle('project:save', async (_, data) => {
@@ -934,7 +948,9 @@ electron_1.ipcMain.handle('unity:detect-gradle', async () => {
 electron_1.ipcMain.handle('unity:get-path', async () => {
     return store.get('unityPath');
 });
-electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => {
+electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => runUnityBuild(buildConfig));
+/** Unity のビルド。Virtual のビルド画面 ('unity:build') と Layster.Spatial のビルド (spatialIpc) が同じ道を通る */
+async function runUnityBuild(buildConfig) {
     const unityPath = store.get('unityPath');
     const unityVersion = store.get('unityVersion');
     if (!unityPath) {
@@ -960,8 +976,20 @@ electron_1.ipcMain.handle('unity:build', async (_, buildConfig) => {
     unityBuilder.setExtensionUserDir((0, catalogService_1.getUserExtensionsDir)());
     return await unityBuilder.build({
         ...buildConfig,
+        // カメラ・embody・source の既定を埋める (UnityBridge.unityScenesData。何度通しても同じ)
+        ...(Array.isArray(buildConfig?.scenesData) ? { scenesData: (0, UnityBridge_1.unityScenesData)(buildConfig.scenesData) } : {}),
+        ...(Array.isArray(buildConfig?.uiData) ? { uiData: (0, UnityBridge_1.unityUiData)(buildConfig.uiData) } : {}),
         unityVersion: buildConfig?.unityVersion || unityVersion,
     });
+}
+// Layster.Spatial (project.spatial.json) のプロジェクト。作成・読み書き・Mind を試す・ビルド (doc/19-layster.md)
+(0, spatialIpc_1.registerSpatialIpc)({
+    getWindow: () => mainWindow,
+    addRecent: (projectPath) => updateRecentProjects(projectPath),
+    runUnityBuild: (config) => runUnityBuild(config),
+    buildLog: (line) => mainWindow?.webContents.send('unity:build-log', line),
+    getSetting: (key) => store.get(key),
+    onOpened: (projectPath) => openedSpatialProject(projectPath),
 });
 electron_1.ipcMain.handle('unity:cancel-build', async () => {
     const unityPath = store.get('unityPath');
@@ -997,12 +1025,6 @@ electron_1.ipcMain.handle('adapters:get', async (_, adapterId) => {
         adapterManager = new AdapterManager_1.AdapterManager();
     }
     return await adapterManager.getAdapter(adapterId);
-});
-electron_1.ipcMain.handle('adapters:apply-patch', async (_, adapterId, projectPath) => {
-    if (!adapterManager) {
-        adapterManager = new AdapterManager_1.AdapterManager();
-    }
-    return await adapterManager.applyPatch(adapterId, projectPath);
 });
 // 拡張機能 (Extensions/<id>/)。一覧と、端末のタグ (どの拡張機能がその端末で動くかを画面で示すため)。
 electron_1.ipcMain.handle('extensions:list', async (_, targetDevice) => {

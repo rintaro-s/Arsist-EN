@@ -224,9 +224,9 @@ function StepUnity({
   };
 
   const platformExamples: Record<string, string> = {
-    Windows: 'C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.20f1\\Editor\\Unity.exe',
-    macOS:   '/Applications/Unity/Hub/Editor/2022.3.20f1/Unity.app/Contents/MacOS/Unity',
-    Linux:   '/home/<user>/Unity/Hub/Editor/2022.3.20f1/Editor/Unity',
+    Windows: 'C:\\Program Files\\Unity\\Hub\\Editor\\6000.0.40f1\\Editor\\Unity.exe',
+    macOS:   '/Applications/Unity/Hub/Editor/6000.0.40f1/Unity.app/Contents/MacOS/Unity',
+    Linux:   '/home/<user>/Unity/Hub/Editor/6000.0.40f1/Editor/Unity',
   };
 
   return (

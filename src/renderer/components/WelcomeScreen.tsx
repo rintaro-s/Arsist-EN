@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Plus, FolderOpen, Glasses, Settings2, PackageOpen } from 'lucide-react';
 import { importArsistPackage } from '../ai/packageActions';
-import { useProjectStore } from '../stores/projectStore';
 import { useUIStore } from '../stores/uiStore';
 import { useT } from '../i18n';
+import { detectProjectKind } from '../spatial/api';
+import { openProjectFolder, type OpenOutcome } from '../spatial/openProject';
+import type { ProjectKindInfo } from '../../shared/layster/spatial/ipc';
 
 interface WelcomeScreenProps {
   onNewProject: () => void;
@@ -11,9 +13,11 @@ interface WelcomeScreenProps {
 
 export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
   const t = useT();
-  const loadProject = useProjectStore((s) => s.loadProject);
   const setShowSetupWizard = useUIStore((s) => s.setShowSetupWizard);
   const [recent, setRecent] = useState<string[]>([]);
+  // 最近のプロジェクトが Virtual か Spatial か (Layster の版も)
+  const [kinds, setKinds] = useState<Record<string, ProjectKindInfo>>({});
+  const [openError, setOpenError] = useState<OpenOutcome['error'] | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -24,7 +28,10 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
         const list = await api.store.get('recentProjects');
         if (!mounted) return;
         if (Array.isArray(list)) {
-          setRecent(list.filter((p) => typeof p === 'string').slice(0, 5));
+          const paths = list.filter((p) => typeof p === 'string').slice(0, 5);
+          setRecent(paths);
+          const found = await Promise.all(paths.map(async (p) => [p, await detectProjectKind(p)] as const));
+          if (mounted) setKinds(Object.fromEntries(found));
         }
       } catch {
         // ignore
@@ -39,12 +46,14 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
     if (!window.electronAPI) return;
     const path = await window.electronAPI.fs.selectDirectory();
     if (path) {
-      await loadProject(path);
+      const outcome = await openProjectFolder(path);
+      setOpenError(outcome.ok ? null : outcome.error ?? null);
     }
   };
 
   const handleOpenRecent = async (projectPath: string) => {
-    await loadProject(projectPath);
+    const outcome = await openProjectFolder(projectPath);
+    setOpenError(outcome.ok ? null : outcome.error ?? null);
   };
 
   return (
@@ -101,6 +110,10 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
           </div>
         </button>
 
+        {openError && (
+          <div className="mb-4 px-3 py-2 rounded-lg bg-arsist-error/10 text-xs text-arsist-error">{t(openError.key, openError.params)}</div>
+        )}
+
         {recent.length > 0 && (
           <div className="mb-6">
             <h4 className="text-xs font-medium text-arsist-muted mb-2">{t('welcome.recentProjects')}</h4>
@@ -112,7 +125,14 @@ export function WelcomeScreen({ onNewProject }: WelcomeScreenProps) {
                   className="w-full p-3 bg-arsist-hover/60 rounded-lg ring-1 ring-transparent hover:ring-arsist-accent/60 transition-all text-left"
                   title={p}
                 >
-                  <div className="text-xs text-arsist-text truncate">{p.split('/').pop() || p}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-arsist-text truncate">{p.split('/').pop() || p}</div>
+                    {kinds[p]?.label && (
+                      <span className={`shrink-0 text-[9px] px-1.5 py-px rounded ${kinds[p].kind === 'spatial' ? 'bg-arsist-accent/15 text-arsist-accent' : 'bg-arsist-hover text-arsist-muted'}`}>
+                        {kinds[p].label}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[10px] text-arsist-muted truncate">{p}</div>
                 </button>
               ))}

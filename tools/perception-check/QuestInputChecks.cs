@@ -3,6 +3,7 @@
 //   - 手のジェスチャー (HandGestureMath): 合成した手の形 (指ごとの曲げ角) から
 //     グー / パー / 指差し / ピース / ピンチ / サムズアップを正しく言えるか
 //   - マイク (MicMath): 音量、話し始め / 話し終わり、サンプルレート変換、WAV、輪っかのバッファ
+//   - 録画 (RecorderMath): 一時停止を引いた時刻、fps への間引き、音の時刻とずれの直し、大きさ、PCM16、行の反転
 //
 // どちらも実機では「グーがパーに見える」「話しても反応しない」としか分からないので、ここで固定する。
 using System;
@@ -229,6 +230,109 @@ internal static class QuestInputChecks
         Expect("an empty range is empty", ring.Range(12, 12).Length == 0);
     }
 
+
+    // ---- 録画 ----
+
+    private static void TestRecorderClock()
+    {
+        var c = new RecorderClock();
+        Expect("clock is 0 before it begins", c.Micros(5) == 0);
+        c.Begin(10);
+        Expect("clock counts from the start", c.Micros(12.5) == 2_500_000, c.Micros(12.5).ToString());
+        c.Pause(13);
+        Expect("clock stands still while paused", c.Micros(20) == 3_000_000, c.Micros(20).ToString());
+        c.Resume(20);
+        Expect("paused time is not counted", c.Micros(21) == 4_000_000, c.Micros(21).ToString());
+        c.Pause(22); c.Pause(25); c.Resume(26); c.Resume(30);
+        Expect("double pause / resume is harmless", c.Micros(27) == 6_000_000, c.Micros(27).ToString());
+    }
+
+    private static void TestFramePacer()
+    {
+        // カメラ 72 Hz → 録画 30 fps: 1 秒で 30 枚前後
+        var p = new FramePacer(30);
+        int taken = 0;
+        for (int i = 0; i < 72; i++) if (p.Due(i / 72.0)) taken++;
+        Expect("72 Hz camera -> 30 fps", taken >= 29 && taken <= 31, taken.ToString());
+
+        // 揺れのある 30 Hz → 30 fps: 落とさない
+        p = new FramePacer(30);
+        taken = 0;
+        var rnd = new Random(1);
+        for (int i = 0; i < 300; i++) if (p.Due(i / 30.0 + (rnd.NextDouble() - 0.5) * 0.008)) taken++;
+        Expect("jittery 30 Hz camera keeps every frame", taken == 300, taken.ToString());
+
+        // 引っかかったあと、まとめて受けない
+        p = new FramePacer(30);
+        p.Due(0); p.Due(1 / 30.0);
+        Expect("after a stall the next frame is taken", p.Due(1.0));
+        Expect("but no burst right after", !p.Due(1.0 + 0.005));
+        Expect("and the rhythm continues", p.Due(1.0 + 1 / 30.0));
+    }
+
+    private static void TestAudioClock()
+    {
+        // 16 kHz、1 フレーム 16.7 ms ごとに 267 サンプル: 時刻はサンプル数どおりにつながる
+        var a = new AudioClock(16000);
+        long first = a.Next(267, 16_687);
+        long second = a.Next(267, 33_375);
+        Expect("first chunk starts at wall - its length", Math.Abs(first - (16_687 - 16_687)) <= 1, first.ToString());
+        Expect("audio pts follow the sample count", second - first == 267 * 1_000_000L / 16000, (second - first).ToString());
+
+        // マイクの時計が 1% 遅い: いずれ合わせ直し、ずれは MaxDrift 以内に保たれる
+        a = new AudioClock(16000);
+        long worst = 0, last = -1;
+        bool monotonic = true;
+        for (int i = 1; i <= 3000; i++)
+        {
+            long wall = i * 20_000L;               // 20 ms ごと
+            long pts = a.Next(317, wall);          // 本当は 320 サンプル届くはず
+            if (pts < 0) continue;
+            if (pts < last) monotonic = false;
+            last = pts;
+            worst = Math.Max(worst, Math.Abs(pts + 317 * 1_000_000L / 16000 - wall));
+        }
+        Expect("slow mic clock is pulled back within the drift limit", worst <= AudioClock.MaxDriftMicros + 20_000, worst.ToString());
+        Expect("audio pts never go backwards", monotonic);
+
+        // 進みすぎた塊は捨てる
+        a = new AudioClock(16000);
+        a.Next(1600, 100_000);
+        Expect("a chunk far ahead of the wall clock is dropped", a.Next(16000, 150_000) == -1);
+    }
+
+    private static void TestRecorderSizes()
+    {
+        RecorderMath.FitSize(1920, 1080, 0, 0, out var w, out var h);
+        Expect("1920x1080 stays", w == 1920 && h == 1080, $"{w}x{h}");
+        RecorderMath.FitSize(1920, 1080, 1280, 0, out w, out h);
+        Expect("width only keeps the aspect", w == 1280 && h == 720, $"{w}x{h}");
+        RecorderMath.FitSize(1000, 563, 0, 0, out w, out h);
+        Expect("width is a multiple of 16, height even", w == 992 && h == 562, $"{w}x{h}");
+        RecorderMath.FitSize(8000, 4000, 0, 0, out w, out h);
+        Expect("capped at 3840", w == 3840 && h == 1920, $"{w}x{h}");
+        RecorderMath.FitSize(4, 4, 0, 0, out w, out h);
+        Expect("at least 16", w == 16 && h == 16, $"{w}x{h}");
+    }
+
+    private static void TestRecorderBytes()
+    {
+        var pcm = new byte[8];
+        int n = RecorderMath.ToPcm16(new[] { 0f, 1f, -1f, 2f }, 0, 4, pcm);
+        Expect("PCM16 bytes", n == 8
+            && BitConverter.ToInt16(pcm, 0) == 0 && BitConverter.ToInt16(pcm, 2) == 32767
+            && BitConverter.ToInt16(pcm, 4) == -32767 && BitConverter.ToInt16(pcm, 6) == 32767);
+        Expect("PCM16 stops at the buffer", RecorderMath.ToPcm16(new float[10], 0, 10, new byte[6]) == 6);
+
+        var px = new byte[] { 1, 1, 2, 2, 3, 3 };
+        RecorderMath.FlipRows(px, 2, 3);
+        Expect("rows flip", px[0] == 3 && px[2] == 2 && px[4] == 1, string.Join(",", px));
+
+        Expect("file name", RecorderMath.FileName(new DateTime(2026, 10, 25, 14, 5, 9), "Arsist", "mp4") == "Arsist_20261025_140509.mp4");
+        Expect("folder names lose path characters", RecorderMath.SafeName("../My:Clips/", "Arsist") == "MyClips"
+            && RecorderMath.SafeName("  ", "Arsist") == "Arsist", RecorderMath.SafeName("../My:Clips/", "Arsist"));
+    }
+
     public static int Run()
     {
         Console.WriteLine("\n--- quest-input: hand gestures ---");
@@ -239,6 +343,12 @@ internal static class QuestInputChecks
         TestVoiceActivity();
         TestResampleAndWav();
         TestRing();
+        Console.WriteLine("\n--- quest-input: recorder ---");
+        TestRecorderClock();
+        TestFramePacer();
+        TestAudioClock();
+        TestRecorderSizes();
+        TestRecorderBytes();
         return _failures;
     }
 }

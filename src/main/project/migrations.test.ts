@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CURRENT_IR_VERSION, readIrVersion } from '../../shared/irVersion';
-import { defineMigration, IrVersionError, MIGRATIONS, migrateProject, needsMigration } from './migrations';
+import { defineMigration, IrVersionError, MIGRATIONS, migrateProject, needsMigration, virtualBackupTag } from './migrations';
+import { describeVirtualIrVersion, formatLayster, virtualHeaderFor } from '../../shared/layster/version';
 import { STRINGS } from '../../renderer/i18n/strings';
 
 function legacyProject(): Record<string, any> {
@@ -131,6 +132,70 @@ describe('IR migrations', () => {
     const prefilled: Record<string, any> = { ...legacyProject(), irVersion: 4, storage: { persist: ['memory.'] } };
     migrateProject(prefilled);
     expect(prefilled.storage.persist).toEqual(['memory.']);
+  });
+
+  it('5 → 6 (α5 → Layster.Virtual β 1.0.0) adds only the layster heading, at the top', () => {
+    const raw: Record<string, any> = { ...legacyProject(), irVersion: 5, extensions: {}, storage: { persist: ['memory.'] } };
+    const before = JSON.stringify({ ...raw, irVersion: undefined });
+    const outcome = migrateProject(raw);
+    expect(outcome.applied).toEqual(MIGRATIONS.filter((m) => m.from >= 5).map((m) => m.id));
+    expect(outcome.changes).toEqual(['layster']);
+    // 見出しは最後に今の版のものになる (6 で β 1.0.0、その後の版で書き換わる)
+    expect(raw.layster).toEqual(virtualHeaderFor(CURRENT_IR_VERSION));
+    expect(Object.keys(raw)[0]).toBe('layster');
+    // 見出しと版の数のほかは何も変わらない
+    const { layster: _h, ...rest } = raw;
+    expect(JSON.stringify({ ...rest, irVersion: undefined })).toBe(before);
+  });
+
+  it('6 → 7 (β 1.0.0 → β 1.1.0: cameras, image sources, embody) changes nothing but the heading', () => {
+    // 古い: β 1.0.0 のカメラの無いプロジェクト。VRM はあるが embody は無い
+    const vrm = { id: 'v', name: 'Me', type: 'vrm', modelPath: 'Assets/Models/me.vrm', transform: {}, character: { blink: true } };
+    const image = { id: 'img', type: 'Image', assetPath: 'Assets/Textures/a.png' };
+    const raw: Record<string, any> = {
+      layster: { profile: 'virtual', stage: 'beta', version: '1.0.0' },
+      ...legacyProject(), irVersion: 6, extensions: {}, storage: { persist: [] },
+      scenes: [{ id: 's', name: 'S', objects: [vrm] }],
+      uiLayouts: [{ id: 'l', name: 'L', scope: 'canvas', root: image }],
+    };
+    const before = JSON.stringify({ ...raw, layster: undefined, irVersion: undefined });
+    const outcome = migrateProject(raw);
+    expect(outcome.applied).toEqual(['7']);
+    expect(outcome.changes).toEqual(['layster']);
+    // 新しい: 見出しが β 1.1.0 になるだけ。camera / source / embody は足さない (無い = 今までどおり)
+    expect(raw.layster).toEqual({ profile: 'virtual', stage: 'beta', version: '1.1.0' });
+    expect(raw.irVersion).toBe(7);
+    expect('embody' in raw.scenes[0].objects[0].character).toBe(false);
+    expect('source' in raw.uiLayouts[0].root).toBe(false);
+    expect(JSON.stringify({ ...raw, layster: undefined, irVersion: undefined })).toBe(before);
+  });
+
+  it('gives a current-version file without a heading its heading (and nothing else)', () => {
+    const raw: Record<string, any> = { ...legacyProject() };
+    migrateProject(raw);
+    delete raw.layster;
+    const outcome = migrateProject(raw);
+    expect(outcome.applied).toEqual([]);
+    expect(outcome.changes).toEqual(['layster']);
+    expect(raw.layster).toEqual(virtualHeaderFor(CURRENT_IR_VERSION));
+    // 2 回目は何もしない
+    expect(migrateProject(raw).changes).toEqual([]);
+  });
+
+  it('names the versions α1–α5 and β 1.0.0', () => {
+    expect(describeVirtualIrVersion(5)).toBe('α5');
+    expect(describeVirtualIrVersion(6)).toBe('β 1.0.0');
+    expect(formatLayster(virtualHeaderFor(CURRENT_IR_VERSION)!)).toMatch(/^Layster\.Virtual β \d+\.\d+\.\d+$/);
+    expect(virtualBackupTag(5)).toBe('alpha5');
+    expect(virtualBackupTag(6)).toBe('beta1.0.0');
+    expect(describeVirtualIrVersion(7)).toBe('β 1.1.0');
+  });
+
+  it('has a name for every version up to the current one', () => {
+    for (let v = 1; v <= CURRENT_IR_VERSION; v++) {
+      expect(virtualHeaderFor(v), `VIRTUAL_FORMATS[${v}] is missing in src/shared/layster/version.ts`).toBeDefined();
+    }
+    expect(virtualHeaderFor(CURRENT_IR_VERSION)!.stage).toBe('beta');
   });
 
   // ---- すべての移行に対して自動で確かめること (版を足しても書き足さなくてよい) ----

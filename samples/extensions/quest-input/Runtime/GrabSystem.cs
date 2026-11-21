@@ -10,6 +10,12 @@
 // throw なら、離した瞬間の手の速さで投げる (重力つき。quest-room の当たり判定があれば本物の家具で止まる)。
 //
 // 当たり判定のコライダーは使わない (見た目の範囲で決める)。コライダーの無いパネルでもつかめるように。
+//
+// 遠くの物 (ext.quest-input.reach = far): 手の届く物が無いときに、コントローラーの向き (レイ、最長 20 m) で当たる物を
+// グリップでつかむ。大きなスクリーンや奥の板の位置を微調整するためのもので、持っている間は
+//   - 位置: コントローラーを動かした分 × 1〜2 倍 (遠いほど少し大きく) だけ動く (腕の振りで遠くの物が暴れない)
+//   - 向き: コントローラーの水平の向きを変えた分だけ回る (傾かない。板は立ったまま)
+//   - 持っている手のスティック上下: レイの向きに押す / 引く
 // ==============================================
 
 using System;
@@ -32,7 +38,18 @@ namespace Arsist.Extensions.QuestInput
             public bool WasKinematic;
             public bool HadBody;
             public string By;
+            // 遠くからつかんだとき
+            public bool Far;
+            public Vector3 StartObject;
+            public Quaternion StartRotation;
+            public Vector3 StartController;
+            public float StartYaw;
+            public Vector3 PushDirection;
+            public float Push;
+            public float Gain = 1f;
         }
+
+        private const float FarMaxDistance = 20f;
 
         private sealed class Source
         {
@@ -71,7 +88,17 @@ namespace Arsist.Extensions.QuestInput
 
                 if (held != null)
                 {
-                    if (source.Active && source.Down)
+                    if (source.Active && source.Down && held.Far)
+                    {
+                        var c = controllers.Get(hand);
+                        if (c != null) held.Push += c.Stick.y * 1.5f * dt;
+                        var move = (source.Pose.position - held.StartController) * held.Gain + held.PushDirection * held.Push;
+                        var yaw = Mathf.DeltaAngle(held.StartYaw, YawOf(source.Pose.rotation));
+                        held.Target.transform.SetPositionAndRotation(
+                            held.StartObject + move,
+                            Quaternion.AngleAxis(yaw, Vector3.up) * held.StartRotation);
+                    }
+                    else if (source.Active && source.Down)
                     {
                         // 握っている間は手に付いてくる
                         held.Target.transform.SetPositionAndRotation(
@@ -89,6 +116,13 @@ namespace Arsist.Extensions.QuestInput
                 {
                     var target = FindTarget(source);
                     if (target != null) Grab(hand, target, source, controllers.Get(hand));
+                    else if (source.By == "controller")
+                    {
+                        var c = controllers.Get(hand);
+                        var aim = c != null && c.HasAim ? c.AimPose : source.Pose;
+                        var far = FindFarTarget(new Ray(aim.position, aim.rotation * Vector3.forward), out var distance);
+                        if (far != null) GrabFar(hand, far, source, aim, distance, c);
+                    }
                 }
             }
         }
@@ -151,6 +185,65 @@ namespace Arsist.Extensions.QuestInput
                 if (d < bestDistance) { best = obj; bestDistance = d; }
             }
             return best;
+        }
+
+        /// <summary>レイが当たる「遠くからつかめる」物のうち一番手前。</summary>
+        private ArsistObjectExt FindFarTarget(Ray ray, out float distance)
+        {
+            ArsistObjectExt best = null;
+            distance = float.MaxValue;
+            foreach (var obj in _ctx.ObjectsWithData())
+            {
+                if (IsHeld(obj)) continue;
+                var data = _ctx.ObjectData(obj);
+                var mode = MiniJson.Text(data, "grab", "none");
+                if (mode != "grab") continue; // 投げる物は遠くからは持たない
+                if (MiniJson.Text(data, "reach", "near") != "far") continue;
+                if (MiniJson.Text(data, "grabWith", "both") == "hand") continue;
+                if (!TryWorldBounds(obj.gameObject, out var bounds)) continue;
+                bounds.Expand(0.04f);
+                if (!bounds.IntersectRay(ray, out var d) || d > FarMaxDistance) continue;
+                if (d < distance) { best = obj; distance = d; }
+            }
+            return best;
+        }
+
+        private static float YawOf(Quaternion q)
+        {
+            var f = q * Vector3.forward;
+            f.y = 0f;
+            return f.sqrMagnitude < 1e-6f ? 0f : Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
+        }
+
+        private void GrabFar(string hand, ArsistObjectExt target, Source source, Pose aim, float distance, ControllerState controller)
+        {
+            var dir = aim.rotation * Vector3.forward;
+            dir.y = 0f;
+            dir = dir.sqrMagnitude < 1e-6f ? Vector3.forward : dir.normalized;
+            var held = new Held
+            {
+                Target = target,
+                By = source.By,
+                Far = true,
+                StartObject = target.transform.position,
+                StartRotation = target.transform.rotation,
+                StartController = source.Pose.position,
+                StartYaw = YawOf(source.Pose.rotation),
+                PushDirection = dir,
+                Gain = Mathf.Clamp(1f + distance * 0.15f, 1f, 2f),
+            };
+            var body = target.GetComponent<Rigidbody>();
+            if (body != null)
+            {
+                held.HadBody = true;
+                held.WasKinematic = body.isKinematic;
+                body.isKinematic = true;
+            }
+            _held[hand] = held;
+            var data = _ctx.ObjectData(target);
+            if (MiniJson.Bool(data, "hapticOnGrab", true)) controller?.Vibrate(0.35f, 0.05f);
+            _ctx.Log($"'{target.name}' grabbed from {distance:F1} m with the {hand} controller (ray)");
+            Changed?.Invoke(+1, hand, IdOf(target), "ray");
         }
 
         private bool IsHeld(ArsistObjectExt obj)

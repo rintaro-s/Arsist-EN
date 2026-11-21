@@ -2,123 +2,7 @@
  * Arsist Engine - Bridge Layer
  * エディタデータをUnityが解釈可能な形式に変換
  */
-import type { ArsistProject, SceneData, UILayoutData, Vector3, ModelDefinition } from '../shared/types';
-/**
- * シーンデータをUnity用JSONに変換
- */
-export declare function convertSceneToUnity(scene: SceneData): UnitySceneData;
-interface UnitySceneData {
-    name: string;
-    gameObjects: UnityGameObject[];
-}
-interface UnityGameObject {
-    name: string;
-    tag?: string;
-    layer?: number;
-    transform: {
-        localPosition: Vector3;
-        localRotation: Vector3;
-        localScale: Vector3;
-    };
-    components: UnityComponent[];
-    children?: UnityGameObject[];
-}
-interface UnityComponent {
-    type: string;
-    properties: Record<string, any>;
-}
-/**
- * UIレイアウトをUnity UI Toolkit/uGUI用に変換
- */
-export declare function convertUIToUnity(layout: UILayoutData): UnityUIData;
-interface UnityUIData {
-    name: string;
-    root: UnityUIElement;
-}
-interface UnityUIElement {
-    name: string;
-    type: string;
-    rectTransform: {
-        anchorMin: {
-            x: number;
-            y: number;
-        };
-        anchorMax: {
-            x: number;
-            y: number;
-        };
-        pivot: {
-            x: number;
-            y: number;
-        };
-        sizeDelta: {
-            x: number;
-            y: number;
-        };
-        anchoredPosition: {
-            x: number;
-            y: number;
-        };
-    };
-    layoutGroup?: {
-        type: 'Horizontal' | 'Vertical' | 'Grid';
-        spacing: number;
-        childAlignment: string;
-        padding: {
-            left: number;
-            right: number;
-            top: number;
-            bottom: number;
-        };
-    };
-    image?: {
-        color: {
-            r: number;
-            g: number;
-            b: number;
-            a: number;
-        };
-        raycastTarget: boolean;
-        material?: string;
-    };
-    text?: {
-        text: string;
-        fontSize: number;
-        color: {
-            r: number;
-            g: number;
-            b: number;
-            a: number;
-        };
-        alignment: string;
-        fontStyle: string;
-    };
-    button?: {
-        targetGraphic: string;
-        colors: {
-            normalColor: {
-                r: number;
-                g: number;
-                b: number;
-                a: number;
-            };
-            highlightedColor: {
-                r: number;
-                g: number;
-                b: number;
-                a: number;
-            };
-            pressedColor: {
-                r: number;
-                g: number;
-                b: number;
-                a: number;
-            };
-        };
-        onClick: string;
-    };
-    children: UnityUIElement[];
-}
+import type { ArsistProject, ModelDefinition, SceneData, UILayoutData } from '../shared/types';
 /**
  * APK に入れるモデル。モデルはプロジェクトの資産 (IR v3) で、画像認識の `infer` op だけでなく
  * スクリプトの model.* からも名前で呼ばれる。スクリプトの参照は文字列なので静的には追えない。
@@ -131,8 +15,18 @@ export declare function shippedModels(project: ArsistProject): ModelDefinition[]
  */
 export declare function referencedModels(project: ArsistProject): ModelDefinition[];
 /**
- * プロジェクト全体をUnityマニフェストに変換
+ * Unity に渡すシーン (scenes.json / manifest.scenes)。IR のままの形で、名前も IR と同じ。
+ * 既定のある項目 (β1.1.0〜) は埋めて渡す: Unity 側が既定を持たなくてよいように。
+ *   - type 'camera' の物の camera → CAMERA_DEFAULTS で埋める (無くても作る)
+ *   - VRM の character.embody → EMBODY_DEFAULTS で埋める (embody が無ければ足さない = 今までどおり)
+ * 何度通しても同じ結果になる (ビルドの入口が複数あり、どこで通しても困らないように)。元の IR は書き換えない。
  */
+export declare function unityScenesData(scenes: SceneData[] | undefined | null): SceneData[];
+/**
+ * Unity に渡す UI (ui_layouts.json)。Image の source は mirror を埋める (無ければ false)。
+ * 元の IR は書き換えない。何度通しても同じ。
+ */
+export declare function unityUiData(layouts: UILayoutData[] | undefined | null): UILayoutData[];
 /**
  * ビルドに渡すマニフェスト。
  *
@@ -148,5 +42,4 @@ export declare function generateBuildManifest(project: ArsistProject, overrides?
     targetDevice?: string;
 }): Record<string, unknown>;
 export declare function generateUnityManifest(project: ArsistProject): object;
-export {};
 //# sourceMappingURL=UnityBridge.d.ts.map

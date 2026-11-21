@@ -1,37 +1,57 @@
-# UI Components — `src/renderer/components/`
+# UI Components — `src/renderer/components/` (Virtual) and `src/renderer/spatial/` (Spatial)
 
-Overview of the major React components and their roles.
+Overview of the major React components and their roles. The editor has **two separate workspaces**, one per
+Layster profile; `App.tsx` shows exactly one of them (see doc/07 for the switch).
 
 ---
 
-## Layout
+## Layout (Layster.Virtual — `MainLayout.tsx`)
 
 ```
 App.tsx
-└── <three-column layout>
-    ├── LeftPanel.tsx            (hierarchy / list)
-    ├── <viewport area>
-    │   ├── SceneViewport.tsx    (view='scene')
-    │   ├── UIEditor.tsx         (view='ui')
-    │   ├── DataFlowEditor.tsx   (view='dataflow', reachable via DataFlow tab)
-    │   └── ScriptEditor.tsx     (view='script')
-    └── RightPanel.tsx           (inspector)
+├── TitleBar.tsx                 (project name, Layster version, dirty / read-only marks — also for Spatial)
+├── WelcomeScreen.tsx            (no project open; recent projects tagged Virtual / Spatial)
+├── MainLayout.tsx               (Virtual project, appMode 'editor')
+│   ├── Toolbar.tsx              (view tabs, transform mode, build …)
+│   ├── panels/LeftPanel.tsx     (hierarchy / list)
+│   ├── viewport/ViewportContainer.tsx
+│   │   ├── SceneViewport.tsx    (view='scene'; kept mounted while other tabs are open)
+│   │   ├── UIEditor.tsx         (view='ui')
+│   │   ├── ScriptEditor.tsx     (view='script')
+│   │   ├── VisionEditor.tsx     (view='vision' → re-exports components/vision/VisionEditor; tab hidden by default)
+│   │   ├── models/ModelsWorkspace.tsx         (view='models')
+│   │   └── extensions/ExtensionsWorkspace.tsx (view='extensions')
+│   ├── panels/RightPanel.tsx    (inspector)
+│   └── panels/BottomPanel.tsx   (console)
+├── live/LiveLayoutMode.tsx      (Virtual project, appMode 'live' — a separate screen)
+└── spatial/SpatialWorkspace.tsx (Spatial project — see below)
 ```
 
-The viewport area is selected by `uiStore.currentView`. Dialogs float above everything and are controlled by the `show*` flags in `uiStore`.
+The viewport area is selected by `uiStore.currentView`. `vision` / `models` / `extensions` are full-width
+screens (no left/right panels). Dialogs float above everything and are controlled by the `show*` flags in `uiStore`.
+
+The `'dataflow'` view is redirected to `'ui'` — there is currently no DataFlow editing screen (agents can still use
+the `ir_*_datasource` / `ir_*_transform` tools, doc/09). The screen was taken off in 2026-03 and is deliberately
+**kept off** because the device side does not run DataFlow (`ArsistDataFlowEngine.cs` is `.disabled`, doc/12): an
+editor whose sources and transforms do nothing on the device would mislead. The parts are kept, type-clean and
+exported, for when the runtime comes back: `viewport/DataFlowEditor.tsx` (three columns; its add dialogs only add,
+editing happens in the inspector; colours still need moving to `arsist-*` tokens), `LeftPanel` `DataFlowList`,
+`RightPanel` `DataFlowInspector`. Mount them together as a `'dataflow'` view. `viewport/UICanvas.tsx` and
+`viewport/CodeEditor.tsx` (unmounted, broken against the current types) were deleted in 2026-10.
 
 ---
 
 ## `SceneViewport.tsx`
 
-A full-screen [React Three Fiber](https://docs.pmnd.rs/react-three-fiber) `<Canvas>`. Reads from `projectStore` (current scene objects, selected IDs) and `uiStore` (grid, axes, transform mode).
+A full-screen [React Three Fiber](https://docs.pmnd.rs/react-three-fiber) `<Canvas>`. Reads from `projectStore` (current scene objects, selected IDs, perception targets) and `uiStore` (grid, axes, spawn view, transform mode).
 
 ### Scene Object Renderers
 
 | IR type | Component used |
 |---------|---------------|
 | `vrm` | `VRMViewer` |
-| `model` | `ModelObject` (GLB/GLTF via `useGLTF`) |
+| `model` | `ModelObject` (GLB/GLTF via `GltfScene`) |
+| `camera` | `CameraObject` (`components/camera/CameraGizmo.tsx`: body + lens + view cone from `fov`/`resolution`, forward = local +Z; the gizmo moves/rotates, never scales) |
 | Anything else | `SceneObjectMesh` (primitive / canvas) |
 
 `SceneObjectMesh` creates THREE.js geometry from `primitiveType`:
@@ -39,19 +59,34 @@ A full-screen [React Three Fiber](https://docs.pmnd.rs/react-three-fiber) `<Canv
 - `sphere` → `SphereGeometry(0.5, 32, 32)`
 - `plane` → `PlaneGeometry(1,1)`
 - `cylinder` → `CylinderGeometry(0.5,0.5,1,32)`
-- `canvas` → `PlaneGeometry(widthMeters, heightMeters)` (teal wireframe overlay)
+- `capsule` → `CapsuleGeometry(0.25, 0.5, 8, 16)`
+- `canvas` → `PlaneGeometry(widthMeters, heightMeters)` (default 1.2 × 0.7, teal emissive)
+
+Image anchors (`perceptionTargets`) are drawn as `AnchorPlane`s; objects anchored to them are rendered inside the
+anchor's group so the gizmo edits the offset.
 
 ### Gizmos
 
-- `TransformControls` — attached to selected object. Mode driven by `transformMode` (W/E/R keyboard shortcuts or toolbar buttons).
-- `OrbitControls` — camera orbit/pan/zoom. Restrictions change per `trackingMode`: 3DoF locks distance to 2m, head-locked disables rotate.
+- `SceneTransformControls` — attached to the selected object. Mode driven by `transformMode` (W/E/R keyboard shortcuts or toolbar buttons).
+- `OrbitControls` — camera orbit/pan/zoom. Restrictions change per `trackingMode`: 3DoF locks distance to 2m (no pan/zoom), `head_locked` disables rotate.
 - `GizmoHelper` (bottom-right) — orientation cube showing camera direction.
+- Lines use `StableLine`, never drei's `<Line>` (see CLAUDE.md).
+
+### Camera view (β1.1.0, doc/23)
+
+While a camera object is selected, `CameraPreview` draws what it sees into a small window at the bottom left of the
+same WebGL canvas (`useFrame` priority 2, after drei's GizmoHelper/Hud has drawn the normal view; scissor + viewport, no
+read-back). It hides what the device's camera does not film (`components/camera/cameraView.ts` `hideForCameraView`):
+`userData.arsistEditorOnly` (grid, axes, spawn marker, AR guides, camera gizmos), `TransformControls`, head-locked UI
+(`arsistHeadLocked`), and — when `showSelf` is off — the embodied VRM (`userData.arsistEmbodied`, set by `VRMViewer`).
+Anchored cameras get no preview (their placement is provisional). "Add camera" is in the toolbar and the + menu
+(`newCameraObject`: 2 m ahead, facing the user, assetId `Camera`, `Camera2`, …).
 
 ### AR Mode Guides
 
-- `floating_screen` → translucent grey plane at `(0,0,2)` representing the 2m floating panel
-- `head_locked_hud` → translucent teal plane at `(0,0,1)` representing the HUD layer
-- 6DoF always shows `StartPoseMarker` (origin sphere + forward arrow + 1m scale)
+- `floating_screen` → grey wireframe plane (1.6 × 0.9) at `(0,0,2)`
+- `head_locked_hud` → teal wireframe plane (1.2 × 0.6) at `(0,0,1)`
+- `OriginAxes` (`showAxes`) and `SpawnViewMarker` (`showSpawnView`) — the user's start point and the device's field of view
 
 ---
 
@@ -64,46 +99,32 @@ Key behaviours:
 - Selected element shows resize handles and a blue outline.
 - Dragging moves the element (updates `style.left` / `style.top` for Absolute layouts).
 - Property changes bubble up through `updateUIElement`.
-
----
-
-## `UICanvas.tsx`
-
-A read-only preview of a `UILayoutData`. Renders the element tree using the same recursive renderer as `UIEditor` but without drag interaction. Used in the preview dialog.
-
----
-
-## `DataFlowEditor.tsx`
-
-Three-column view:
-- **Left column** — DataSource cards (list + add/edit/delete)
-- **Middle column** — Transform cards (list + add/edit/delete)
-- **Right column** — DataStore variable listing (auto-derived from DataSources and Transforms)
-
-Editing a card opens a modal (`SourceEditModal` / `TransformEditModal`) with type-specific parameter inputs.
-
-The DataStore column is purely informational; it shows the `storeAs` key and type for each DataSource and Transform. UI elements bind to these keys via their `bind.key` field.
+- An Image with `source` (β1.1.0) draws `MediaPlaceholder` (`components/camera/`): a dark checker with "● Camera: <name>"
+  or "▶ Stream: <url>" (⇋ when mirrored). The same placeholder is used by the preview dialog's `SimpleUIRenderer`, where
+  the preview simulator can also pass the camera's actual view (`MediaViewContext`).
 
 ---
 
 ## `ScriptEditor.tsx`
 
 A simple code editor built around a `<textarea>` with:
-- Line number gutter (synchronized scroll via shared CSS)
+- Line number gutter (`LineNumbers`)
 - Tab key → inserts two spaces
 - Ctrl+S → save
-- Collapsible API quick-reference (`ApiQuickRef`)
+- Searchable API drawer (`ApiDrawer`) generated from `src/shared/scriptApi.ts` (`ENGINE_SCRIPT_API`) plus each
+  enabled extension's README "スクリプト" section; click inserts the signature
 - `TriggerBadge` showing the current trigger type/value
 
-The `ScriptInspector` (rendered in the RightPanel) shows script metadata (name, trigger type, interval value, enabled toggle, description) when a script is selected.
+The same file exports `ScriptInspector` (rendered in the RightPanel: name, trigger type, interval, enabled toggle,
+description, and `StorageSection` for `project.storage.persist`) and `ScriptFileList` (LeftPanel).
 
 ---
 
 ## `VRMViewer.tsx`
 
 Uses `@pixiv/three-vrm` to load and display a VRM 3D avatar inside the SceneViewport. Handles:
-- Loading `modelPath` via `fetch()` through the `arsist-file://` protocol
-- Attaching `TransformControls` when selected
+- Resolving `modelPath` to an `arsist-file://` URL (`modelUrl.ts`) and loading/caching it (`vrmCache.ts`)
+- Attaching transform controls when selected
 - Forwarding transform changes back to `updateObject`
 
 ---
@@ -114,40 +135,42 @@ Renders different content based on `currentView`:
 
 | View | Content |
 |------|---------|
-| `scene` | Scene selector dropdown + scene object hierarchy tree |
-| `ui` | UI layout tabs + UIElement tree |
-| `script` | Script file list with add/delete |
-| `dataflow` | DataSource + Transform lists (summary only) |
+| `scene` | Scene selector + scene object hierarchy (`SceneHierarchy`) |
+| `ui` | UI layout lists (UHD / canvas) + UIElement tree (`UIHierarchy`) |
+| `script` | Script file list (`ScriptFileList`) |
 
-Add buttons in the toolbar use `projectStore.addObject`, `addUILayout`, `addUIElement`, `addScript`.
+(`DataFlowList` is exported but not rendered, see above.) Add buttons use `projectStore.addObject`, `addUILayout`, `addUIElement`, `addScript`.
 
-The model import button opens a file dialog via `window.electronAPI.fs.selectFile` filtered to `.glb,.gltf,.vrm` and then calls `window.electronAPI.assets.import`.
+Model import opens `window.electronAPI.fs.selectFile` (GLB/GLTF or VRM, separate entries) and then calls
+`window.electronAPI.assets.import({ kind: 'model' })`. "Image anchor" imports a PNG/JPG as a texture, scores its
+trackability and adds a perception target.
 
 ---
 
 ## `RightPanel.tsx`
 
-A context-sensitive property inspector. Selects which inspector to render:
+A context-sensitive property inspector:
 
 | Condition | Inspector shown |
 |-----------|----------------|
 | `currentView === 'scene'` and object selected | `ObjectInspector` |
-| `currentView === 'scene'` and no selection | `ARSettingsInspector` |
-| `currentView === 'ui'` and element selected | `UIElementInspector` |
-| `currentView === 'ui'` and no selection | empty state |
-| `currentView === 'dataflow'` and source selected | `DataSourceEditor` |
-| `currentView === 'dataflow'` and transform selected | `TransformEditor` |
+| `currentView === 'scene'`, image target / vision task selected | `PerceptionTargetInspector` / `PerceptionTaskInspector` (`PerceptionInspector.tsx`) |
+| `currentView === 'scene'` and no selection | `ProjectARSettings` (project settings, Python remote control, `ProjectExtensionsSection`) |
+| `currentView === 'ui'` | `UIInspector` (empty state when nothing selected) |
 | `currentView === 'script'` | `ScriptInspector` |
 
 ### `ObjectInspector`
 
-Three expandable sections:
-1. **Transform** — position/rotation/scale (X/Y/Z inputs)
-2. **Material** — color picker, metallic/roughness sliders (only for non-canvas, non-VRM types)
-3. **Canvas Settings** — layoutId selector, widthMeters/heightMeters/pixelsPerUnit (only for `type === 'canvas'`)
-4. **VRM** — expression list, bone list, remote control toggle (only for `type === 'vrm'`)
+Flat list:
+1. **Name**, **Asset ID** (for scripting — shows `scene.setPosition(...)` / `vrm.setExpression(...)` examples)
+2. **Transform** — position/rotation/scale (X/Y/Z inputs)
+3. **Material** — color picker, metallic/roughness (when the object has a material)
+4. **Canvas Settings** — layoutId selector, widthMeters/heightMeters/pixelsPerUnit (only for `type === 'canvas'`)
+5. **VRM** — `VrmFormatNotice`, `CharacterSection` (animation, blink, breathe, lookAtUser, and "Move as my body" = `character.embody`: hands, lip sync, hide from self, match height; warns when another VRM is embodied too), `VRMCapabilitiesPanel` (expressions/bones) (only for `type === 'vrm'`)
+6. **Camera** — `CameraSection` (`components/camera/`): fov, resolution presets 1920×1080 / 1280×720 / 1080×1920 or custom, fps, background colour, showSelf, showGizmo, how many images show it (only for `type === 'camera'`)
+7. `ObjectAnchorSection` (attach to an image anchor) and `ObjectExtensionsSection` (`SceneObject.ext.<id>`)
 
-### `UIElementInspector`
+### `UIInspector`
 
 Shows for the currently selected `UIElement`:
 - Type label + ID prefix
@@ -157,6 +180,9 @@ Shows for the currently selected `UIElement`:
 - Element-type tips (Slider, Gauge, Graph)
 - For `Keyboard`: the row layout lives in `content`, the typed text goes to `bind.key`, and pressing ⏎
   fires `<bindingId>:submit` (same contract as `Input`, which opens the device keyboard instead)
+- `MediaSourceSection` (Image only, β1.1.0): Picture / Camera (pick a camera object, mirror) / Stream (MJPEG url with
+  `{store:key}`, mirror) → `element.source`
+- `RevealSection` (text reveal animation)
 - Layout selector (Panel only)
 - Width/Height inputs
 - Background color + text color pickers
@@ -165,9 +191,31 @@ Shows for the currently selected `UIElement`:
 - Gap (Panel only)
 - Delete button
 
-### `DataSourceEditor` / `TransformEditor`
+`DataSourceEditor` / `TransformEditor` (type-specific DataFlow parameter inputs) are defined in the same file
+inside `DataFlowInspector`, which is exported but currently not rendered (see the DataFlow note above).
 
-Show type-specific parameter inputs matching the DataFlow IR fields. REST_Client shows URL+method, WebSocket_Stream shows URL, MQTT_Subscriber shows broker+topic. Transforms show expression field, clamp/remap/threshold/history parameters as applicable.
+---
+
+## Layout (Layster.Spatial — `src/renderer/spatial/`)
+
+`SpatialWorkspace.tsx` is a separate screen (doc/19-layster.md §4), state in `useSpatialStore` (doc/07). Panel sizes
+persist in electron-store `spatialLayout`. Strings live in `i18n/spatialStrings.ts`.
+
+```
+SpatialWorkspace.tsx
+├── TopBar                      (name, formatLayster version, save, undo/redo, build, close)
+├── Outline.tsx                 (left: things / minds / bodies / rules / scripts / recording / settings / test spaces)
+├── lab/SpaceLab.tsx            (centre: the test space in 3D + how each thing is placed — solver.ts via useSolve.ts;
+│                                SpaceStrip, ThingMeshes, EntityBoxes, UserRig, BodyWorkspaces)
+│   or inspector/ScriptInspector ScriptPane (when a script is selected)
+├── inspector/Inspector.tsx     (right: Thing / Mind / Body / Rule / Script / Recording / Settings / Spaces inspectors,
+│                                PlacementEditor, ActionEditor, VisualEditor)
+├── bottom/BottomPanel.tsx      (World table / Mind I/O ("try Mind" via spatial:try-mind) / Problems from validate.ts)
+└── SpatialBuildDialog.tsx      (device, output, dev build → spatial:build; progress and log arrive on the
+                                 same unity:build-progress / unity:build-log events; blocked while there are errors)
+```
+
+`NewSpatialForm.tsx` is the Spatial branch of `NewProjectDialog`; `openProject.ts` opens a folder as Virtual or Spatial.
 
 ---
 
@@ -175,11 +223,18 @@ Show type-specific parameter inputs matching the DataFlow IR fields. REST_Client
 
 | Dialog | Controlled by | Purpose |
 |--------|--------------|---------|
-| `NewProjectDialog` | `showNewProjectDialog` | Template + device picker, calls `projectStore.createProject` |
-| `BuildDialog` | `showBuildDialog` | Build config (output path, dev build toggle), progress bar, log viewer, calls `unity:build` |
-| `SettingsDialog` | `showSettingsDialog` | Unity path, SDK dir, recent projects |
-| `MCPDialog` | `showMCPDialog` | Start/stop MCP server, copy client config JSON |
+| `NewProjectDialog` | `showNewProjectDialog` | First picks Layster.Virtual or Layster.Spatial; Virtual: template + device picker → `projectStore.createProject`; Spatial: `NewSpatialForm` |
+| `BuildDialog` | `showBuildDialog` | Virtual build: device, output path, dev/clean build, progress bar, log viewer, `unity:build`, adb install (doc/04) |
+| `SettingsDialog` | `showSettingsDialog` | Unity path, SDK dir, output dir, license file, language, theme, models (Vision tab, Hugging Face token) … |
+| `PreviewDialog` | `showPreviewDialog` | UI preview with the DataStore context |
+| `MCPDialog` | `showMCPDialog` | Register/unregister Arsist in external agents' settings, self-test (doc/09) |
 | `SetupWizard` | `showSetupWizard` | First-run guide for Unity + SDK setup |
+| `IrUpgradeDialog` | `projectStore.showIrUpgrade` | Offer to upgrade an older Layster.Virtual project (read-only until accepted) |
+| `MissingRequirementsDialog` | `projectStore.missingRequirements` | Project needs an extension/device this editor lacks → import `.arsist` / folder |
+| `ErrorDialog` | `BuildDialog` | Shows a build error in full |
+
+Also mounted by `App.tsx`: `ai/AssistantPanel` (`showAssistant`), `ai/ExternalChangeBanner` (`projectStore.externalChange`),
+`PackageResultDialog` (`ai/packageActions`, `.arsist` project packages). `models/HuggingFaceDialog` is opened from the Models tab.
 
 ## 「幅 100%」と、親が並べる係のとき
 

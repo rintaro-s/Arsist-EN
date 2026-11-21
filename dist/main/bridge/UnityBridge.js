@@ -1,226 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.convertSceneToUnity = convertSceneToUnity;
-exports.convertUIToUnity = convertUIToUnity;
 exports.shippedModels = shippedModels;
 exports.referencedModels = referencedModels;
+exports.unityScenesData = unityScenesData;
+exports.unityUiData = unityUiData;
 exports.generateBuildManifest = generateBuildManifest;
 exports.generateUnityManifest = generateUnityManifest;
+const media_1 = require("../shared/media");
 const irVersion_1 = require("../shared/irVersion");
-/**
- * シーンデータをUnity用JSONに変換
- */
-function convertSceneToUnity(scene) {
-    return {
-        name: scene.name,
-        gameObjects: scene.objects.map(obj => convertObjectToUnity(obj)),
-    };
-}
-function convertObjectToUnity(obj) {
-    const components = [];
-    // Add mesh components for primitives
-    if (obj.type === 'primitive') {
-        components.push({
-            type: 'MeshFilter',
-            properties: {
-                mesh: getPrimitiveMeshName(obj.primitiveType),
-            },
-        });
-        components.push({
-            type: 'MeshRenderer',
-            properties: {
-                material: {
-                    shader: 'Universal Render Pipeline/Lit',
-                    color: hexToRgba(obj.material?.color || '#FFFFFF'),
-                    metallic: obj.material?.metallic || 0,
-                    smoothness: 1 - (obj.material?.roughness || 0.5),
-                },
-            },
-        });
-    }
-    // Add model loader component for GLB/GLTF models
-    if (obj.type === 'model' && obj.modelPath) {
-        components.push({
-            type: 'ArsistModelRuntimeLoader',
-            properties: {
-                modelPath: obj.modelPath,
-                destroyAfterLoad: true,
-            },
-        });
-        // **モデルの回転を適用するための補助コンポーネント**
-        // (modelLoaderが読み込み後、rotation を設定するため)
-        if (obj.transform.rotation.x !== 0 || obj.transform.rotation.y !== 0 || obj.transform.rotation.z !== 0) {
-            components.push({
-                type: 'ArsistModelRotationApplier',
-                properties: {
-                    targetRotation: {
-                        x: obj.transform.rotation.x,
-                        y: obj.transform.rotation.y,
-                        z: obj.transform.rotation.z,
-                    },
-                    applyDelay: 0.5, // モデル読み込み後に遅延適用
-                },
-            });
-        }
-    }
-    // Add light component
-    if (obj.type === 'light') {
-        components.push({
-            type: 'Light',
-            properties: {
-                type: 'Point',
-                color: hexToRgba(obj.material?.color || '#FFFFFF'),
-                intensity: 1,
-                range: 10,
-            },
-        });
-    }
-    // Add canvas settings for Canvas objects
-    if (obj.type === 'canvas' && obj.canvasSettings) {
-        components.push({
-            type: 'ArsistCanvasSurface',
-            properties: {
-                layoutId: obj.canvasSettings.layoutId,
-                widthMeters: obj.canvasSettings.widthMeters,
-                heightMeters: obj.canvasSettings.heightMeters,
-                pixelsPerUnit: obj.canvasSettings.pixelsPerUnit,
-            },
-        });
-    }
-    return {
-        name: obj.name,
-        transform: {
-            localPosition: obj.transform.position,
-            localRotation: obj.transform.rotation,
-            localScale: obj.transform.scale,
-        },
-        components,
-        children: obj.children?.map(child => convertObjectToUnity(child)),
-    };
-}
-function getPrimitiveMeshName(primitiveType) {
-    switch (primitiveType) {
-        case 'cube': return 'Cube';
-        case 'sphere': return 'Sphere';
-        case 'plane': return 'Plane';
-        case 'cylinder': return 'Cylinder';
-        case 'capsule': return 'Capsule';
-        default: return 'Cube';
-    }
-}
-function hexToRgba(hex) {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})?$/i.exec(hex);
-    return result ? {
-        r: parseInt(result[1], 16) / 255,
-        g: parseInt(result[2], 16) / 255,
-        b: parseInt(result[3], 16) / 255,
-        a: result[4] ? parseInt(result[4], 16) / 255 : 1,
-    } : { r: 1, g: 1, b: 1, a: 1 };
-}
-/**
- * UIレイアウトをUnity UI Toolkit/uGUI用に変換
- */
-function convertUIToUnity(layout) {
-    return {
-        name: layout.name,
-        root: convertUIElementToUnity(layout.root),
-    };
-}
-function convertUIElementToUnity(element) {
-    const result = {
-        name: `${element.type}_${element.id.substring(0, 8)}`,
-        type: element.type,
-        rectTransform: calculateRectTransform(element),
-        children: element.children?.map(child => convertUIElementToUnity(child)) || [],
-    };
-    // Layout Group
-    if (element.layout && element.layout !== 'Absolute') {
-        result.layoutGroup = {
-            type: element.layout === 'FlexRow' ? 'Horizontal' :
-                element.layout === 'FlexColumn' ? 'Vertical' : 'Grid',
-            spacing: element.style.gap || 0,
-            childAlignment: mapAlignment(element.style.justifyContent, element.style.alignItems),
-            padding: element.style.padding || { left: 0, right: 0, top: 0, bottom: 0 },
-        };
-    }
-    // Image component (for Panel, Button backgrounds)
-    if (element.type === 'Panel' || element.type === 'Button') {
-        result.image = {
-            color: hexToRgba(element.style.backgroundColor || '#00000000'),
-            raycastTarget: element.type === 'Button',
-        };
-        // Blur effect requires special material
-        if (element.style.blur) {
-            result.image.material = 'UIBlur';
-        }
-    }
-    // Text component
-    if (element.type === 'Text' || element.type === 'Button') {
-        result.text = {
-            text: element.content || '',
-            fontSize: element.style.fontSize || 16,
-            color: hexToRgba(element.style.color || '#FFFFFF'),
-            alignment: mapTextAlignment(element.style.textAlign),
-            fontStyle: element.style.fontWeight === 'bold' ? 'Bold' : 'Normal',
-        };
-    }
-    // Button component
-    if (element.type === 'Button') {
-        const baseColor = hexToRgba(element.style.backgroundColor || '#E94560');
-        result.button = {
-            targetGraphic: 'Image',
-            colors: {
-                normalColor: baseColor,
-                highlightedColor: { ...baseColor, a: baseColor.a * 0.8 },
-                pressedColor: { ...baseColor, a: baseColor.a * 0.6 },
-            },
-            onClick: '',
-        };
-    }
-    return result;
-}
-function calculateRectTransform(element) {
-    // Default center anchor
-    let anchorMin = { x: 0.5, y: 0.5 };
-    let anchorMax = { x: 0.5, y: 0.5 };
-    let pivot = { x: 0.5, y: 0.5 };
-    // Calculate based on position/alignment style
-    const pos = element.style.position;
-    if (pos === 'absolute') {
-        // Absolute positioned: anchor to top-left
-        anchorMin = { x: 0, y: 1 };
-        anchorMax = { x: 0, y: 1 };
-        pivot = { x: 0, y: 1 };
-    }
-    return {
-        anchorMin,
-        anchorMax,
-        pivot,
-        sizeDelta: {
-            x: typeof element.style.width === 'number' ? element.style.width : 100,
-            y: typeof element.style.height === 'number' ? element.style.height : 100,
-        },
-        anchoredPosition: {
-            x: element.style.left || 0,
-            y: -(element.style.top || 0), // Unity Y is inverted
-        },
-    };
-}
-function mapAlignment(justify, align) {
-    const v = align === 'flex-start' ? 'Upper' :
-        align === 'flex-end' ? 'Lower' : 'Middle';
-    const h = justify === 'flex-start' ? 'Left' :
-        justify === 'flex-end' ? 'Right' : 'Center';
-    return `${v}${h}`;
-}
-function mapTextAlignment(align) {
-    switch (align) {
-        case 'left': return 'Left';
-        case 'center': return 'Center';
-        case 'right': return 'Right';
-        default: return 'Center';
-    }
-}
+const version_1 = require("../shared/layster/version");
 /**
  * APK に入れるモデル。モデルはプロジェクトの資産 (IR v3) で、画像認識の `infer` op だけでなく
  * スクリプトの model.* からも名前で呼ばれる。スクリプトの参照は文字列なので静的には追えない。
@@ -270,8 +58,45 @@ function isTaskResolvable(task, targets) {
     return (target.regions ?? []).some((r) => r.id === source.regionId);
 }
 /**
- * プロジェクト全体をUnityマニフェストに変換
+ * Unity に渡すシーン (scenes.json / manifest.scenes)。IR のままの形で、名前も IR と同じ。
+ * 既定のある項目 (β1.1.0〜) は埋めて渡す: Unity 側が既定を持たなくてよいように。
+ *   - type 'camera' の物の camera → CAMERA_DEFAULTS で埋める (無くても作る)
+ *   - VRM の character.embody → EMBODY_DEFAULTS で埋める (embody が無ければ足さない = 今までどおり)
+ * 何度通しても同じ結果になる (ビルドの入口が複数あり、どこで通しても困らないように)。元の IR は書き換えない。
  */
+function unityScenesData(scenes) {
+    const mapObject = (obj) => {
+        if (!obj || typeof obj !== 'object')
+            return obj;
+        let out = obj;
+        if (obj.type === 'camera')
+            out = { ...out, camera: (0, media_1.cameraSettingsOf)(obj.camera) };
+        if (obj.type === 'vrm' && obj.character && typeof obj.character === 'object' && obj.character.embody) {
+            out = { ...out, character: { ...obj.character, embody: (0, media_1.embodySettingsOf)(obj.character.embody) } };
+        }
+        if (Array.isArray(obj.children) && obj.children.length)
+            out = { ...out, children: obj.children.map(mapObject) };
+        return out;
+    };
+    return (scenes ?? []).map((s) => (s && Array.isArray(s.objects) ? { ...s, objects: s.objects.map(mapObject) } : s));
+}
+/**
+ * Unity に渡す UI (ui_layouts.json)。Image の source は mirror を埋める (無ければ false)。
+ * 元の IR は書き換えない。何度通しても同じ。
+ */
+function unityUiData(layouts) {
+    const mapElement = (el) => {
+        if (!el || typeof el !== 'object')
+            return el;
+        let out = el;
+        if (el.source && typeof el.source === 'object')
+            out = { ...out, source: { ...el.source, mirror: el.source.mirror === true } };
+        if (Array.isArray(el.children) && el.children.length)
+            out = { ...out, children: el.children.map(mapElement) };
+        return out;
+    };
+    return (layouts ?? []).map((l) => (l && l.root ? { ...l, root: mapElement(l.root) } : l));
+}
 /**
  * ビルドに渡すマニフェスト。
  *
@@ -294,7 +119,7 @@ function generateBuildManifest(project, overrides = {}) {
         buildSettings: project.buildSettings,
         remoteInput,
         designSystem: project.designSystem,
-        scenes: project.scenes,
+        scenes: unityScenesData(project.scenes),
         // 有効にした拡張機能とその設定 (IR のまま)。どれが実際にビルドに入るかは、端末のタグと
         // sdk/ の中身を見て UnityBuilder.planExtensions が決め、manifest.json の extensions に書く。
         projectExtensions: project.extensions ?? {},
@@ -351,6 +176,9 @@ function generateUnityManifest(project) {
         scriptBundle,
         // IR の版。Unity 側は読むだけだが、ログに残ると「どの版のエディタで作った APK か」が追える。
         irVersion: project.irVersion ?? irVersion_1.CURRENT_IR_VERSION,
+        // 形式の名前 (Layster.Virtual β 1.0.0 …)。ビルドのログと実機のログに出る。
+        // Spatial から作った内部用のプロジェクトは自分の見出し (profile: 'spatial') を持って来るので、それを優先する
+        layster: project.layster ?? (0, version_1.virtualHeaderFor)(project.irVersion ?? irVersion_1.CURRENT_IR_VERSION),
         // 学習済みモデル。パイプラインの `infer` op が参照しているものだけを出す。
         // 使っていないモデルまで APK に入れると、数十 MB 単位で膨らむ。
         models: shippedModels(project),

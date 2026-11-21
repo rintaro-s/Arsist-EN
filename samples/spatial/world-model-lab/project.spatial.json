@@ -1,0 +1,88 @@
+{
+  "layster": { "profile": "spatial", "stage": "beta", "version": "1.0.0" },
+  "id": "1f7d9a20-3c4b-4e0a-8f55-2a9b7c6d0e02",
+  "name": "World Model Lab",
+  "version": "1.0.0",
+  "createdAt": "2026-10-21T00:00:00.000Z",
+  "updatedAt": "2026-10-21T00:00:00.000Z",
+  "targetDevice": "Meta_Quest",
+  "app": { "packageName": "com.layster.worldmodellab", "versionCode": 1, "minSdkVersion": 32, "targetSdkVersion": 34, "edge": "192.168.0.23:8765" },
+  "presentation": { "reality": "passthrough", "assumedEyeHeight": 1.5 },
+  "interaction": { "controllers": true, "hands": true, "gazeDwellSeconds": 0 },
+  "things": [
+    {
+      "id": "console",
+      "name": "操作パネル",
+      "visual": {
+        "kind": "panel", "size": [0.42, 0.26], "background": "#14161CE6", "padding": 20,
+        "items": [
+          { "type": "text", "id": "title", "text": "World Model Lab", "size": 36, "color": "#4EC9B0", "align": "center" },
+          { "type": "text", "id": "status", "text": "", "size": 26, "color": "#DDDDDD", "align": "center", "bind": "lab.status" },
+          { "type": "row", "gap": 14, "items": [
+            { "type": "button", "id": "predict", "text": "予測する", "size": 28 },
+            { "type": "button", "id": "record", "text": "記録", "size": 28 },
+            { "type": "button", "id": "clear", "text": "消す", "size": 28 }
+          ] }
+        ]
+      },
+      "place": {
+        "on": { "has": ["support"] }, "distance": [0.3, 1.5], "height": [0.4, 1.3], "facing": "user", "prefer": "closest",
+        "fallback": [ { "near": { "user": "head" }, "around": [0.7, 0.9], "visible": true, "facing": "user" } ]
+      }
+    },
+    {
+      "id": "status-hud",
+      "name": "状態",
+      "visual": { "kind": "panel", "size": [0.5, 0.07], "background": "#00000080", "padding": 8,
+        "items": [ { "type": "text", "id": "line", "text": "", "size": 26, "color": "#FFFFFF", "align": "center", "bind": "say.text" } ] },
+      "place": { "mode": "head", "at": { "frame": "head", "at": [0, -0.32, 1.5] } }
+    }
+  ],
+  "minds": [
+    {
+      "id": "predictor",
+      "name": "World Model (PC)",
+      "role": "predict",
+      "where": "edge",
+      "protocol": "layster",
+      "endpoint": "http://{edge}/mind",
+      "instructions": "Predict hidden or moved objects from the history of observations. Return beliefs with honest confidence.",
+      "observe": { "frame": "world", "world": { "within": 5, "max": 60, "minConfidence": 0.1 }, "things": false, "user": ["head", "hands", "gaze"], "camera": { "width": 384, "quality": 70 }, "events": 20 },
+      "output": { "actions": ["highlight", "say", "set"], "beliefs": true },
+      "run": { "on": "interval", "everyMs": 1000, "minGapMs": 500, "timeoutMs": 4000 },
+      "onFail": { "say": "World Model に届きません (PC の mind_server.py を確かめてください)" }
+    }
+  ],
+  "bodies": [],
+  "rules": [
+    { "id": "start", "when": { "start": true }, "do": [ { "do": "set", "key": "lab.status", "value": "PC の World Model を待っています" } ] },
+    { "id": "predict-now", "when": { "select": "console.predict" }, "do": [ { "do": "ask", "mind": "predictor" } ], "cooldownMs": 1000 },
+    { "id": "answered", "when": { "mind": "predictor" }, "do": [ { "do": "set", "key": "lab.status", "value": "予測を受け取りました" } ], "cooldownMs": 5000 },
+    { "id": "cup-seen", "when": { "seen": { "is": ["cup"], "minConfidence": 0.5 } }, "do": [
+      { "do": "highlight", "target": { "entity": { "is": ["cup"] } }, "label": "cup", "color": "#4EC9B0", "seconds": 3 }
+    ], "cooldownMs": 8000 },
+    { "id": "record", "when": { "select": "console.record" }, "do": [ { "do": "emit", "event": "lab.toggleRecording" } ] },
+    { "id": "clear", "when": { "select": "console.clear" }, "do": [ { "do": "emit", "event": "lab.clearBeliefs" } ] }
+  ],
+  "scripts": [
+    {
+      "id": "lab",
+      "name": "記録と推測の片付け",
+      "trigger": { "type": "onStart" },
+      "enabled": true,
+      "code": "// 記録の入り切りと、Mind の推測 (belief) を消すボタン。\nworld.on('lab.toggleRecording', function () {\n  if (world.record.active()) { world.record.stop(); store.set('lab.status', '記録を止めました'); }\n  else { world.record.start(); store.set('lab.status', '記録しています'); }\n});\nworld.on('lab.clearBeliefs', function () {\n  var n = 0;\n  world.entities().forEach(function (e) { if (String(e.source).indexOf('mind:') === 0) { world.forget(e.id); n++; } });\n  store.set('lab.status', '推測を ' + n + ' 個消しました');\n});\n"
+    }
+  ],
+  "memory": { "persist": [] },
+  "recording": {
+    "enabled": true,
+    "streams": ["pose", "hands", "world", "events", "actions", "minds", "camera"],
+    "hz": 10,
+    "camera": { "width": 320, "everyMs": 1000 },
+    "maxMinutes": 20,
+    "consent": { "text": "World Model の学習用に、この体験を記録します: 頭と手の位置、部屋の形、見つけた物、操作、AI の判断、1 秒に 1 枚の小さなカメラの画。記録は端末の中に残り、送るときは別に確かめます。よろしいですか？" }
+  },
+  "spaces": { "use": ["desk-front", "studio", "living", "open-floor", "no-scan"] },
+  "models": [],
+  "extensions": { "quest-room": { "enabled": true, "dataVersion": 1, "settings": {} } }
+}

@@ -38,6 +38,12 @@ namespace Arsist.Builder
         private static Material _defaultTmpMaterial;
 
         /// <summary>
+        /// シミュレーター (Editor/Simulation/ArsistSimBuild、doc/22-simulation.md) のとき、APK の代わりに作る Linux の
+        /// プレイヤーの場所。null なら普通のビルド。シーンの作り方は同じで、違うのは端末向けの検証と最後の BuildPlayer だけ。
+        /// </summary>
+        internal static string SimulationPlayerPath;
+
+        /// <summary>
         /// CLI経由でビルドを実行（Arsistエンジンから呼び出される）
         /// </summary>
         public static void BuildFromCLI()
@@ -59,6 +65,8 @@ namespace Arsist.Builder
 
             // ランタイムでも参照できるよう Resources にコピー
             EnsureRuntimeManifestResource(_manifest);
+            // Layster.Spatial: spatial.json も Resources へ (無ければ前のビルドの写しを消す)
+            EnsureSpatialResource();
 
             try
             {
@@ -66,6 +74,9 @@ namespace Arsist.Builder
                 Debug.Log("[Arsist] Phase 1: Generating scenes...");
                 EnsureUILayerExists();
                 EnsureHudLayerExists();
+                // 自分の体 (頭のカメラに写さない) と仮想カメラの形 (仮想カメラに写さない)。doc/23。番号は Runtime/Media/ArsistMediaLayers
+                EnsureLayerExists(Arsist.Runtime.Media.ArsistMediaLayers.SelfHiddenName, Arsist.Runtime.Media.ArsistMediaLayers.SelfHiddenFallback);
+                EnsureLayerExists(Arsist.Runtime.Media.ArsistMediaLayers.GizmoName, Arsist.Runtime.Media.ArsistMediaLayers.GizmoFallback);
                 // 折り返しの規則は UI を作る前に置く。TMP は文字を並べる時点でこの表を読むので、
                 // 後から用意しても間に合わない (未設定だとここでビルドが止まる)。
                 EnsureTmpLineBreakingRules();
@@ -105,7 +116,8 @@ namespace Arsist.Builder
 
                 // Phase 3.2: ビルド前検証（ここで落とすことで“成功したけど動かない”を避ける）
                 Debug.Log("[Arsist] Phase 3.2: Validating build readiness...");
-                ValidateBuildReadiness(_targetDevice);
+                // シミュレーターには端末の SDK が無いので、端末向けの検証はしない
+                if (SimulationPlayerPath == null) ValidateBuildReadiness(_targetDevice);
 
                 // Phase 3.3: glTFast に必要なシェーダーを確実にビルドに含める
                 Debug.Log("[Arsist] Phase 3.3: Ensuring required shaders...");
@@ -128,7 +140,8 @@ namespace Arsist.Builder
 
                 // Phase 4: ビルド実行
                 Debug.Log("[Arsist] Phase 4: Building APK...");
-                ExecuteBuild(_manifest);
+                if (SimulationPlayerPath != null) Arsist.Builder.Simulation.ArsistSimBuild.BuildPlayer(SimulationPlayerPath);
+                else ExecuteBuild(_manifest);
 
                 Debug.Log("[Arsist] Build completed successfully!");
                 EditorApplication.Exit(0);
@@ -693,6 +706,7 @@ namespace Arsist.Builder
                     foreach (JObject obj in objects)
                     {
                         var go = CreateGameObject(obj);
+                        TagSpatialThing(go, obj);
                         if (go != null && contentParent != null)
                         {
                             // 親に配置（worldPositionStays = false でローカル座標を保持）
@@ -779,6 +793,12 @@ namespace Arsist.Builder
                     _ => PrimitiveType.Cube
                 };
                 go = GameObject.CreatePrimitive(pType);
+            }
+            // 仮想カメラ (Layster.Virtual β1.1.0、doc/23)。Camera と RenderTexture は実行時に ArsistVirtualCamera が作る
+            else if (type == "camera")
+            {
+                go = new GameObject(name);
+                ConfigureVirtualCamera(go, objData, assetId);
             }
             else if (type == "light")
             {
@@ -926,6 +946,28 @@ namespace Arsist.Builder
             ApplyImageAnchor(go, objData, name);
 
             return go;
+        }
+
+        /// <summary>IR の camera (UnityBridge が CAMERA_DEFAULTS で埋めてある) を ArsistVirtualCamera に入れる。</summary>
+        private static void ConfigureVirtualCamera(GameObject go, JObject objData, string assetId)
+        {
+            var cam = go.AddComponent<Arsist.Runtime.Media.ArsistVirtualCamera>();
+            var c = objData["camera"] as JObject ?? new JObject();
+            cam.objectId = objData["id"]?.ToString() ?? go.name;
+            cam.assetId = assetId ?? "";
+            cam.fov = c["fov"]?.Value<float>() ?? 50f;
+            if (c["resolution"] is JArray res && res.Count >= 2)
+            {
+                cam.width = Mathf.Clamp(res[0].Value<int>(), 16, 4096);
+                cam.height = Mathf.Clamp(res[1].Value<int>(), 16, 4096);
+            }
+            cam.fps = c["fps"]?.Value<float>() ?? 30f;
+            cam.backgroundColor = TryParseColor(c["backgroundColor"], out var bg) ? bg : new Color(0.118f, 0.141f, 0.188f, 1f);
+            cam.near = c["near"]?.Value<float>() ?? 0.05f;
+            cam.far = c["far"]?.Value<float>() ?? 100f;
+            cam.showSelf = c["showSelf"]?.Type != JTokenType.Boolean || c["showSelf"].Value<bool>();
+            cam.showGizmo = c["showGizmo"]?.Type != JTokenType.Boolean || c["showGizmo"].Value<bool>();
+            Debug.Log($"[Arsist] Virtual camera '{go.name}' (id {cam.objectId}, asset {cam.assetId}): {cam.width}x{cam.height} @ {cam.fps} fps, fov {cam.fov}, showSelf={cam.showSelf}, gizmo={cam.showGizmo}");
         }
 
         /// <summary>
@@ -2028,6 +2070,9 @@ namespace Arsist.Builder
             var controllerFull = Path.Combine(Application.dataPath, "..", CharacterControllerPath);
             if (File.Exists(indexFull) && File.Exists(controllerFull) && File.ReadAllText(indexFull) == indexText)
             {
+                // 前のビルドのコントローラーが IK Pass 無しで作られていれば、それだけ直す
+                var existing = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(CharacterControllerPath);
+                if (existing != null) EnableIkPass(existing);
                 Debug.Log($"[Arsist] Character animations unchanged ({entries.Count}): {string.Join(", ", entries.Select(e => e.Key))}");
                 return;
             }
@@ -2044,12 +2089,27 @@ namespace Arsist.Builder
                 state.motion = entry.Value;
                 state.writeDefaultValues = true;
             }
+            EnableIkPass(controller);
             EditorUtility.SetDirty(controller);
 
             File.WriteAllText(indexFull, indexText);
             AssetDatabase.SaveAssets();
             AssetDatabase.ImportAsset(CharacterIndexPath, ImportAssetOptions.ForceSynchronousImport);
             Debug.Log($"[Arsist] Character animations ({entries.Count}) → {CharacterControllerPath}: {string.Join(", ", entries.Select(e => e.Key))}");
+        }
+
+        /// <summary>
+        /// 層の IK Pass を入れる (OnAnimatorIK が呼ばれるように。拡張機能やスクリプトが手足を動かすため)。
+        /// エンジンの自分の体 (ArsistEmbodiment) は Animator に頼らず自前で解くので、無くても動く。
+        /// </summary>
+        private static void EnableIkPass(UnityEditor.Animations.AnimatorController controller)
+        {
+            var layers = controller.layers;
+            if (layers.Length == 0 || layers[0].iKPass) return;
+            layers[0].iKPass = true;
+            controller.layers = layers;
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssets();
         }
 
         /// <summary>
@@ -3020,6 +3080,78 @@ namespace Arsist.Builder
             }
         }
 
+        // ---- Layster.Spatial (doc/19-layster.md §4.1、doc/20-spatial-runtime.md) ----
+
+        private static string SpatialJsonPath => Path.Combine(Application.dataPath, "ArsistGenerated", "spatial.json");
+        private static string SpatialResourcePath => Path.Combine(Application.dataPath, "Resources", Arsist.Runtime.Spatial.ArsistSpatialHooks.ResourceName + ".json");
+        private static HashSet<string> _spatialObjectIds;
+        private static bool _spatialIdsRead;
+
+        /// <summary>spatial.json の things[].object (シーンの物の id)。spatial.json が無ければ null (Virtual のビルド)。</summary>
+        private static HashSet<string> SpatialSpecIds()
+        {
+            if (_spatialIdsRead) return _spatialObjectIds;
+            _spatialIdsRead = true;
+            if (!File.Exists(SpatialJsonPath)) return null;
+            try
+            {
+                var spec = JObject.Parse(File.ReadAllText(SpatialJsonPath));
+                _spatialObjectIds = new HashSet<string>();
+                foreach (var t in spec["things"] as JArray ?? new JArray())
+                {
+                    var id = t["object"]?.ToString() ?? t["id"]?.ToString();
+                    if (!string.IsNullOrEmpty(id)) _spatialObjectIds.Add(id);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Arsist] spatial.json could not be read: {e.Message}");
+                _spatialObjectIds = new HashSet<string>();
+            }
+            return _spatialObjectIds;
+        }
+
+        /// <summary>
+        /// spatial.json を Resources/ArsistSpatial.json に写す (実機は ArsistSpatialHooks がこれを読む)。
+        /// 作業用の Unity プロジェクトはビルドの間で使い回すので、Spatial でないビルドでは前の写しを必ず消す
+        /// (残すと Virtual のアプリに空間のランタイムが紛れ込む)。
+        /// </summary>
+        private static void EnsureSpatialResource()
+        {
+            try
+            {
+                if (File.Exists(SpatialJsonPath))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(SpatialResourcePath));
+                    File.WriteAllText(SpatialResourcePath, File.ReadAllText(SpatialJsonPath));
+                    Debug.Log($"[Arsist] Layster.Spatial: spatial.json → Resources/{Arsist.Runtime.Spatial.ArsistSpatialHooks.ResourceName}.json");
+                }
+                else if (File.Exists(SpatialResourcePath))
+                {
+                    File.Delete(SpatialResourcePath);
+                    if (File.Exists(SpatialResourcePath + ".meta")) File.Delete(SpatialResourcePath + ".meta");
+                    Debug.Log("[Arsist] removed a stale Resources/ArsistSpatial.json from an earlier Spatial build");
+                }
+                AssetDatabase.Refresh();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Arsist] Layster.Spatial resource failed: {e.Message}");
+            }
+        }
+
+        /// <summary>spatial.json の物に当たるシーンの物に ArsistSpatialThing を付ける (ランタイムはこれで物を見つける)。</summary>
+        private static void TagSpatialThing(GameObject go, JObject objData)
+        {
+            var ids = SpatialSpecIds();
+            if (ids == null || go == null) return;
+            var id = objData["id"]?.ToString();
+            if (string.IsNullOrEmpty(id) || !ids.Contains(id)) return;
+            var tag = go.GetComponent<Arsist.Runtime.Spatial.ArsistSpatialThing>();
+            if (tag == null) tag = go.AddComponent<Arsist.Runtime.Spatial.ArsistSpatialThing>();
+            tag.thingId = id;
+        }
+
         private static void EnsureRemoteInputInScene(JObject manifest)
         {
             try
@@ -3866,6 +3998,16 @@ ScriptedImporter:
             // リモート制御有効時はスクリプト機能OFFでもランタイムを生成する。
             scriptingEnabled = scriptingEnabled || remoteControlEnabled;
 
+            // Layster.Spatial: 空間のランタイムを 1 つ置く。スクリプトの world・パネルのボタン・store の保存は
+            // スクリプトエンジンの上で動くので、スクリプトが無くてもエンジンは置く。
+            if (SpatialSpecIds() != null)
+            {
+                scriptingEnabled = true;
+                var spatialGO = new GameObject("[LaysterSpatial]");
+                spatialGO.AddComponent<Arsist.Runtime.Spatial.ArsistSpatialRuntime>();
+                Debug.Log("[Arsist] Layster.Spatial runtime attached (spatial.json present).");
+            }
+
             if (scriptingEnabled)
             {
                 var scriptEngineGO = new GameObject("[ArsistScriptEngine]");
@@ -3962,15 +4104,16 @@ ScriptedImporter:
         /// </summary>
         private static void CopyVRMFilesToStreamingAssets(JArray scenes)
         {
-            if (scenes == null || scenes.Count == 0) return;
-
             var vrmDir = Path.Combine(Application.dataPath, "StreamingAssets", "VRM");
             Directory.CreateDirectory(vrmDir);
 
             var vrmFiles = new HashSet<string>();
+            // 今回写したファイル名。作業用の Unity プロジェクトは使い回すので、前のビルドの VRM
+            // (別のプロジェクトのものも) が残ったまま APK に入っていた (16 MB 余計に入った例がある)
+            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             // シーンのすべてのオブジェクトから VRM ファイルを収集
-            foreach (var scene in scenes)
+            foreach (var scene in scenes ?? new JArray())
             {
                 var sceneObj = scene as JObject;
                 if (sceneObj == null) continue;
@@ -4056,6 +4199,7 @@ ScriptedImporter:
                     var destPath = Path.Combine(vrmDir, fileName);
 
                     File.Copy(foundPath, destPath, overwrite: true);
+                    keep.Add(fileName);
                     copiedCount++;
                     Debug.Log($"[Arsist] ✅ VRM file copied to StreamingAssets/VRM/: {fileName} (src={foundPath})");
                 }
@@ -4065,7 +4209,26 @@ ScriptedImporter:
                 }
             }
 
-            if (vrmFiles.Count > 0)
+            var removed = 0;
+            foreach (var file in Directory.GetFiles(vrmDir))
+            {
+                var name = Path.GetFileName(file);
+                if (name.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
+                if (keep.Contains(name)) continue;
+                try
+                {
+                    File.Delete(file);
+                    if (File.Exists(file + ".meta")) File.Delete(file + ".meta");
+                    removed++;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[Arsist] Could not remove a stale VRM copy {name}: {e.Message}");
+                }
+            }
+            if (removed > 0) Debug.Log($"[Arsist] Removed {removed} VRM file(s) left in StreamingAssets/VRM by an earlier build");
+
+            if (vrmFiles.Count > 0 || removed > 0)
             {
                 AssetDatabase.Refresh();
                 Debug.Log($"[Arsist] ✅ {copiedCount}/{vrmFiles.Count} VRM file(s) copied to StreamingAssets");
@@ -4674,6 +4837,17 @@ ScriptedImporter:
                         {
                             Debug.LogWarning($"[Arsist] Sprite not found for Image: {unityAssetPath}");
                         }
+                    }
+                    // 映すもの (カメラの映像・配信。doc/23)。子の RawImage に映す。元の画像が無ければ要素は透明
+                    if (elementData["source"] is JObject mediaSource && mediaSource.HasValues)
+                    {
+                        if (uiImage.sprite == null) uiImage.color = Color.clear;
+                        uiImage.raycastTarget = false;
+                        var media = go.AddComponent<Arsist.Runtime.Media.ArsistMediaImage>();
+                        var mediaRegistry = go.GetComponent<UiBindingRegistry>();
+                        media.bindingId = mediaRegistry != null && !string.IsNullOrEmpty(mediaRegistry.bindingId) ? mediaRegistry.bindingId : elementId;
+                        media.sourceJson = mediaSource.ToString(Formatting.None);
+                        Debug.Log($"[Arsist] Image '{elementId}' shows {media.sourceJson}");
                     }
                     break;
 

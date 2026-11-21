@@ -9,12 +9,29 @@
  * ユーザーが扱うのは「UI定義」と「データ定義」のみ。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CHARACTER_DEFAULTS = void 0;
+exports.CHARACTER_DEFAULTS = exports.EMBODY_DEFAULTS = exports.CAMERA_DEFAULTS = void 0;
 exports.isImageModel = isImageModel;
 exports.isPersistedKey = isPersistedKey;
 function isImageModel(model) {
     return !!model && model.use === 'image' && !!model.task && !!model.input && !!model.output;
 }
+exports.CAMERA_DEFAULTS = {
+    fov: 50,
+    resolution: [1920, 1080],
+    fps: 30,
+    backgroundColor: '#1e2430',
+    near: 0.05,
+    far: 100,
+    showSelf: true,
+    showGizmo: true,
+};
+exports.EMBODY_DEFAULTS = {
+    enabled: true,
+    hands: 'auto',
+    lipSync: true,
+    hideFromSelf: true,
+    matchHeight: true,
+};
 /** エディタで新しく置いた VRM の既定。 */
 exports.CHARACTER_DEFAULTS = {
     blink: true,

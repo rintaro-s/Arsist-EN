@@ -1,85 +1,61 @@
 /**
  * Arsist Engine - Adapter Manager
- * SDKアダプター（パッチシステム）の管理
- * 新しいデバイスへの対応を追加するための拡張可能な設計
+ * 端末アダプタ (Adapters/<name>/adapter.json と、拡張機能が足した Extensions/<id>/Adapters/<name>/) を読む。
+ *
+ * 場所の解決は adapterDirs.ts だけが行う。ビルドへの適用 (パッチ・マニフェスト・パッケージ) は
+ * UnityBuilder と ArsistBuildPipeline の仕事で、ここは読むだけ (エディタの端末の選択肢・FOV・タグ用)。
+ * 以前あった applyPatch / registerAdapter / createAdapterTemplate は古い adapter.json の形
+ * (patchFiles / buildSettings) を前提にしていて、どこからも呼ばれていなかったので消した。
+ * 新しい端末は `npm run ext:new -- <id> --device <Name>` で拡張機能として足す (doc/05, doc/17)。
  */
 import * as path from 'path';
 import * as fs from 'fs-extra';
-import { listAdapterLocations, resolveAdapter } from './adapterDirs';
+import { findBuiltinAdaptersDir, listAdapterLocations, resolveAdapter } from './adapterDirs';
 
 /** アダプターがどこから来たか */
 export interface AdapterOrigin {
+  /** フォルダ名 = targetDevice */
   folder: string;
   source: 'builtin' | 'extension';
   extensionId?: string;
 }
 
+/**
+ * adapter.json の主な項目 (doc/05)。読むのはエディタの表示とタグ (src/shared/adapterTags.ts) だけなので、
+ * 知らない項目もそのまま通す。
+ */
 export interface DeviceAdapter {
   id: string;
   name: string;
-  manufacturer: string;
-  description: string;
-  sdkVersion: string;
-  unityVersion: string;
-  features: AdapterFeatures;
-  buildSettings: AdapterBuildSettings;
-  patchFiles: PatchFileInfo[];
-}
-
-export interface AdapterFeatures {
-  tracking6DoF: boolean;
-  tracking3DoF: boolean;
-  handTracking: boolean;
-  planeDetection: boolean;
-  imageTracking: boolean;
-  passthrough: boolean;
-  spatialAudio: boolean;
-}
-
-export interface AdapterBuildSettings {
-  minSdkVersion: number;
-  targetSdkVersion: number;
-  targetArchitecture: 'ARM64' | 'ARMv7' | 'x86_64';
-  graphicsAPI: 'OpenGLES3' | 'Vulkan';
-  orientation: 'Landscape' | 'Portrait' | 'Auto';
-  xrLoaderName: string;
-  requiredPackages: string[];
-}
-
-export interface PatchFileInfo {
-  type: 'manifest' | 'script' | 'package' | 'prefab' | 'config';
-  sourcePath: string;
-  destinationPath: string;
-  description: string;
+  version?: string;
+  description?: string;
+  tags?: string[];
+  device?: { manufacturer?: string; models?: string[]; displayName?: string; category?: string };
+  display?: Record<string, unknown>;
+  capabilities?: Record<string, boolean>;
+  input?: Record<string, unknown>;
+  sdk?: Record<string, unknown>;
+  build?: Record<string, unknown>;
+  manifest?: Record<string, unknown>;
+  patches?: unknown[];
+  [key: string]: unknown;
 }
 
 export class AdapterManager {
-  private adaptersDir: string;
-  private adaptersCache: Map<string, DeviceAdapter> = new Map();
+  private readonly adaptersDir: string | null;
 
   constructor() {
-    this.adaptersDir = AdapterManager.resolveAdaptersDir();
+    this.adaptersDir = findBuiltinAdaptersDir();
   }
 
-  private static resolveAdaptersDir(): string {
-    const candidates: string[] = [];
-    // 1) Packaged app: electron-builder copies Adapters/ into resources/
-    if (process.resourcesPath) {
-      candidates.push(path.join(process.resourcesPath, 'Adapters'));
+  private async read(loc: { dir: string; name: string; source: 'builtin' | 'extension'; extensionId?: string }): Promise<(DeviceAdapter & AdapterOrigin) | null> {
+    try {
+      const raw = await fs.readJSON(path.join(loc.dir, 'adapter.json'));
+      return { ...raw, folder: loc.name, source: loc.source, extensionId: loc.extensionId };
+    } catch (error) {
+      console.error(`Failed to read ${loc.dir}/adapter.json:`, error);
+      return null;
     }
-    // 2) Dev / source tree
-    candidates.push(path.join(process.cwd(), 'Adapters'));
-    // 3) Relative from __dirname (dist/main/main -> ../../../)
-    candidates.push(path.join(__dirname, '../../..', 'Adapters'));
-    candidates.push(path.join(__dirname, '../../../..', 'Adapters'));
-
-    for (const p of candidates) {
-      try {
-        if (fs.pathExistsSync(p)) return p;
-      } catch { /* ignore */ }
-    }
-    // fallback to first candidate even if not yet present
-    return candidates[0] ?? path.join(__dirname, '../../..', 'Adapters');
   }
 
   /**
@@ -90,12 +66,8 @@ export class AdapterManager {
     try {
       const adapters: Array<DeviceAdapter & AdapterOrigin> = [];
       for (const loc of await listAdapterLocations(this.adaptersDir)) {
-        try {
-          const raw = await fs.readJSON(path.join(loc.dir, 'adapter.json'));
-          adapters.push({ ...raw, folder: loc.name, source: loc.source, extensionId: loc.extensionId });
-        } catch (error) {
-          console.error(`Failed to read ${loc.dir}/adapter.json:`, error);
-        }
+        const a = await this.read(loc);
+        if (a) adapters.push(a);
       }
       return adapters;
     } catch (error) {
@@ -110,279 +82,6 @@ export class AdapterManager {
    */
   async getAdapter(adapterId: string): Promise<(DeviceAdapter & AdapterOrigin) | null> {
     const loc = await resolveAdapter(adapterId, this.adaptersDir);
-    if (!loc) return null;
-    try {
-      const raw = await fs.readJSON(path.join(loc.dir, 'adapter.json'));
-      return { ...raw, folder: loc.name, source: loc.source, extensionId: loc.extensionId };
-    } catch (error) {
-      console.error(`Failed to load adapter ${adapterId}:`, error);
-      return null;
-    }
-  }
-
-  /**
-   * 新しいアダプターを登録
-   */
-  async registerAdapter(adapter: DeviceAdapter): Promise<{ success: boolean; error?: string }> {
-    try {
-      const adapterDir = path.join(this.adaptersDir, adapter.id);
-      await fs.ensureDir(adapterDir);
-      await fs.ensureDir(path.join(adapterDir, 'Manifest'));
-      await fs.ensureDir(path.join(adapterDir, 'Scripts'));
-      await fs.ensureDir(path.join(adapterDir, 'Packages'));
-      await fs.ensureDir(path.join(adapterDir, 'Prefabs'));
-
-      // アダプター設定ファイルを保存
-      await fs.writeJSON(
-        path.join(adapterDir, 'adapter.json'),
-        adapter,
-        { spaces: 2 }
-      );
-
-      this.adaptersCache.set(adapter.id, adapter);
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: (error as Error).message };
-    }
-  }
-
-  /**
-   * アダプターのパッチをUnityプロジェクトに適用
-   */
-  async applyPatch(adapterId: string, unityProjectPath: string): Promise<{ success: boolean; appliedPatches: string[]; error?: string }> {
-    const adapter = await this.getAdapter(adapterId);
-    if (!adapter) {
-      return { success: false, appliedPatches: [], error: `Adapter '${adapterId}' not found` };
-    }
-
-    const appliedPatches: string[] = [];
-    const adapterDir = path.join(this.adaptersDir, adapterId);
-
-    try {
-      for (const patch of adapter.patchFiles) {
-        const sourcePath = path.join(adapterDir, patch.sourcePath);
-        const destPath = path.join(unityProjectPath, patch.destinationPath);
-
-        if (await fs.pathExists(sourcePath)) {
-          await fs.ensureDir(path.dirname(destPath));
-          await fs.copy(sourcePath, destPath, { overwrite: true });
-          appliedPatches.push(patch.description);
-        }
-      }
-
-      // ProjectSettings の更新
-      await this.updateProjectSettings(adapter, unityProjectPath);
-
-      // manifest.json (Package Manager) の更新
-      await this.updatePackageManifest(adapter, unityProjectPath);
-
-      return { success: true, appliedPatches };
-    } catch (error) {
-      return { success: false, appliedPatches, error: (error as Error).message };
-    }
-  }
-
-  /**
-   * アダプターテンプレートを生成（新規デバイス対応時用）
-   */
-  async createAdapterTemplate(deviceName: string, manufacturer: string): Promise<{ success: boolean; path?: string; error?: string }> {
-    const adapterId = deviceName.replace(/\s+/g, '_');
-    const adapterDir = path.join(this.adaptersDir, adapterId);
-
-    try {
-      // 既存チェック
-      if (await fs.pathExists(adapterDir)) {
-        return { success: false, error: 'Adapter already exists' };
-      }
-
-      // ディレクトリ構造作成
-      await fs.ensureDir(path.join(adapterDir, 'Manifest'));
-      await fs.ensureDir(path.join(adapterDir, 'Scripts'));
-      await fs.ensureDir(path.join(adapterDir, 'Packages'));
-      await fs.ensureDir(path.join(adapterDir, 'Prefabs'));
-
-      // テンプレートアダプター設定
-      const templateAdapter: DeviceAdapter = {
-        id: adapterId,
-        name: deviceName,
-        manufacturer: manufacturer,
-        description: `${deviceName} adapter for Arsist Engine`,
-        sdkVersion: '1.0.0',
-        unityVersion: '2022.3.20f1',
-        features: {
-          tracking6DoF: true,
-          tracking3DoF: true,
-          handTracking: false,
-          planeDetection: false,
-          imageTracking: false,
-          passthrough: true,
-          spatialAudio: false,
-        },
-        buildSettings: {
-          minSdkVersion: 29,
-          targetSdkVersion: 34,
-          targetArchitecture: 'ARM64',
-          graphicsAPI: 'OpenGLES3',
-          orientation: 'Landscape',
-          xrLoaderName: 'YourXRLoader',
-          requiredPackages: [
-            'com.unity.xr.arfoundation',
-            'com.unity.xr.openxr',
-          ],
-        },
-        patchFiles: [
-          {
-            type: 'manifest',
-            sourcePath: 'Manifest/AndroidManifest.xml',
-            destinationPath: 'Assets/Plugins/Android/AndroidManifest.xml',
-            description: 'Android Manifest with device permissions',
-          },
-          {
-            type: 'script',
-            sourcePath: 'Scripts/DeviceBuildPatcher.cs',
-            destinationPath: 'Assets/Arsist/Editor/DeviceBuildPatcher.cs',
-            description: 'Build pre-processor script',
-          },
-        ],
-      };
-
-      await fs.writeJSON(
-        path.join(adapterDir, 'adapter.json'),
-        templateAdapter,
-        { spaces: 2 }
-      );
-
-      // テンプレートファイル作成
-      await this.createTemplateFiles(adapterDir, deviceName);
-
-      return { success: true, path: adapterDir };
-    } catch (error) {
-      return { success: false, error: (error as Error).message };
-    }
-  }
-
-  // ========================================
-  // Private Methods
-  // ========================================
-
-  private async loadAdapter(adapterId: string): Promise<DeviceAdapter | null> {
-    try {
-      const configPath = path.join(this.adaptersDir, adapterId, 'adapter.json');
-      if (!await fs.pathExists(configPath)) {
-        return null;
-      }
-
-      const adapter: DeviceAdapter = await fs.readJSON(configPath);
-      this.adaptersCache.set(adapterId, adapter);
-      return adapter;
-    } catch (error) {
-      console.error(`Failed to load adapter ${adapterId}:`, error);
-      return null;
-    }
-  }
-
-  private async updateProjectSettings(adapter: DeviceAdapter, projectPath: string): Promise<void> {
-    const settingsPath = path.join(projectPath, 'ProjectSettings', 'ProjectSettings.asset');
-    
-    // ProjectSettings.assetはYAML形式だが、完全な解析は複雑なため、
-    // 実際のUnityプロジェクトではEditorスクリプトで設定を適用する
-    // ここでは設定ファイルを生成し、Unityが読み込む形式で出力
-    
-    const buildSettingsJson = path.join(projectPath, 'Assets', 'ArsistGenerated', 'build_settings.json');
-    await fs.ensureDir(path.dirname(buildSettingsJson));
-    await fs.writeJSON(buildSettingsJson, adapter.buildSettings, { spaces: 2 });
-  }
-
-  private async updatePackageManifest(adapter: DeviceAdapter, projectPath: string): Promise<void> {
-    const manifestPath = path.join(projectPath, 'Packages', 'manifest.json');
-    
-    try {
-      let manifest: any = {};
-      if (await fs.pathExists(manifestPath)) {
-        manifest = await fs.readJSON(manifestPath);
-      }
-
-      if (!manifest.dependencies) {
-        manifest.dependencies = {};
-      }
-
-      // 必要なパッケージを追加
-      for (const pkg of adapter.buildSettings.requiredPackages) {
-        if (!manifest.dependencies[pkg]) {
-          // バージョンは適切なものを設定（通常はSDK側で指定）
-          manifest.dependencies[pkg] = 'latest';
-        }
-      }
-
-      await fs.writeJSON(manifestPath, manifest, { spaces: 2 });
-    } catch (error) {
-      console.error('Failed to update package manifest:', error);
-    }
-  }
-
-  private async createTemplateFiles(adapterDir: string, deviceName: string): Promise<void> {
-    // AndroidManifest テンプレート
-    const manifestContent = `<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.arsist.generated.app">
-
-    <!-- Device-specific permissions -->
-    <uses-feature android:name="android.hardware.usb.host" />
-    
-    <application>
-        <meta-data android:name="com.arsist.target_device" android:value="${deviceName}" />
-        
-        <activity android:name="com.unity3d.player.UnityPlayerActivity"
-                  android:theme="@style/UnityThemeSelector"
-                  android:screenOrientation="landscape"
-                  android:launchMode="singleTask"
-                  android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                  android:hardwareAccelerated="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>`;
-
-    await fs.writeFile(
-      path.join(adapterDir, 'Manifest', 'AndroidManifest.xml'),
-      manifestContent
-    );
-
-    // BuildPatcher テンプレート
-    const patcherContent = `// Auto-generated adapter script for ${deviceName}
-// Customize this script for device-specific build settings
-
-using UnityEditor;
-using UnityEditor.Build;
-using UnityEditor.Build.Reporting;
-
-namespace Arsist.Adapters
-{
-    public class ${deviceName.replace(/\s+/g, '')}BuildPatcher : IPreprocessBuildWithReport
-    {
-        public int callbackOrder => 0;
-
-        public void OnPreprocessBuild(BuildReport report)
-        {
-            if (report.summary.platform != BuildTarget.Android) return;
-
-            UnityEngine.Debug.Log("[Arsist] Applying ${deviceName} patches...");
-
-            // TODO: Add device-specific settings here
-            // PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
-            // PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel34;
-            // PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
-            // PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
-        }
-    }
-}`;
-
-    await fs.writeFile(
-      path.join(adapterDir, 'Scripts', 'DeviceBuildPatcher.cs'),
-      patcherContent
-    );
+    return loc ? this.read(loc) : null;
   }
 }

@@ -14,7 +14,9 @@ import * as THREE from 'three';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { SceneObject } from '../../../shared/types';
-import { Eye, HelpCircle, Box, Circle, Square, Cylinder, PersonStanding, Focus } from 'lucide-react';
+import { Eye, HelpCircle, Box, Circle, Square, Cylinder, PersonStanding, Focus, Video } from 'lucide-react';
+import { CameraObject, CameraPreview } from '../camera/CameraGizmo';
+import { newCameraObject, previewBox } from '../camera/cameraView';
 import { VRMViewer } from './VRMViewer';
 import { AnchorPlane } from './AnchorPlane';
 import { SceneTransformControls } from './SceneTransformControls';
@@ -159,6 +161,8 @@ export function SceneViewport({ active = true }: { active?: boolean }) {
   const deviceFov = useDeviceFov(project?.targetDevice);
   
   const currentScene = project?.scenes.find(s => s.id === currentSceneId);
+  // 選んでいるカメラ (アンカーに貼ったカメラは小窓を出さない: 置き場所が仮なので)
+  const selectedCamera = currentScene?.objects.find((o) => o.id === selectedObjectIds[0] && o.type === 'camera' && !o.anchor);
 
   const perceptionTargets = project?.perception?.targets ?? [];
 
@@ -221,6 +225,9 @@ export function SceneViewport({ active = true }: { active?: boolean }) {
     const isSelected = selectedObjectIds.includes(obj.id);
     if (obj.type === 'vrm') {
       return <VRMViewer key={obj.id} object={obj} isSelected={isSelected} transformMode={transformMode} transformSpace={transformSpace} />;
+    }
+    if (obj.type === 'camera') {
+      return <CameraObject key={obj.id} object={obj} isSelected={isSelected} transformMode={transformMode} transformSpace={transformSpace} />;
     }
     if (obj.type === 'model') {
       // モデルごとに Suspense を分ける。1 つにまとめると、1 つ読み込むあいだ全部のオブジェクトが消える
@@ -295,6 +302,13 @@ export function SceneViewport({ active = true }: { active?: boolean }) {
           title={t('scene.addCylinder')}
         >
           <Cylinder size={16} />
+        </button>
+        <button
+          onClick={() => addObject(newCameraObject(t('camera.defaultName'), currentScene?.objects ?? []))}
+          className="btn-icon"
+          title={t('camera.addTitle')}
+        >
+          <Video size={16} />
         </button>
       </div>
 
@@ -379,6 +393,16 @@ export function SceneViewport({ active = true }: { active?: boolean }) {
         </div>
       )}
 
+      {/* 選んだカメラの画 (小窓は Canvas の中の CameraPreview が描く。ここは見出しだけ) */}
+      {selectedCamera && (
+        <div
+          className="absolute z-10 px-1.5 py-0.5 rounded text-[10px] bg-arsist-surface/90 text-arsist-muted pointer-events-none"
+          style={{ left: 8, bottom: 44 + previewBox(selectedCamera.camera).height + 4 }}
+        >
+          {t('camera.previewLabel', { name: selectedCamera.name })}
+        </div>
+      )}
+
       <Canvas 
         shadows
         // 他のタブを開いているあいだは描かない (ビューは残すが GPU は使わない)
@@ -400,6 +424,8 @@ export function SceneViewport({ active = true }: { active?: boolean }) {
         />
         <hemisphereLight args={['#606060', '#404040', 0.5]} />
 
+        {/* エディタの補助 (arsistEditorOnly)。カメラの画には写さない */}
+        <group userData={{ arsistEditorOnly: true }}>
         {/* Origin axis */}
         {showAxes && <OriginAxes />}
 
@@ -436,6 +462,10 @@ export function SceneViewport({ active = true }: { active?: boolean }) {
             <meshBasicMaterial color="#4ec9b0" wireframe opacity={0.4} transparent />
           </mesh>
         )}
+        </group>
+
+        {/* 選んだカメラから見た画 (左下の小窓) */}
+        {selectedCamera && active && <CameraPreview object={selectedCamera} />}
 
         {/* Scene objects (読み込みを待つものは、それぞれの中で待つ) */}
         <Suspense fallback={null}>

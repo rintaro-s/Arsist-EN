@@ -150,7 +150,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   };
 
   const parseUnityVersionFromPath = (p: string): string | null => {
-    // Extract Hub Editor directory name (e.g., 6000.0.61f1 / 2022.3.20f1)
+    // Extract Hub Editor directory name (e.g., 6000.0.40f1 / 6000.0.61f1)
     const m = p.match(/(\d+\.\d+\.\d+(?:f\d+)?)/);
     return m ? m[1] : null;
   };
@@ -421,7 +421,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   value={unityVersion}
                   onChange={(e) => setUnityVersion(e.target.value)}
                   className="input"
-                  placeholder="2022.3.20f1"
+                  placeholder="6000.0.40f1"
                 />
                 <p className="text-xs text-arsist-muted mt-1">
                   {t('settings.versionHint')}

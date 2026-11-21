@@ -5,9 +5,11 @@ export interface CreateProjectOptions {
     path: string;
     template: ProjectTemplate;
     targetDevice: string;
-    trackingMode?: string;
-    presentationMode?: string;
 }
+/**
+ * format: 'unity' と 'json' は manifest.json、'yaml' は manifest.yaml。中身はどれもビルドが
+ * Assets/ArsistGenerated/ に書くもの (UnityBridge.generateBuildManifest) と同じ。
+ */
 export interface ExportOptions {
     format: 'unity' | 'json' | 'yaml';
     outputPath: string;
@@ -94,6 +96,5 @@ export declare class ProjectManager {
     getProjectPath(): string | null;
     private createInitialScene;
     private createInitialUI;
-    private generateUnityManifest;
 }
 //# sourceMappingURL=ProjectManager.d.ts.map

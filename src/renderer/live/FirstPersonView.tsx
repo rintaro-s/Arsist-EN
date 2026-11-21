@@ -9,7 +9,7 @@
  * 注意: パススルー(MR)の背景は現実のカメラ映像なので再現できない。
  * それらしい絵を描くと誤解を生むため、透過であることが分かる市松模様を敷く。
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { PlacedObjectMesh } from './SceneVisuals';
@@ -108,6 +108,12 @@ export interface FirstPersonViewProps {
   /** 中心の十字（どこを見ているかの目安） */
   showCrosshair?: boolean;
   className?: string;
+  /** Canvas の中に足す 3D (プレビュー シミュレータが UI の板・VRM を足す) */
+  children?: ReactNode;
+  /** 画面の枠の上に重ねる DOM */
+  overlay?: ReactNode;
+  /** 描画バッファを残す (capturePage で撮るとき) */
+  preserveDrawingBuffer?: boolean;
 }
 
 export function FirstPersonView({
@@ -121,6 +127,9 @@ export function FirstPersonView({
   showLabels = false,
   showCrosshair = true,
   className = '',
+  children,
+  overlay,
+  preserveDrawingBuffer = false,
 }: FirstPersonViewProps) {
   // デバイスの視野角から画面のアスペクト比を出す。
   // 視野角が分からない場合は 16:9 にしておく（“それっぽい”比率で描かない方がマシだが、
@@ -147,7 +156,7 @@ export function FirstPersonView({
         {isPassthrough && <PassthroughBackdrop />}
 
         <Canvas
-          gl={{ antialias: true, alpha: true }}
+          gl={{ antialias: true, alpha: true, preserveDrawingBuffer }}
           camera={{ fov: fov?.vertical ?? 50, near: 0.03, far: 200 }}
           style={{ position: 'absolute', inset: 0 }}
         >
@@ -173,6 +182,7 @@ export function FirstPersonView({
               showLabel={showLabels}
             />
           ))}
+          {children}
         </Canvas>
 
         {showCrosshair && (
@@ -181,6 +191,8 @@ export function FirstPersonView({
             <div className="h-4 w-px bg-white/40 -ml-px" />
           </div>
         )}
+
+        {overlay}
 
         {/* 実際の画面の枠 */}
         <div className="pointer-events-none absolute inset-0 border border-white/15 rounded-sm" />

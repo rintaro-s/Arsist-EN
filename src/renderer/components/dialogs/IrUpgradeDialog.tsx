@@ -11,6 +11,10 @@ import { createPortal } from 'react-dom';
 import { ArrowUpCircle, Puzzle, ShieldCheck } from 'lucide-react';
 import { useT } from '../../i18n';
 import { useProjectStore } from '../../stores/projectStore';
+import { describeVirtualIrVersion } from '../../../shared/layster/version';
+
+/** 'Layster.Virtual α5' / 'Layster.Virtual β 1.0.0' */
+const label = (irVersion: number) => `Layster.Virtual ${describeVirtualIrVersion(irVersion)}`;
 
 export function IrUpgradeDialog() {
   const t = useT();
@@ -26,7 +30,7 @@ export function IrUpgradeDialog() {
       <div className="modal max-w-lg">
         <div className="modal-header flex items-center gap-2">
           <ArrowUpCircle size={18} className="text-arsist-accent" />
-          <span>{coreChanges ? t('ir.upgradeTitle', { from: irUpgrade.from, to: irUpgrade.to }) : t('ir.extUpgradeTitle')}</span>
+          <span>{coreChanges ? t('ir.upgradeTitle', { from: label(irUpgrade.from), to: label(irUpgrade.to) }) : t('ir.extUpgradeTitle')}</span>
         </div>
 
         <div className="modal-body space-y-4">
@@ -37,7 +41,7 @@ export function IrUpgradeDialog() {
             <ul className="space-y-1.5">
               {irUpgrade.applied.map((id) => (
                 <li key={id} className="text-sm flex gap-2">
-                  <span className="text-arsist-muted shrink-0">v{id}</span>
+                  <span className="text-arsist-muted shrink-0">{describeVirtualIrVersion(Number(id))}</span>
                   <span>{t(`ir.migration.${id}`)}</span>
                 </li>
               ))}

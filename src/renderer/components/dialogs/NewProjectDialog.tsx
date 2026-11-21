@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, FolderOpen, Glasses, Layout, Monitor, MapPin } from 'lucide-react';
+import { X, FolderOpen, Glasses, Layout, Monitor, MapPin, Boxes, ScanLine } from 'lucide-react';
+import { NewSpatialForm } from '../../spatial/NewSpatialForm';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useT } from '../../i18n';
@@ -54,6 +55,8 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
   const { createProject } = useProjectStore();
   const { addNotification } = useUIStore();
   
+  // 最初に IR の形を選ぶ: Layster.Virtual (今までの作り方) か Layster.Spatial (空間で作る)
+  const [form, setForm] = useState<'choose' | 'virtual' | 'spatial'>('choose');
   const [step, setStep] = useState(1);
   const [projectName, setProjectName] = useState('MyARApp');
   const [projectPath, setProjectPath] = useState('');
@@ -119,6 +122,9 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
           </button>
         </div>
 
+        {form === 'choose' && <FormChoice onPick={setForm} />}
+        {form === 'spatial' && <NewSpatialForm onCreated={onClose} onBack={() => setForm('choose')} />}
+        {form === 'virtual' && (<>
         {/* Steps Indicator */}
         <div className="px-6 py-3 border-b border-arsist-primary/30 flex items-center gap-4">
           <StepIndicator step={1} currentStep={step} label={t('newProject.stepTemplate')} />
@@ -274,8 +280,12 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
 
         {/* Footer */}
         <div className="modal-footer">
-          {step > 1 && (
+          {step > 1 ? (
             <button onClick={() => setStep(s => s - 1)} className="btn btn-ghost">
+              {t('common.back')}
+            </button>
+          ) : (
+            <button onClick={() => setForm('choose')} className="btn btn-ghost">
               {t('common.back')}
             </button>
           )}
@@ -301,7 +311,34 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
             </button>
           )}
         </div>
+        </>)}
       </div>
+    </div>
+  );
+}
+
+/** 最初の画面: IR の形を選ぶ。2 つは互換性を持たない (doc/19-layster.md)。 */
+function FormChoice({ onPick }: { onPick: (form: 'virtual' | 'spatial') => void }) {
+  const t = useT();
+  const cards = [
+    { id: 'virtual' as const, icon: <Boxes size={28} />, name: 'Layster.Virtual', title: t('spatial.new.virtualTitle'), desc: t('spatial.new.virtualDesc') },
+    { id: 'spatial' as const, icon: <ScanLine size={28} />, name: 'Layster.Spatial', title: t('spatial.new.spatialTitle'), desc: t('spatial.new.spatialDesc') },
+  ];
+  return (
+    <div className="modal-body min-h-80 space-y-3">
+      <p className="text-arsist-muted text-sm">{t('spatial.new.chooseForm')}</p>
+      {cards.map((c) => (
+        <button key={c.id} onClick={() => onPick(c.id)}
+          className="w-full p-4 rounded-lg bg-arsist-hover/60 hover:bg-arsist-active ring-1 ring-transparent hover:ring-arsist-accent/50 text-left transition-all flex items-start gap-4">
+          <div className="p-3 rounded-lg bg-arsist-accent/15 text-arsist-accent">{c.icon}</div>
+          <div>
+            <div className="text-[11px] font-mono text-arsist-accent mb-0.5">{c.name}</div>
+            <h3 className="font-medium mb-1">{c.title}</h3>
+            <p className="text-sm text-arsist-muted">{c.desc}</p>
+          </div>
+        </button>
+      ))}
+      <p className="text-[11px] text-arsist-muted">{t('spatial.new.noConversion')}</p>
     </div>
   );
 }

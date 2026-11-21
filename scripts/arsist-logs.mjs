@@ -15,6 +15,9 @@
  */
 import dgram from 'node:dgram';
 
+/** .NET の DateTime.Ticks 起点 (0001-01-01) から Unix 起点 (1970-01-01) までのミリ秒 */
+const DOTNET_EPOCH_OFFSET_MS = 62135596800000;
+
 const args = process.argv.slice(2);
 const readOption = (name, fallback = null) => {
   const index = args.indexOf(name);
@@ -64,7 +67,9 @@ socket.on('message', (buffer, remote) => {
     return;
   }
 
-  const time = new Date(entry.t ?? Date.now()).toISOString().slice(11, 23);
+  // t は Unix 時刻のミリ秒。2026-10 より前のビルドは 0001-01-01 からのミリ秒を送っていたので、それも読む
+  const t = typeof entry.t === 'number' ? (entry.t > 1e13 ? entry.t - DOTNET_EPOCH_OFFSET_MS : entry.t) : Date.now();
+  const time = new Date(t).toISOString().slice(11, 23);
   const level = (entry.level ?? 'info').toUpperCase().padEnd(5);
   console.log(colorize(`${time} ${level} ${entry.msg}`, COLOR[entry.level] ?? COLOR.info));
 

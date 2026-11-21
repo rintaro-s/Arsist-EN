@@ -9,6 +9,8 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { RevealText } from './RevealText';
 import { useProjectStore } from '../../stores/projectStore';
+import { MediaPlaceholder } from '../camera/MediaPlaceholder';
+import { findCameraObject } from '../../../shared/media';
 import { useDataValue } from '../../stores/dataStoreContext';
 import { toArsistFileUrl } from '../../utils/assetUrl';
 import { useT } from '../../i18n';
@@ -506,6 +508,11 @@ function ElementRenderer({
   const t = useT();
   const isSelected = element.id === selectedId;
   const boundValue = useDataValue(element.bind?.key || '');
+  // 画像に映すカメラの名前 (source.kind === 'camera'、doc/23)
+  const sourceCameraName = useProjectStore((s) => {
+    const src = element.source;
+    return src?.kind === 'camera' && s.project ? findCameraObject(s.project, src.camera)?.name : undefined;
+  });
   const elementRef = useRef<HTMLDivElement>(null);
 
   const [isDragging, setIsDragging] = useState(false);
@@ -721,6 +728,15 @@ function ElementRenderer({
         );
 
       case 'Image':
+        // カメラの映像 / 配信を映す画像は、何が映るかを書いた板 (実機の映像はエディタでは出せない)
+        if (element.source) {
+          const src = element.source;
+          return (
+            <MediaPlaceholder source={src} label={src.kind === 'camera'
+              ? t('media.cameraPlaceholder', { name: sourceCameraName ?? src.camera })
+              : t('media.streamPlaceholder', { url: src.url })} />
+          );
+        }
         return (
           <div className="w-full h-full flex items-center justify-center relative group">
             {element.assetPath && projectPath ? (

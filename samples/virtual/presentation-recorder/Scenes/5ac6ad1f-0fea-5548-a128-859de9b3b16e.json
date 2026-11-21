@@ -1,0 +1,218 @@
+{
+  "id": "5ac6ad1f-0fea-5548-a128-859de9b3b16e",
+  "name": "MainScene",
+  "objects": [
+    {
+      "id": "f4830159-4f2d-5d1d-bab7-a77648a791ad",
+      "name": "Me",
+      "type": "vrm",
+      "modelPath": "Assets/Models/avatar.vrm",
+      "assetId": "Me",
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": -1.55,
+          "z": 0
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "character": {
+        "blink": true,
+        "breathe": true,
+        "lookAtUser": "off",
+        "embody": {
+          "enabled": true,
+          "hands": "auto",
+          "lipSync": true,
+          "hideFromSelf": true,
+          "matchHeight": true
+        }
+      }
+    },
+    {
+      "id": "05a11a81-6713-5293-9bf5-6025fa0d886b",
+      "name": "Cam",
+      "type": "camera",
+      "assetId": "Cam",
+      "transform": {
+        "position": {
+          "x": 0.3,
+          "y": -0.15,
+          "z": 3.6
+        },
+        "rotation": {
+          "x": 0,
+          "y": -163.7,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "camera": {
+        "fov": 48,
+        "resolution": [
+          1920,
+          1080
+        ],
+        "fps": 30,
+        "backgroundColor": "#1e2430",
+        "near": 0.05,
+        "far": 100,
+        "showSelf": true,
+        "showGizmo": true
+      },
+      "ext": {
+        "quest-input": {
+          "grab": "grab",
+          "reach": "far"
+        }
+      }
+    },
+    {
+      "id": "4ae46b19-bd08-50c1-9d22-6c136e4fd05e",
+      "name": "SlideScreen",
+      "type": "canvas",
+      "assetId": "SlideScreen",
+      "canvasSettings": {
+        "layoutId": "e2ffd6a8-bec0-56fe-b097-308d3e29eeb0",
+        "widthMeters": 2.4,
+        "heightMeters": 1.35,
+        "pixelsPerUnit": 800
+      },
+      "transform": {
+        "position": {
+          "x": -1.45,
+          "y": 0.1,
+          "z": 0.25
+        },
+        "rotation": {
+          "x": 0,
+          "y": -152.4,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "ext": {
+        "quest-input": {
+          "grab": "grab",
+          "reach": "far"
+        }
+      }
+    },
+    {
+      "id": "4cfd420f-decf-53f9-b852-a7d363e73625",
+      "name": "Monitor",
+      "type": "canvas",
+      "assetId": "Monitor",
+      "canvasSettings": {
+        "layoutId": "9ddc2258-fda6-53d8-b4da-5b68bf23932d",
+        "widthMeters": 2.4,
+        "heightMeters": 1.5,
+        "pixelsPerUnit": 800
+      },
+      "transform": {
+        "position": {
+          "x": 1.8,
+          "y": 0.0,
+          "z": 4.6
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "ext": {
+        "quest-input": {
+          "grab": "grab",
+          "reach": "far"
+        }
+      }
+    },
+    {
+      "id": "83b56823-a1ac-50ba-980c-8cbb38ed86b1",
+      "name": "Notes",
+      "type": "canvas",
+      "assetId": "Notes",
+      "canvasSettings": {
+        "layoutId": "28ed40a5-a8a2-55ff-a374-bdf192165147",
+        "widthMeters": 4.8,
+        "heightMeters": 2.7,
+        "pixelsPerUnit": 400
+      },
+      "transform": {
+        "position": {
+          "x": -2.4,
+          "y": 0.35,
+          "z": 6.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "ext": {
+        "quest-input": {
+          "grab": "grab",
+          "reach": "far"
+        }
+      }
+    },
+    {
+      "id": "8f64b8ca-098a-53b5-af73-c85de58d57c0",
+      "name": "Setup",
+      "type": "canvas",
+      "assetId": "Setup",
+      "canvasSettings": {
+        "layoutId": "30dee505-c381-5c8b-95a3-507c6d0820b7",
+        "widthMeters": 0.6,
+        "heightMeters": 0.45,
+        "pixelsPerUnit": 2000
+      },
+      "transform": {
+        "position": {
+          "x": 0.0,
+          "y": -0.38,
+          "z": 0.72
+        },
+        "rotation": {
+          "x": 28,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      }
+    }
+  ]
+}

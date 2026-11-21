@@ -24,10 +24,22 @@ export interface UnityBuildConfig {
     /** スクリプトデータ (scripts.json 相当の内容) */
     scriptsData?: object;
     /**
+     * Layster.Spatial のランタイムが読む spatial.json (doc/19-layster.md §4.1、lower.ts が作る)。
+     * Virtual のビルドでは無い (前のビルドの spatial.json は消える)。
+     */
+    spatialData?: object;
+    /**
      * true の場合、作業用Unityプロジェクト（Library/を含む）を捨ててゼロから作り直す。
      * 通常は false（差分ビルド）でよい。キャッシュ由来の不整合を疑うときの逃げ道。
      */
     cleanBuild?: boolean;
+    /**
+     * シミュレーター (doc/22-simulation.md、scripts/sim/unity.mjs)。作業用プロジェクトの準備は同じで、最後に APK の代わりに
+     * Linux のプレイヤー (playerPath) を作る。ヘッドセットが無いので端末の SDK は入れない (SDK を要る拡張機能も入らない)。
+     */
+    simulation?: {
+        playerPath: string;
+    };
 }
 export interface BuildProgress {
     phase: string;
@@ -176,6 +188,13 @@ export declare class UnityBuilder extends EventEmitter {
      * で、空のときは `scriptingDefineSymbols: {}`。Android の行だけを見る (ビルド対象は Android だけ)。
      */
     static syncInferenceDefine(assetText: string, wanted: boolean): string;
+    /**
+     * シミュレーター: Linux のプレイヤーの define を Android と同じにする (端末の SDK の define は除く)。
+     * Unity が起きたときのコンパイルに効くよう、起動前に ProjectSettings.asset を直す (syncInferenceDefine と同じ理由)。
+     */
+    private syncSimulationDefines;
+    /** scriptingDefineSymbols の Standalone の行を、Android の行から端末の SDK の define を抜いたものにする (純粋な文字列処理)。 */
+    static simulationDefines(assetText: string): string;
     /** 検出済み Unity バージョンのメジャー番号（例 6000 / 2022）。不明なら 0。 */
     private getUnityMajorVersion;
     /** uGUI / TextMeshPro の依存をUnityバージョンに応じて設定する。 */

@@ -19,7 +19,11 @@ export interface Entry {
   ja: string;
 }
 
+import { SPATIAL_STRINGS } from './spatialStrings';
+
 export const STRINGS: Record<string, Entry> = {
+  // Layster.Spatial のエディタの文字は spatialStrings.ts (キーは 'spatial.')
+  ...SPATIAL_STRINGS,
   // ── common ─────────────────────────────────────────────
   'common.save': { en: 'Save', ja: '保存' },
   'common.saveAs': { en: 'Save As', ja: '名前を付けて保存' },
@@ -240,7 +244,7 @@ export const STRINGS: Record<string, Entry> = {
   'setup.welcomeSdkPackagesDesc': { en: 'Verify required SDK files are present', ja: '必要なSDKファイルが存在するか確認します' },
   'setup.welcomeNeedTitle': { en: "What You'll Need", ja: '必要なもの' },
   'setup.welcomeUnityHubLabel': { en: 'Unity Hub + Unity Editor', ja: 'Unity Hub + Unity Editor' },
-  'setup.welcomeUnityHubDesc': { en: 'Version 2022.3 LTS or later recommended. Android Build Support module required.', ja: 'バージョン2022.3 LTS以降を推奨。Android Build Supportモジュールが必要です。' },
+  'setup.welcomeUnityHubDesc': { en: 'Unity 6 (6000.0.40f1 or a newer 6000.0 patch) recommended. Android Build Support module required.', ja: 'Unity 6 (6000.0.40f1、または新しい 6000.0 のパッチ版) を推奨。Android Build Supportモジュールが必要です。' },
   'setup.welcomeSdkFolderDesc2': { en: 'Root directory containing device SDKs (XREAL, Quest, etc.) for your target platforms.', ja: 'ターゲットプラットフォーム向けのデバイスSDK（XREAL、Questなど）を格納するルートディレクトリ。' },
   'setup.welcomeOptionalSdkLabel': { en: '(Optional) Device SDK Packages', ja: '（任意）デバイスSDKパッケージ' },
   'setup.welcomeOptionalSdkDesc': { en: 'Specific SDK files from device manufacturers. Required only for those platforms.', ja: 'デバイスメーカー提供の個別SDKファイル。該当プラットフォームでのみ必要です。' },
@@ -339,8 +343,8 @@ export const STRINGS: Record<string, Entry> = {
   'newProject.selectDevice': { en: 'Select target device (can be changed later)', ja: 'ターゲットデバイスを選択（後から変更可能）' },
   'newProject.comingSoon': { en: 'Coming Soon', ja: '近日対応' },
   'newProject.selectedDevice': { en: 'Selected Device: {name}', ja: '選択中のデバイス: {name}' },
-  'newProject.sdkInfoQuest': { en: 'Meta XR SDK (sdk/quest) • Unity 2022.3 LTS+ • OpenXR-compliant', ja: 'Meta XR SDK (sdk/quest) • Unity 2022.3 LTS+ • OpenXR準拠' },
-  'newProject.sdkInfoXreal': { en: 'XREAL One SDK 3.1.0 • Unity 2022.3.20f1 LTS • OpenXR-compliant', ja: 'XREAL One SDK 3.1.0 • Unity 2022.3.20f1 LTS • OpenXR準拠' },
+  'newProject.sdkInfoQuest': { en: 'Meta XR SDK (sdk/quest) • Unity 6000.0.40f1+ • OpenXR-compliant', ja: 'Meta XR SDK (sdk/quest) • Unity 6000.0.40f1 以降 • OpenXR準拠' },
+  'newProject.sdkInfoXreal': { en: 'XREAL One SDK 3.1.0 • Unity 6000.0.40f1+ • OpenXR-compliant', ja: 'XREAL One SDK 3.1.0 • Unity 6000.0.40f1 以降 • OpenXR準拠' },
   'newProject.creating': { en: 'Creating...', ja: '作成中...' },
   'newProject.createProject': { en: 'Create Project', ja: 'プロジェクトを作成' },
 
@@ -368,7 +372,7 @@ export const STRINGS: Record<string, Entry> = {
   'build.cancelFailed': { en: 'Failed to cancel build', ja: 'ビルドのキャンセルに失敗しました' },
   'build.unityPath': { en: 'Unity Path', ja: 'Unityのパス' },
   'build.unityPathPlaceholder': { en: '/path/to/Unity', ja: '/path/to/Unity' },
-  'build.unityRecommended': { en: 'Recommended: Unity 2022.3.20f1 LTS or later', ja: '推奨: Unity 2022.3.20f1 LTS 以降' },
+  'build.unityRecommended': { en: 'Recommended: Unity 6000.0.40f1 (Unity 6) or a newer 6000.0 patch', ja: '推奨: Unity 6000.0.40f1 (Unity 6)、または新しい 6000.0 のパッチ版' },
   'build.targetDevice': { en: 'Target Device', ja: 'ターゲットデバイス' },
   'build.outputDirectory': { en: 'Output Directory', ja: '出力ディレクトリ' },
   'build.outputPlaceholder': { en: '/path/to/output', ja: '/path/to/output' },
@@ -1534,7 +1538,7 @@ export const STRINGS: Record<string, Entry> = {
 
   // ---- IR の版 (アップグレード) ----
   'ir.readOnlyBadge': { en: 'read-only (old format)', ja: '読み取り専用 (古い形式)' },
-  'ir.upgradeTitle': { en: 'Upgrade this project from format v{from} to v{to}?', ja: 'このプロジェクトを形式 v{from} から v{to} にアップグレードしますか？' },
+  'ir.upgradeTitle': { en: 'Upgrade this project from {from} to {to}?', ja: 'このプロジェクトを {from} から {to} にアップグレードしますか？' },
   'ir.upgradeBody': {
     en: 'This project was saved by an older Arsist. It has been converted in memory so you can look at it. To save changes, its file has to be rewritten in the current format — like opening an old project in a newer Unity.',
     ja: 'このプロジェクトは古い Arsist で保存されています。見るためにメモリ上では今の形式に直してありますが、保存するにはファイルを今の形式で書き直す必要があります (古いプロジェクトを新しい Unity で開くときと同じです)。',
@@ -1555,6 +1559,14 @@ export const STRINGS: Record<string, Entry> = {
   'ir.migration.5': {
     en: 'Characters and saving. VRM objects get character (starting animation, blinking, breathing, looking at the user), UI text gets reveal (appears as if being written), and project.storage.persist lists store keys kept on the device. VRMs in older projects keep behaving as before (no motion).',
     ja: 'キャラクターと保存。VRM の物に character (最初の動き・まばたき・呼吸・こちらを見る)、UI の文字に reveal (書いていくように出す)、project.storage.persist (端末に保存する store のキー) を追加。古いプロジェクトの VRM は今までどおり (動きなし) のまま',
+  },
+  'ir.migration.6': {
+    en: 'Names the format: from now on the project format is "Layster.Virtual β 1.0.0" (the older versions are called α1–α5). Only a "layster" heading is added at the top of project.json; scenes, UI, scripts and everything else stay exactly as they are. Older Arsist versions will refuse to open the upgraded file.',
+    ja: '形式に名前を付けます。これからのプロジェクトの形式は「Layster.Virtual β 1.0.0」です (今までの版は α1〜α5 と呼びます)。project.json の先頭に "layster" の見出しが入るだけで、シーン・UI・スクリプトなどの中身は一切変わりません。アップグレードしたファイルは古い Arsist では開けなくなります。',
+  },
+  'ir.migration.7': {
+    en: 'Adds cameras (virtual cameras placed in the scene), what a UI image shows (a camera\'s view or a screen streamed from a PC), and driving a VRM with your own head and hands (embody). Only new fields are added; nothing existing changes.',
+    ja: 'カメラ (シーンに置く仮想カメラ)、UI の画像に映すもの (カメラの映像・PC からの画面の配信)、VRM を自分の頭と手で動かす設定 (embody) を足しました。項目を足しただけで、今までの中身は変わりません。',
   },
   // @ir-migration-strings-end (npm run ir:new はこの行の上に足す)
   'ir.extUpgradeTitle': { en: 'Update extension data in this project?', ja: 'このプロジェクトの拡張機能のデータを更新しますか？' },
@@ -1871,11 +1883,11 @@ export const STRINGS: Record<string, Entry> = {
   'models.hf.precision.uint8': { en: '8-bit (uint8)', ja: '8 ビット (uint8)' },
   'models.hf.precision.bnb4': { en: '4-bit (bnb4)', ja: '4 ビット (bnb4)' },
   'models.hf.precision.q8f16': { en: '8-bit + fp16 (q8f16)', ja: '8 ビット + fp16 (q8f16)' },
-  'models.hf.editorOnly': { en: 'editor only', ja: 'エディタのみ' },
+  'models.hf.editorOnly': { en: 'device: via ONNX Runtime', ja: '実機は ONNX Runtime で' },
   'models.hf.maybeDevice': { en: 'may run on the device', ja: '実機でも動く見込み' },
   'models.hf.deviceNote': {
-    en: 'Quantised files (q4, int8 …) use operators that only ONNX Runtime has, so they run in "Try" but Unity cannot import them. Which operators a file really uses is checked after the download.',
-    ja: '量子化されたファイル (q4、int8 など) は ONNX Runtime にしかない演算子を使うので、「試す」では動きますが Unity には取り込めません。実際にどの演算子を使っているかは、落とした後に確かめます。',
+    en: 'Quantised files (q4, int8 …) use operators that only ONNX Runtime has. Unity cannot import them, so on the device they run on the bundled ONNX Runtime (CPU, +33 MB, scripts only — not the image pipeline\'s infer step). Which operators a file really uses is checked after the download.',
+    ja: '量子化されたファイル (q4、int8 など) は ONNX Runtime にしかない演算子を使います。Unity には取り込めないので、実機では同梱の ONNX Runtime (CPU、+33 MB) で動きます (スクリプトからだけ。画像処理の infer では使えません)。実際にどの演算子を使っているかは、落とした後に確かめます。',
   },
   'models.hf.pull': { en: 'Download and import', ja: '落として取り込む' },
   'models.hf.close': { en: 'Close', ja: '閉じる' },
@@ -2112,4 +2124,56 @@ export const STRINGS: Record<string, Entry> = {
   'storage.saved': { en: 'saved', ja: '残る' },
   'storage.keep': { en: 'keep', ja: '残す' },
   'storage.scriptHint': { en: 'Saving is automatic (about 1 s after a change and when the app goes to the background). Scripts: storage.save(), storage.forget("memory.") to erase, storage.keys().', ja: '保存は自動です (変わって約 1 秒後と、アプリが裏に回ったとき)。スクリプトからは storage.save()、消すのは storage.forget("memory.")、一覧は storage.keys()。' },
+
+  // ---- カメラ・画像に映すもの・自分の体 (β1.1.0、doc/23) ----
+  'camera.add': { en: 'Camera', ja: 'カメラ' },
+  'camera.addTitle': { en: 'Add a camera (films the scene for images and recording)', ja: 'カメラを追加 (シーンを撮って画像・録画に使う)' },
+  'camera.defaultName': { en: 'Camera', ja: 'カメラ' },
+  'camera.title': { en: 'Camera', ja: 'カメラ' },
+  'camera.help': { en: 'Films the scene from here (its front is the blue arrow, local +Z). UI images can show it, scripts move it with cameras.*, and extensions can record it. It films the scene only — not the real room.', ja: 'ここからシーンを撮ります (前は青い矢印、ローカルの +Z)。UI の画像に映したり、スクリプトの cameras.* で動かしたり、拡張機能で録画したりできます。撮るのはシーンだけで、現実の部屋は写りません。' },
+  'camera.fov': { en: 'Field of view (°)', ja: '画角 (度)' },
+  'camera.resolution': { en: 'Resolution', ja: '解像度' },
+  'camera.landscape': { en: 'landscape', ja: '横長' },
+  'camera.portrait': { en: 'portrait', ja: '縦長' },
+  'camera.custom': { en: 'Custom', ja: 'その他' },
+  'camera.fps': { en: 'Frames per second', ja: '1 秒に撮る回数' },
+  'camera.fpsHelp': { en: '0 = every frame while something uses it. It only renders while an image or a recorder uses it.', ja: '0 = 使われている間は毎フレーム。画像や録画が使っている間だけ撮ります。' },
+  'camera.background': { en: 'Background colour', ja: '背景の色' },
+  'camera.backgroundHelp': { en: 'Passthrough cannot be filmed; the background is painted with this colour.', ja: 'パススルーは撮れないので、背景はこの色で塗ります。' },
+  'camera.showSelf': { en: 'Film my body', ja: '自分の体を写す' },
+  'camera.showSelfHelp': { en: 'Show the VRM that moves as your body (embody) in this camera.', ja: '自分の体として動かしている VRM (embody) をこのカメラに写します。' },
+  'camera.showGizmo': { en: 'Show the camera in the headset', ja: 'ヘッドセットの中にカメラを見せる' },
+  'camera.showGizmoHelp': { en: 'Draws the camera body and its view cone for the user. The camera never films them.', ja: 'カメラの形と撮る範囲をユーザーに見せます。カメラ自身には写りません。' },
+  'camera.previewHint': { en: 'What it sees is shown at the bottom left of the 3D view while it is selected.', ja: '選んでいる間、3D ビューの左下に写る画を出します。' },
+  'camera.previewLabel': { en: 'Camera view: {name}', ja: 'カメラの画: {name}' },
+  'camera.usedBy': { en: 'Shown by {count} image(s)', ja: '{count} 個の画像が映しています' },
+  'camera.scriptHint': { en: "Scripts: cameras.setPose('{id}', x, y, z, rx, ry, rz), cameras.lookAt('{id}', x, y, z), cameras.snapshot('{id}', fn).", ja: "スクリプトからは cameras.setPose('{id}', x, y, z, rx, ry, rz)、cameras.lookAt('{id}', x, y, z)、cameras.snapshot('{id}', fn)。" },
+  'embody.title': { en: 'Move as my body', ja: '自分の体として動かす' },
+  'embody.help': { en: 'The head follows your head, the hands your controllers or hands, the mouth your voice. You do not see it yourself; cameras and mirrors do. The starting animation and "look at the user" are not used while this is on.', ja: '頭は自分の頭、手はコントローラーか手、口は声で動きます。自分の目には写らず、カメラや鏡には写ります。これが on の間は最初の動きと「こちらを見る」は使いません。' },
+  'embody.hands': { en: 'Hands follow', ja: '手を動かすもの' },
+  'embody.handsAuto': { en: 'Hands when tracked, else controllers', ja: '手が見えていれば手、無ければコントローラー' },
+  'embody.handsControllers': { en: 'Controllers', ja: 'コントローラー' },
+  'embody.handsHands': { en: 'Tracked hands', ja: '手 (ハンドトラッキング)' },
+  'embody.lipSync': { en: 'Mouth moves with my voice', ja: '声で口を動かす' },
+  'embody.lipSyncHelp': { en: 'Needs a microphone level from an extension (e.g. quest-input\'s mic).', ja: '声の大きさは拡張機能から来ます (例: quest-input の mic)。' },
+  'embody.hideFromSelf': { en: 'Hide from my own eyes', ja: '自分の目には見せない' },
+  'embody.hideFromSelfHelp': { en: 'Otherwise you would see the inside of the head.', ja: '見せると頭の内側が見えてしまいます。' },
+  'embody.matchHeight': { en: 'Match my height', ja: '背に合わせる' },
+  'embody.matchHeightHelp': { en: 'Resizes the body to your eye height 1 s after start (vrm.calibrate(id) measures again).', ja: '起動 1 秒後の目の高さに体の大きさを合わせます (vrm.calibrate(id) で測り直し)。' },
+  'embody.otherWarning': { en: 'Another VRM ({name}) also moves as your body. Only one can.', ja: '別の VRM ({name}) も自分の体になっています。1 体だけにしてください。' },
+  'media.title': { en: 'Shows', ja: '映すもの' },
+  'media.none': { en: 'Picture', ja: '画像' },
+  'media.camera': { en: 'Camera', ja: 'カメラ' },
+  'media.stream': { en: 'Stream', ja: '配信' },
+  'media.help': { en: 'Instead of a picture, an image can show a camera in the scene (live) or a screen streamed from a PC. It is fitted inside the box without cropping.', ja: '画像の代わりに、シーンのカメラの映像 (動く) や PC から配信される画面を映せます。枠からはみ出さないように収めます。' },
+  'media.pickCamera': { en: 'Camera', ja: 'カメラ' },
+  'media.noCameras': { en: 'There is no camera yet. Add one in the Scene tab (+ → Camera).', ja: 'カメラがまだありません。シーンタブで追加してください (+ → カメラ)。' },
+  'media.missingCamera': { en: 'Camera "{name}" does not exist', ja: 'カメラ「{name}」がありません' },
+  'media.mirror': { en: 'Mirror (flip left and right)', ja: '鏡 (左右を反転)' },
+  'media.url': { en: 'Stream URL (MJPEG)', ja: '配信の URL (MJPEG)' },
+  'media.urlHint': { en: '{store:key} is replaced by that store value and reconnects when it changes — e.g. http://{store:pc.address}/stream/slides. Sender: products/ScreenCast on a PC.', ja: '{store:キー} はストアの値に置き換わり、値が変わるとつなぎ直します — 例 http://{store:pc.address}/stream/slides。送る側は PC の products/ScreenCast。' },
+  'media.urlBad': { en: 'Should start with http:// or https://', ja: 'http:// か https:// で始めてください' },
+  'media.scriptHint': { en: "Scripts: ui.setSource('{id}', …), ui.streamStatus('{id}'); the status is also in the store as media.{id}.status.", ja: "スクリプトからは ui.setSource('{id}', …)・ui.streamStatus('{id}')。状態はストアの media.{id}.status にも入ります。" },
+  'media.cameraPlaceholder': { en: 'Camera: {name}', ja: 'カメラ: {name}' },
+  'media.streamPlaceholder': { en: 'Stream: {url}', ja: '配信: {url}' },
 };

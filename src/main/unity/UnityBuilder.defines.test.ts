@@ -31,3 +31,13 @@ describe('UnityBuilder.syncInferenceDefine', () => {
     expect(UnityBuilder.syncInferenceDefine(text, false)).toBe(text);
   });
 });
+
+describe('UnityBuilder.simulationDefines', () => {
+  it('copies the Android defines to Standalone without the device SDK ones', () => {
+    const out = UnityBuilder.simulationDefines(asset('ARSIST_INFERENCE;ARSIST_META_QUEST;GLTFAST;XR_HANDS'));
+    expect(out).toContain('    Android: ARSIST_INFERENCE;ARSIST_META_QUEST;GLTFAST;XR_HANDS');
+    expect(out).toContain('    Standalone: ARSIST_INFERENCE;GLTFAST');
+    // 2 回目は変わらない
+    expect(UnityBuilder.simulationDefines(out)).toBe(out);
+  });
+});
